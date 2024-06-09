@@ -16,30 +16,42 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('sampleBtn').addEventListener('click', () => {
-    fixInput.value = `8=FIX.4.1 9=61 35=A 34=1 49=EXEC 52=2021105-23:24:06 56=BANZAI 98=0 108=30 10=003
-8=FIX.4.1 9=49 35=D 34=2 49=BANZAI 52=2021105-23:24:37 56=EXEC 10=328`;
+    fixInput.value = `8=FIX.4.1\x019=61\x0135=A\x0134=1\x0149=EXEC\x0152=2021105-23:24:06\x0156=BANZAI\x0198=0\x01108=30\x0110=003
+8=FIX.4.1\x019=49\x0135=D\x0134=2\x0149=BANZAI\x0152=2021105-23:24:37\x0156=EXEC\x0110=328`;
   });
 
   function processFIXData(data) {
+    const delimiter = detectDelimiter(data);
     const messages = data.split('\n');
     timelineTable.innerHTML = '';
     messages.forEach((message, index) => {
-      const fields = parseFIXMessage(message);
+      const fields = parseFIXMessage(message, delimiter);
       const row = document.createElement('tr');
       row.addEventListener('click', () => displayDetail(fields));
       appendCell(row, fields['52']); // Time
       appendCell(row, fields['49']); // Sender
       appendCell(row, fields['56']); // Target
-      appendCell(row, fields['35']); // Message
+      appendCell(row, fields['35'], getMessageClass(fields['35'])); // Message
       appendCell(row, fields['11']); // Client order ID
       appendCell(row, ''); // Detail button
       timelineTable.appendChild(row);
+
+      if (index === 0) {
+        displayDetail(fields);
+      }
     });
   }
 
-  function parseFIXMessage(message) {
+  function detectDelimiter(data) {
+    if (data.includes('\x01')) return '\x01';
+    if (data.includes('|')) return '|';
+    if (data.includes(' ')) return ' ';
+    return '';
+  }
+
+  function parseFIXMessage(message, delimiter) {
     const fields = {};
-    const pairs = message.split(' ');
+    const pairs = message.split(delimiter);
     pairs.forEach(pair => {
       const [tag, value] = pair.split('=');
       fields[tag] = value;
@@ -47,9 +59,10 @@ document.addEventListener('DOMContentLoaded', () => {
     return fields;
   }
 
-  function appendCell(row, text) {
+  function appendCell(row, text, className = '') {
     const cell = document.createElement('td');
     cell.textContent = text || '';
+    if (className) cell.classList.add(className);
     row.appendChild(cell);
   }
 
@@ -58,11 +71,38 @@ document.addEventListener('DOMContentLoaded', () => {
     Object.keys(fields).forEach(tag => {
       const row = document.createElement('tr');
       appendCell(row, tag); // Tag
-      appendCell(row, getTagDescription(tag)); // Tag Description
+      appendCell(row, getTagDescription(tag), getTagClass(tag)); // Tag Description
       appendCell(row, fields[tag]); // Value
       appendCell(row, ''); // Value Description
       detailTable.appendChild(row);
     });
+  }
+
+  function getMessageClass(msgType) {
+    const classes = {
+      'A': 'logon',
+      '0': 'heartbeat',
+      'D': 'newordersingle',
+      '8': 'erfill',
+      '3': 'reject'
+    };
+    return classes[msgType] || '';
+  }
+
+  function getTagClass(tag) {
+    const classes = {
+      '8': 'beginstring',
+      '9': 'bodylength',
+      '35': 'msgtype',
+      '34': 'msgseqnum',
+      '49': 'sendercompid',
+      '52': 'sendingtime',
+      '56': 'targetcompid',
+      '98': 'encryptmethod',
+      '108': 'heartbtint',
+      '10': 'checksum'
+    };
+    return classes[tag] || '';
   }
 
   function getTagDescription(tag) {
