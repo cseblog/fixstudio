@@ -5,9 +5,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const skipHeartbeats = document.getElementById('skipHeartbeats');
   const skipCommonFields = document.getElementById('skipCommonFields');
 
+  //default 
+      fixInput.value = `8=FIX.4.1\x019=61\x0135=A\x0134=1\x0149=EXEC\x0152=2021105-23:24:06\x0156=BANZAI\x0198=0\x01108=30\x0110=003
+8=FIX.4.1\x019=49\x0135=D\x0134=2\x0149=BANZAI\x0152=2021105-23:24:37\x0156=EXEC\x0110=328
+8=FIX.4.1\x019=61\x0135=0\x0134=3\x0149=EXEC\x0152=2021105-23:24:40\x0156=BANZAI\x0110=004`;
+
+  processFIXData(fixInput.value);
+  
+
   document.getElementById('processBtn').addEventListener('click', () => {
     processFIXData(fixInput.value);
   });
+
 
   document.getElementById('clearBtn').addEventListener('click', () => {
     fixInput.value = '';
@@ -17,7 +26,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('sampleBtn').addEventListener('click', () => {
     fixInput.value = `8=FIX.4.1\x019=61\x0135=A\x0134=1\x0149=EXEC\x0152=2021105-23:24:06\x0156=BANZAI\x0198=0\x01108=30\x0110=003
-8=FIX.4.1\x019=49\x0135=D\x0134=2\x0149=BANZAI\x0152=2021105-23:24:37\x0156=EXEC\x0110=328`;
+8=FIX.4.1\x019=49\x0135=D\x0134=2\x0149=BANZAI\x0152=2021105-23:24:37\x0156=EXEC\x0110=328
+8=FIX.4.1\x019=61\x0135=0\x0134=3\x0149=EXEC\x0152=2021105-23:24:40\x0156=BANZAI\x0110=004`;
   });
 
   function processFIXData(data) {
@@ -26,6 +36,8 @@ document.addEventListener('DOMContentLoaded', () => {
     timelineTable.innerHTML = '';
     messages.forEach((message, index) => {
       const fields = parseFIXMessage(message, delimiter);
+      if (skipHeartbeats.checked && fields['35'] === '0') return;
+
       const row = document.createElement('tr');
       row.addEventListener('click', () => displayDetail(fields));
       appendCell(row, fields['52']); // Time
@@ -36,9 +48,10 @@ document.addEventListener('DOMContentLoaded', () => {
       appendCell(row, ''); // Detail button
       timelineTable.appendChild(row);
 
-      if (index === 0) {
+      if (index === 0) { //default show the first row
         displayDetail(fields);
       }
+
     });
   }
 
@@ -105,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return classes[tag] || '';
   }
 
-  function getTagDescription(tag) {
+  function getTagDescription(tag) { //TODO: populate full list of tag definition here
     const descriptions = {
       '8': 'BeginString',
       '9': 'BodyLength',
@@ -120,4 +133,9 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     return descriptions[tag] || '';
   }
+
+  skipHeartbeats.addEventListener('change', function() {
+    processFIXData(fixInput.value);
+  });
+
 });
