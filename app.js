@@ -59,6 +59,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (data.includes('\x01')) return '\x01';
     if (data.includes('|')) return '|';
     if (data.includes(' ')) return ' ';
+    if (data.includes('^')) return '^';
+    if (data.includes('^A')) return '^A';
     return '';
   }
 

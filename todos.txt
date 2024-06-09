@@ -1,0 +1,23 @@
+Next: 
+-----
+- Support all major FIX protocol version
+FIX.xml -> zig xml -> parse -> dictionary 
+Get FIX.xml here: https://github.com/DiwashRai/python-fix-msg-parser
+- Add more tests?? 
+
+
+- Package it as Win/Mac OS application
+- Making template website 
+- Marketing 
+
+
+
+[Pro]
+- Export 'Detail' table to text -> allow to copy it 
+- Support custom FIX protocol xml: 
++ User upload/attached specify the location of xml file path 
++ Zig xml parse it 
+
+[Pro] Only convert pdf, doc custom FIX to xml schemas using chatGPT
+
+
