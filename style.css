@@ -46,22 +46,22 @@ textarea {
   background-color: rgba(255, 255, 255, 0.2);
 }
 
-.logon { background-color: #d35400 !important; color: #fff; }
-.heartbeat { background-color: #95a5a6 !important; color: #fff; }
+.logon { color: #d35400 !important; color: #fff; }
+.heartbeat { color: #95a5a6 !important; color: #fff; }
 .newordersingle { background-color: #27ae60 !important; color: #fff; }
-.erfill { background-color: #3498db !important; color: #fff; }
-.reject { background-color: #e74c3c !important; color: #fff; }
+.erfill { color: #3498db !important; color: #fff; }
+.reject { color: #e74c3c !important; color: #fff; }
 
-.beginstring { background-color: #e67e22 !important; color: #fff; }
-.bodylength { background-color: #1abc9c !important; color: #fff; }
-.msgtype { background-color: #9b59b6 !important; color: #fff; }
-.msgseqnum { background-color: #34495e !important; color: #fff; }
-.sendercompid { background-color: #e74c3c !important; color: #fff; }
-.sendingtime { background-color: #f39c12 !important; color: #fff; }
-.targetcompid { background-color: #2980b9 !important; color: #fff; }
-.encryptmethod { background-color: #8e44ad !important; color: #fff; }
-.heartbtint { background-color: #2ecc71 !important; color: #fff; }
-.checksum { background-color: #7f8c8d !important; color: #fff; }
+.beginstring { color: #e67e22 !important; color: #fff; }
+.bodylength { color: #1abc9c !important; color: #fff; }
+.msgtype { color: #9b59b6 !important; color: #fff; }
+.msgseqnum { color: #34495e !important; color: #fff; }
+.sendercompid { color: #e74c3c !important; color: #fff; }
+.sendingtime { color: #f39c12 !important; color: #fff; }
+.targetcompid { color: #2980b9 !important; color: #fff; }
+.encryptmethod { color: #8e44ad !important; color: #fff; }
+.heartbtint { color: #2ecc71 !important; color: #fff; }
+.checksum { color: #7f8c8d !important; color: #fff; }
 
 body {
   background-color: #2c3e50;
