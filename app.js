@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
   const fixInput = document.getElementById('fixInput');
+  const fixFile = document.getElementById('fixFile');
   const timelineTable = document.getElementById('timelineTable');
   const detailTable = document.getElementById('detailTable');
   const skipHeartbeats = document.getElementById('skipHeartbeats');
@@ -9,6 +10,22 @@ document.addEventListener('DOMContentLoaded', () => {
       fixInput.value = `8=FIX.4.1\x019=61\x0135=A\x0134=1\x0149=EXEC\x0152=2021105-23:24:06\x0156=BANZAI\x0198=0\x01108=30\x0110=003
 8=FIX.4.1\x019=49\x0135=D\x0134=2\x0149=BANZAI\x0152=2021105-23:24:37\x0156=EXEC\x0110=328
 8=FIX.4.1\x019=61\x0135=0\x0134=3\x0149=EXEC\x0152=2021105-23:24:40\x0156=BANZAI\x0110=004`;
+
+  fixFile.addEventListener('change', handleFileUpload);
+  function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+              fixInput.value = e.target.result;
+
+              processFIXData(fixInput.value);
+              // Reset file input value to allow re-selection of the same file
+              // fixFile.value = '';
+          };
+          reader.readAsText(file);
+      }
+  }
 
   processFIXData(fixInput.value);
   
@@ -22,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fixInput.value = '';
     timelineTable.innerHTML = '';
     detailTable.innerHTML = '';
+    fixFile.value = '';
   });
 
   document.getElementById('sampleBtn').addEventListener('click', () => {
