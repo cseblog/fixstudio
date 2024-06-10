@@ -11,14 +11,21 @@
   <div class="container">
     <div class="row mt-4">
       <div class="col-12">
-        <h3>FIX Protocol messages</h3>
-        <textarea id="fixInput" class="form-control" rows="5" placeholder="Paste FIX text below"></textarea>
+        <h5>FIX Protocol messages</h3>
+        <textarea id="fixInput" class="form-control" rows="7" placeholder="Paste FIX text below"></textarea>
       </div>
+
       <div class="col-12 mt-2 d-flex justify-content-end">
+        <div class=" btn me-2">
+            <!-- <label for="fixFile" class="form-label">Select local FIX messages file</label> -->
+            <input class="form-control" type="file" id="fixFile"  value="Select local FIX file">
+        </div>
+        <button id="sampleBtn" class="btn btn-info me-2">Sample data</button>
         <button id="processBtn" class="btn btn-primary me-2">Process</button>
-        <button id="clearBtn" class="btn btn-secondary me-2">Clear</button>
-        <button id="sampleBtn" class="btn btn-info">Sample data</button>
+        <button id="clearBtn" class="btn btn-secondary">Clear</button>
+        
       </div>
+
     </div>
 
     <div class="row mt-4">

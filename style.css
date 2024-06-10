@@ -45,6 +45,11 @@ textarea {
 .table tbody tr:hover {
   background-color: rgba(255, 255, 255, 0.2);
 }
+.btn {
+  padding-top: 0px;
+  padding-bottom: 0px;
+  font-size: 100%;
+}
 
 .logon { color: #d35400 !important; color: #fff; }
 .heartbeat { color: #95a5a6 !important; color: #fff; }
