@@ -18,8 +18,11 @@ Next:
 - Export 'Detail' table to text -> allow to copy it 
 - Support custom FIX protocol xml: 
 + User upload/attached specify the location of xml file path 
-+ Zig xml parse it 
+   - Zig xml parse it 
++ Lightning fast parsing a huge fix file 
++ Full text search on FIX messages 
+
 - Show we integrate with GPT localy ??
-[Pro] Only convert pdf, doc custom FIX to xml schemas using chatGPT
+   - [Pro] Only convert pdf, doc custom FIX to xml schemas using chatGPT
 
 
