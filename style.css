@@ -101,6 +101,7 @@ a:hover { text-decoration: underline; }
   color: var(--text);
 }
 .logo:hover { text-decoration: none; color: var(--purple); }
+.logo-icon { width: 24px; height: 24px; vertical-align: middle; margin-right: 6px; border-radius: 4px; }
 .nav-links { display: flex; align-items: center; gap: 24px; }
 .nav-links a { color: var(--text-muted); font-size: 14px; font-weight: 500; }
 .nav-links a:hover { color: var(--text); text-decoration: none; }
