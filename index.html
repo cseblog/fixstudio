@@ -1,83 +1,137 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FIX Parser</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FIX Studio – Desktop FIX Protocol Analyzer</title>
+  <meta name="description" content="A fast, native desktop app for parsing and analyzing FIX protocol messages. Built with Rust. Available for macOS and Windows." />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
 </head>
 <body>
-  <div class="container">
-    <div class="row mt-4">
-      <div class="col-12">
-        <h7>FIX Protocol messages</h7>
-        <textarea id="fixInput" class="form-control" rows="7" placeholder="Paste FIX text below"></textarea>
-      </div>
 
-      <div class="col-12 mt-2 d-flex justify-content-end">
-        <div class=" btn me-2">
-            <!-- <label for="fixFile" class="form-label">Select local FIX messages file</label> -->
-            <input class="form-control" type="file" id="fixFile"  value="Select local FIX file">
-        </div>
-        <button id="sampleBtn" class="btn btn-info me-2">Sample data</button>
-        <button id="processBtn" class="btn btn-primary me-2">Process</button>
-        <button id="clearBtn" class="btn btn-secondary">Clear</button>
-        
-      </div>
-
-    </div>
-
-    <div class="row mt-4">
-      <div class="col-12 col-md-8">
-        <h5>Timeline</h5>
-        <div class="form-check mb-2">
-          <input class="form-check-input" type="checkbox" id="skipHeartbeats"/>
-          <label class="form-check-label" for="skipHeartbeats">
-            Skip heartbeats
-          </label>
-        </div>
-        <table class="table table-striped">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Sender</th>
-              <th>Target</th>
-              <th>Message</th>
-              <th>Client order ID</th>
-              <th>Detail</th>
-            </tr>
-          </thead>
-          <tbody id="timelineTable">
-            <!-- Rows will be inserted here -->
-          </tbody>
-        </table>
-      </div>
-      <div class="col-12 col-md-4">
-        <h5>Detail</h5>
-        <div class="form-check mb-2">
-          <input class="form-check-input" type="checkbox" id="skipCommonFields"/>
-          <label class="form-check-label" for="skipCommonFields">
-            Skip common fields
-          </label>
-        </div>
-        <table class="table table-bordered">
-          <thead>
-            <tr>
-              <th>Tag</th>
-              <th>Tag Description</th>
-              <th>Value</th>
-              <th>Value Description</th>
-            </tr>
-          </thead>
-          <tbody id="detailTable">
-            <!-- Rows will be inserted here -->
-          </tbody>
-        </table>
+  <!-- ── Nav ── -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="#" class="logo">⚡ FIX Studio</a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#preview">Preview</a>
+        <a href="#download" class="btn btn-sm btn-primary">Download</a>
       </div>
     </div>
-  </div>
+  </nav>
 
-  <script src="app.js"></script>
+  <!-- ── Hero ── -->
+  <section class="hero">
+    <div class="hero-inner">
+      <span class="hero-badge">Free &middot; macOS &amp; Windows</span>
+      <h1>Parse FIX messages<br/><span class="gradient-text">instantly on your desktop.</span></h1>
+      <p class="hero-sub">
+        A blazing-fast, native desktop app for parsing, inspecting, and analyzing
+        FIX protocol messages. No cloud. No browser. No data ever leaves your machine.
+      </p>
+      <div class="hero-actions">
+        <a href="#download" class="btn btn-primary btn-lg">Download Now</a>
+        <a href="#features" class="btn btn-ghost">See Features</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ── -->
+  <section id="features" class="features">
+    <div class="section-inner">
+      <h2>Everything you need to debug FIX</h2>
+      <p class="section-sub">Built for traders, developers, and support engineers who work with FIX protocol daily. Fully offline — your data stays on your machine.</p>
+
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🚀</div>
+          <h3>Instant Parsing</h3>
+          <p>Paste one or hundreds of FIX messages. They're split, parsed, and displayed in milliseconds — powered by native Rust performance.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📋</div>
+          <h3>Timeline View</h3>
+          <p>See every message in chronological order with sender, target, message type badges, order details, and one-click selection.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔍</div>
+          <h3>Detail Inspector</h3>
+          <p>Click any message to see all tag/value pairs with human-readable descriptions, color-coded by category. Skip common fields with a checkbox.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📝</div>
+          <h3>Raw Text Export</h3>
+          <p>Switch to the Raw Text tab for a clean, copyable text representation of any parsed message — perfect for tickets and documentation.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📖</div>
+          <h3>Built-in FIX Dictionary</h3>
+          <p>150+ tag descriptions and value lookups for MsgType, OrdStatus, Side, ExecType, TimeInForce, and more — no external reference needed.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>100% Offline &amp; Private</h3>
+          <p>Your data never leaves your machine. No network calls, no telemetry, no cloud — everything is parsed and rendered locally. Safe for sensitive production logs.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎨</div>
+          <h3>Dracula Theme</h3>
+          <p>A beautiful dark UI with the popular Dracula color palette. Easy on the eyes during long debugging sessions.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Preview ── -->
+  <section id="preview" class="preview">
+    <div class="section-inner">
+      <h2>See it in action</h2>
+      <p class="section-sub">Multi-message timeline on the left, detailed field inspector on the right.</p>
+      <div class="preview-window">
+        <div class="window-bar">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+          <span class="window-title">FIX Studio</span>
+        </div>
+        <div class="window-content">
+          <img src="screenshot.png" alt="FIX Studio – Timeline and Detail view showing parsed FIX messages" class="screenshot" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Download ── -->
+  <section id="download" class="download">
+    <div class="section-inner">
+      <h2>Download FIX Studio</h2>
+      <p class="section-sub">Free to use. No sign-up required. No data shared — ever.</p>
+      <div class="download-grid download-grid-2">
+        <a href="#" class="download-card">
+          <div class="download-icon">🍎</div>
+          <h3>macOS</h3>
+          <p>Universal binary<br/>macOS 12+</p>
+          <span class="btn btn-primary btn-sm">Download for Mac</span>
+        </a>
+        <a href="#" class="download-card">
+          <div class="download-icon">🪟</div>
+          <h3>Windows</h3>
+          <p>64-bit executable<br/>Windows 10+</p>
+          <span class="btn btn-primary btn-sm">Download for Windows</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ── -->
+  <footer class="footer">
+    <div class="section-inner">
+      <p>⚡ FIX Studio</p>
+      <p class="footer-muted">Your data stays on your machine. Always.</p>
+    </div>
+  </footer>
+
 </body>
 </html>
