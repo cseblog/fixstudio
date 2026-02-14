@@ -15,24 +15,57 @@
     <div class="nav-inner">
       <a href="#" class="logo"><img src="icon.png" alt="" class="logo-icon" /> FIX Studio</a>
       <div class="nav-links">
+        <a href="#download">Download</a>
         <a href="#features">Features</a>
-        <a href="#preview">Preview</a>
-        <a href="#download" class="btn btn-sm btn-primary">Download</a>
+        <a href="#download" class="btn btn-sm btn-primary">Get FIXStudio</a>
       </div>
     </div>
   </nav>
 
-  <!-- ── Hero ── -->
-  <section class="hero">
+  <!-- ── Hero: Download + Screenshot first ── -->
+  <section class="hero" id="download">
     <div class="hero-inner">
       <span class="hero-badge">Free &middot; macOS &amp; Windows</span>
       <h1>Parse FIX messages<br/><span class="gradient-text">instantly on your desktop.</span></h1>
       <p class="hero-sub">
-        A blazing-fast, native desktop app for parsing, inspecting, and analyzing
-        FIX protocol messages. No cloud. No browser. No data ever leaves your machine.
+        A blazing-fast, native desktop app for parsing and analyzing FIX protocol messages.
+        No cloud. No data ever leaves your machine.
       </p>
+
+      <div class="hero-download">
+        <h2>Download FIXStudio</h2>
+        <p class="section-sub">Free to use. No sign-up required.</p>
+        <div class="download-grid download-grid-2">
+          <a href="FIXStudio_0.1.0_macos.dmg" class="download-card" download>
+            <div class="download-icon">🍎</div>
+            <h3>macOS</h3>
+            <p>Apple Silicon (arm64)<br/>macOS 12+</p>
+            <span class="btn btn-primary btn-sm">Download .dmg (v0.1.0)</span>
+          </a>
+          <a href="FIXStudio_0.1.0_windows.exe" class="download-card" download>
+            <div class="download-icon">🪟</div>
+            <h3>Windows</h3>
+            <p>64-bit installer<br/>Windows 10+</p>
+            <span class="btn btn-primary btn-sm">Download .exe (v0.1.0)</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="hero-preview">
+        <div class="preview-window">
+          <div class="window-bar">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span class="window-title">FIXStudio</span>
+          </div>
+          <div class="window-content">
+            <img src="screenshot.png" alt="FIXStudio – Timeline and Detail view showing parsed FIX messages" class="screenshot" />
+          </div>
+        </div>
+      </div>
+
       <div class="hero-actions">
-        <a href="#download" class="btn btn-primary btn-lg">Download Now</a>
         <a href="#features" class="btn btn-ghost">See Features</a>
       </div>
     </div>
@@ -84,46 +117,6 @@
     </div>
   </section>
 
-  <!-- ── Preview ── -->
-  <section id="preview" class="preview">
-    <div class="section-inner">
-      <h2>See it in action</h2>
-      <p class="section-sub">Multi-message timeline on the left, detailed field inspector on the right.</p>
-      <div class="preview-window">
-        <div class="window-bar">
-          <span class="dot dot-red"></span>
-          <span class="dot dot-yellow"></span>
-          <span class="dot dot-green"></span>
-          <span class="window-title">FIX Studio</span>
-        </div>
-        <div class="window-content">
-          <img src="screenshot.png" alt="FIX Studio – Timeline and Detail view showing parsed FIX messages" class="screenshot" />
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Download ── -->
-  <section id="download" class="download">
-    <div class="section-inner">
-      <h2>Download FIX Studio</h2>
-      <p class="section-sub">Free to use. No sign-up required. No data shared — ever.</p>
-      <div class="download-grid download-grid-2">
-        <a href="FIXStudio_0.1.0_macos.dmg" class="download-card" download>
-          <div class="download-icon">🍎</div>
-          <h3>macOS</h3>
-          <p>Apple Silicon (arm64)<br/>macOS 12+</p>
-          <span class="btn btn-primary btn-sm">Download .dmg (v0.1.0)</span>
-        </a>
-        <a href="FIXStudio_0.1.0_windows.exe" class="download-card" download>
-          <div class="download-icon">🪟</div>
-          <h3>Windows</h3>
-          <p>64-bit installer<br/>Windows 10+</p>
-          <span class="btn btn-primary btn-sm">Download .exe (v0.1.0)</span>
-        </a>
-      </div>
-    </div>
-  </section>
 
   <!-- ── Footer ── -->
   <footer class="footer">

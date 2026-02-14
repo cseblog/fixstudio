@@ -112,7 +112,22 @@ a:hover { text-decoration: underline; }
   text-align: center;
   background: radial-gradient(ellipse at 50% 0%, rgba(189,147,249,0.08) 0%, transparent 60%);
 }
-.hero-inner { max-width: 720px; margin: 0 auto; }
+.hero-inner { max-width: 900px; margin: 0 auto; }
+.hero-download {
+  margin: 48px 0 40px;
+}
+.hero-download h2 {
+  font-size: 28px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+.hero-download .section-sub { margin-bottom: 16px; }
+.hero-download .download-grid {
+  margin-top: 0;
+}
+.hero-preview {
+  margin: 48px 0 36px;
+}
 .hero-badge {
   display: inline-block;
   padding: 6px 16px;
@@ -281,5 +296,5 @@ a:hover { text-decoration: underline; }
 @media (max-width: 480px) {
   .hero { padding: 120px 16px 60px; }
   .hero h1 { font-size: 28px; }
-  .features h2, .preview h2, .download h2, .tech h2 { font-size: 26px; }
+  .features h2, .preview h2, .download h2, .tech h2, .hero-download h2 { font-size: 26px; }
 }
