@@ -12,7 +12,7 @@ fn main() {
     
     let config = Config::default().with_window(
         WindowBuilder::new()
-            .with_title("AI FIX Engine")
+            .with_title("AI FIX Parser")
             .with_inner_size(dioxus_desktop::LogicalSize::new(1280.0, 900.0)),
     );
 
