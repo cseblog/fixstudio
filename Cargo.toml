@@ -1,0 +1,33 @@
+[package]
+name = "AIFixEngine"
+version = "0.1.0"
+edition = "2021"
+description = "AI FIX Engine – FIX protocol parser and future AI-powered engine generator"
+license = "MIT"
+
+[[bin]]
+name = "AIFixEngine"
+path = "src/main.rs"
+
+[dependencies]
+dioxus = { version = "0.7.2", features = ["desktop"] }
+dioxus-desktop = "0.7.2"
+
+# ---------------------------------------------------------------------------
+# Platform-specific dependencies
+# ---------------------------------------------------------------------------
+
+# macOS – use the native cocoa/webkit backend (pulled in automatically by
+# dioxus-desktop on macOS, nothing extra needed)
+
+# Windows – link the Windows manifest so the app gets a proper icon & DPI
+# awareness. winres is only needed at build time.
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
+[profile.release]
+opt-level = "z"      # optimise for size
+lto = true           # link-time optimisation
+strip = true         # strip debug symbols
+codegen-units = 1    # single codegen unit for better optimisation
+
