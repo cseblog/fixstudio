@@ -40,62 +40,25 @@ jobs:
       - name: Build Windows bundle
         run: dx bundle --release --platform desktop
 
+      - name: Locate NSIS installer
+        id: find_exe
+        shell: bash
+        run: |
+          EXE=$(find target/dx -path "*/nsis/*-setup.exe" | head -1)
+          echo "path=$EXE" >> "$GITHUB_OUTPUT"
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AIFixEngine-windows
-          path: dist/
-          retention-days: 30
-
-  # ─── macOS ────────────────────────────────────────────────────────────────
-  build-macos:
-    name: Build macOS DMG
-    runs-on: macos-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Cache Cargo registry & build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: macos-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: macos-cargo-
-
-      - name: Install Dioxus CLI
-        run: cargo install dioxus-cli --version "^0.7" --locked
-
-      - name: Build macOS bundle
-        run: dx bundle --release --platform desktop
-
-      - name: Locate DMG
-        id: find_dmg
-        run: |
-          DMG=$(find dist -name "*.dmg" | head -1)
-          echo "path=$DMG" >> "$GITHUB_OUTPUT"
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: AIFixEngine-macos
-          path: ${{ steps.find_dmg.outputs.path }}
+          name: AIFixParser-windows
+          path: ${{ steps.find_exe.outputs.path }}
           retention-days: 30
 
   # ─── Release (tags only) ──────────────────────────────────────────────────
   release:
     name: Attach to GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-windows, build-macos]
+    needs: build-windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -104,26 +67,15 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: AIFixEngine-windows
-          path: release/windows/
+          name: AIFixParser-windows
+          path: release/
 
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: AIFixEngine-macos
-          path: release/macos/
-
-      - name: Compress Windows bundle
-        run: zip -r AIFixEngine-windows.zip release/windows/
-
-      - name: Rename macOS DMG
+      - name: Rename installer
         run: |
-          DMG=$(find release/macos -name "*.dmg" | head -1)
-          cp "$DMG" AIFixEngine-macos.dmg
+          EXE=$(find release -name "*-setup.exe" | head -1)
+          cp "$EXE" AIFixParser-windows.exe
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            AIFixEngine-windows.zip
-            AIFixEngine-macos.dmg
+          files: AIFixParser-windows.exe
