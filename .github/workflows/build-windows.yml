@@ -40,11 +40,18 @@ jobs:
       - name: Build Windows bundle
         run: dx bundle --release --platform desktop
 
+      - name: Locate NSIS installer
+        id: find_exe
+        shell: bash
+        run: |
+          EXE=$(find target/dx -path "*/nsis/*-setup.exe" | head -1)
+          echo "path=$EXE" >> "$GITHUB_OUTPUT"
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: AIFixParser-windows
-          path: dist/
+          path: ${{ steps.find_exe.outputs.path }}
           retention-days: 30
 
   # ─── Release (tags only) ──────────────────────────────────────────────────
@@ -61,12 +68,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: AIFixParser-windows
-          path: release/windows/
+          path: release/
 
-      - name: Compress Windows bundle
-        run: zip -r AIFixParser-windows.zip release/windows/
+      - name: Rename installer
+        run: |
+          EXE=$(find release -name "*-setup.exe" | head -1)
+          cp "$EXE" AIFixParser-windows.exe
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: AIFixParser-windows.zip
+          files: AIFixParser-windows.exe
