@@ -1,14 +1,14 @@
 [application]
-name = "AIFixEngine"
+name = "AIFixParser"
 default_platform = "desktop"
 
 [bundle]
-identifier = "com.aifixengine.app"
-publisher = "AI FIX Engine"
+identifier = "com.aifixparser.app"
+publisher = "aifixparser.com"
 icon = ["assets/icon.icns", "assets/icon.ico"]
 resources = []
-copyright = "AI FIX Engine LLC"
-short_description = "AI FIX Engine – FIX protocol parser and future AI-powered engine generator"
+copyright = "aifixparser.com"
+short_description = "AI FIX Parser – Parse and analyze FIX protocol messages with AI-powered insights"
 
 [bundle.macos]
 minimum_system_version = "12.0"

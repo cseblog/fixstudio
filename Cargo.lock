@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "AIFixEngine"
+name = "AIFixParser"
 version = "0.1.0"
 dependencies = [
  "dioxus",

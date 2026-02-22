@@ -1,12 +1,12 @@
 [package]
-name = "AIFixEngine"
+name = "AIFixParser"
 version = "0.1.0"
 edition = "2021"
-description = "AI FIX Engine – FIX protocol parser and future AI-powered engine generator"
+description = "AI FIX Parser – Parse and analyze FIX protocol messages with AI-powered insights"
 license = "MIT"
 
 [[bin]]
-name = "AIFixEngine"
+name = "AIFixParser"
 path = "src/main.rs"
 
 [dependencies]
