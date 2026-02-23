@@ -15,3 +15,4 @@ minimum_system_version = "12.0"
 
 [bundle.windows]
 icon_path = "assets/icon.ico"
+webview_install_mode = { type = "downloadBootstrapper", silent = true }
