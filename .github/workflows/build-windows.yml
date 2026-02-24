@@ -28,7 +28,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+            !target/dx/
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock', 'Dioxus.toml') }}
           restore-keys: windows-cargo-
 
       - name: Install cargo-binstall
