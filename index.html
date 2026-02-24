@@ -3,10 +3,144 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI FIX Parser – aifixparser.com</title>
-  <meta name="description" content="AI FIX Parser – Parse and analyze FIX protocol messages with AI-powered insights. Built for developers. 100% offline. aifixparser.com" />
+
+  <!-- ── Primary SEO ── -->
+  <title>AI FIX Parser – Free FIX Protocol Parser, Debugger &amp; Log Analyzer</title>
+  <meta name="description" content="Free desktop FIX protocol parser and log analyzer for FIX 4.2, FIX 4.4, FIX 5.0. Instantly parse, inspect and debug FIX messages offline. Alternative to QuickFIX log viewers and Artio FIX tools. macOS &amp; Windows." />
+  <meta name="keywords" content="FIX protocol parser, FIX engine, FIX 4.4, FIX 4.2, FIX 5.0, QuickFIX, Artio FIX, FIX message analyzer, FIX log parser, FIX protocol debugger, Financial Information eXchange, algo trading FIX, order routing FIX, FIX tag decoder, FIX message viewer, free FIX parser" />
+  <link rel="canonical" href="https://aifixparser.com/" />
+
+  <!-- ── Open Graph ── -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://aifixparser.com/" />
+  <meta property="og:title" content="AI FIX Parser – Free FIX Protocol Parser &amp; Debugger" />
+  <meta property="og:description" content="Instantly parse and debug FIX 4.2, FIX 4.4 and FIX 5.0 messages on your desktop. 100% offline. Free. Works with QuickFIX, Artio and all FIX engines." />
+  <meta property="og:image" content="https://aifixparser.com/screenshot.png" />
+  <meta property="og:site_name" content="AI FIX Parser" />
+
+  <!-- ── Twitter Card ── -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="AI FIX Parser – Free FIX Protocol Parser &amp; Debugger" />
+  <meta name="twitter:description" content="Instantly parse and debug FIX 4.2, FIX 4.4 and FIX 5.0 messages on your desktop. 100% offline. Free." />
+  <meta name="twitter:image" content="https://aifixparser.com/screenshot.png" />
+
+  <!-- ── JSON-LD: SoftwareApplication ── -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "AI FIX Parser",
+    "url": "https://aifixparser.com",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Windows 10, macOS 12",
+    "description": "Free desktop FIX protocol parser and log analyzer. Parse FIX 4.2, FIX 4.4 and FIX 5.0 messages instantly. 100% offline.",
+    "screenshot": "https://aifixparser.com/screenshot.png",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "aifixparser.com",
+      "url": "https://aifixparser.com"
+    }
+  }
+  </script>
+
+  <!-- ── JSON-LD: FAQPage (rich results) ── -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is a FIX protocol parser?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "A FIX protocol parser reads raw FIX messages (pipe-delimited tag=value strings) and decodes them into human-readable format. It maps numeric tag IDs like 35=D to their names (MsgType=NewOrderSingle) and decodes enum values. AI FIX Parser does this instantly on your desktop — no cloud, no sign-up."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What FIX versions does AI FIX Parser support?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "AI FIX Parser supports FIX 4.0, FIX 4.1, FIX 4.2, FIX 4.4, FIX 5.0, FIX 5.0 SP1 and FIX 5.0 SP2. The built-in dictionary covers all standard tags across every version."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does AI FIX Parser support FIX 4.2?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. FIX 4.2 is fully supported. All standard FIX 4.2 message types are decoded including NewOrderSingle (D), ExecutionReport (8), OrderCancelRequest (F), OrderCancelReplaceRequest (G), and more."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does AI FIX Parser support FIX 4.4?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. FIX 4.4 is fully supported. AI FIX Parser decodes all FIX 4.4 tags and message types, including fields introduced in FIX 4.4 such as CrossOrder and MultilegOrder."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does AI FIX Parser support FIX 5.0, FIX 5.0 SP1 and FIX 5.0 SP2?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. FIX 5.0, FIX 5.0 SP1 and FIX 5.0 SP2 (the latest FIX standard) are supported. Note: there is no FIX 5.2 — FIX 5.0 SP2 is the most recent version of the FIX protocol specification."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I use AI FIX Parser to debug QuickFIX or Artio FIX logs?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. AI FIX Parser works with log output from any FIX engine including QuickFIX, QuickFIX/J, Artio FIX, B2BITS FIXIOM, and any FIX 4.2/4.4/5.0 engine. Just paste your raw FIX log lines into the app."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What FIX message types are decoded?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "All standard types: NewOrderSingle (D), ExecutionReport (8), OrderCancelRequest (F), OrderCancelReplaceRequest (G), MarketDataRequest (V), Heartbeat (0), Logon (A), Logout (5), and all other FIX 4.2/4.4/5.0 MsgTypes."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is AI FIX Parser free?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, AI FIX Parser is completely free to download and use. No subscription, no sign-up, no usage limits. Available for macOS (Apple Silicon) and Windows 10+."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does AI FIX Parser send my data to the cloud?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. AI FIX Parser runs 100% offline on your machine. No network calls are made. Your FIX messages and trading data never leave your computer, making it safe for production log analysis."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How is AI FIX Parser different from a FIX engine?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "A FIX engine (like QuickFIX or Artio FIX) connects to a counterparty and sends/receives orders. AI FIX Parser is a log viewer and debugger — it helps you understand and troubleshoot the messages your FIX engine produces."
+        }
+      }
+    ]
+  }
+  </script>
+
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" type="image/png" href="icon.png" />
+
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-Y9J423BNZ0"></script>
   <script>
@@ -21,27 +155,29 @@
   <!-- ── Nav ── -->
   <nav class="nav">
     <div class="nav-inner">
-      <a href="#" class="logo"><img src="icon.png" alt="" class="logo-icon" /> AI FIX Parser</a>
+      <a href="#" class="logo"><img src="icon.png" alt="AI FIX Parser logo" class="logo-icon" /> AI FIX Parser</a>
       <div class="nav-links">
-        <a href="#download">Download</a>
-        <a href="#download" class="btn btn-sm btn-primary">Get AI FIX Parser</a>
+        <a href="#features">Features</a>
+        <a href="#faq">FAQ</a>
+        <a href="#download" class="btn btn-sm btn-primary">Download Free</a>
       </div>
     </div>
   </nav>
 
-  <!-- ── Hero: Download + Screenshot first ── -->
+  <!-- ── Hero ── -->
   <section class="hero" id="download">
     <div class="hero-inner">
-      <span class="hero-badge">Free &middot; macOS &amp; Windows</span>
-      <h1>Parse FIX messages<br/><span class="gradient-text">instantly on your desktop.</span></h1>
+      <span class="hero-badge">Free &middot; macOS &amp; Windows &middot; 100% Offline</span>
+      <h1>FIX Protocol Parser<br/><span class="gradient-text">for developers &amp; traders.</span></h1>
       <p class="hero-sub">
-        AI FIX Parser – a blazing-fast desktop app for parsing and analyzing FIX protocol messages.
-        No cloud. No data ever leaves your machine. Future: AI-powered FIX engine generation.
+        Parse, inspect and debug FIX 4.2, FIX 4.4 and FIX 5.0 messages instantly on your desktop.
+        Works with QuickFIX, Artio FIX, and any FIX engine log output.
+        No cloud. Your data never leaves your machine.
       </p>
 
       <div class="hero-download">
-        <h2>Download AI FIX Parser</h2>
-        <p class="section-sub">Free to use. No sign-up required.</p>
+        <h2>Download AI FIX Parser — Free</h2>
+        <p class="section-sub">No sign-up required. No usage limits.</p>
         <div class="download-grid download-grid-2">
           <a href="AIFixParser-macos.dmg" class="download-card" download
              onclick="gtag('event', 'file_download', { file_name: 'AIFixParser-macos.dmg', file_extension: 'dmg', platform: 'macOS' });">
@@ -69,7 +205,7 @@
             <span class="window-title">AI FIX Parser</span>
           </div>
           <div class="window-content">
-            <img src="screenshot.png" alt="AI FIX Parser – Timeline and Detail view showing parsed FIX messages" class="screenshot" />
+            <img src="screenshot.png" alt="AI FIX Parser – FIX protocol message timeline and tag inspector showing parsed FIX 4.4 messages" class="screenshot" />
           </div>
         </div>
       </div>
@@ -83,55 +219,110 @@
   <!-- ── Features ── -->
   <section id="features" class="features">
     <div class="section-inner">
-      <h2>Everything you need to debug FIX</h2>
-      <p class="section-sub">Built for traders, developers, and support engineers who work with FIX protocol daily. Fully offline — your data stays on your machine.</p>
+      <h2>Everything you need to debug FIX protocol messages</h2>
+      <p class="section-sub">Built for algo traders, FIX engine developers, and support engineers who work with FIX 4.2, FIX 4.4 and FIX 5.0 daily. Fully offline — your trading data stays on your machine.</p>
 
       <div class="feature-grid">
         <div class="feature-card">
           <div class="feature-icon">🚀</div>
-          <h3>Instant Parsing</h3>
-          <p>Paste one or hundreds of FIX messages. They're split, parsed, and displayed in milliseconds — powered by native Rust performance.</p>
+          <h3>Instant FIX Message Parsing</h3>
+          <p>Paste one or hundreds of FIX messages from any engine — QuickFIX, Artio, or custom. They're split, parsed, and displayed in milliseconds, powered by native Rust performance.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">📋</div>
-          <h3>Timeline View</h3>
-          <p>See every message in chronological order with sender, target, message type badges, order details, and one-click selection.</p>
+          <h3>Message Timeline View</h3>
+          <p>See every FIX message in chronological order with sender (SenderCompID), target (TargetCompID), MsgType badges, order details, and one-click selection.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🔍</div>
-          <h3>Detail Inspector</h3>
-          <p>Click any message to see all tag/value pairs with human-readable descriptions, color-coded by category. Skip common fields with a checkbox.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">📝</div>
-          <h3>Raw Text Export</h3>
-          <p>Switch to the Raw Text tab for a clean, copyable text representation of any parsed message — perfect for tickets and documentation.</p>
+          <h3>Tag &amp; Value Inspector</h3>
+          <p>Click any FIX message to see all tag/value pairs with human-readable descriptions. Decodes MsgType, OrdStatus, Side, ExecType, TimeInForce and 150+ standard FIX tags.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">📖</div>
           <h3>Built-in FIX Dictionary</h3>
-          <p>150+ tag descriptions and value lookups for MsgType, OrdStatus, Side, ExecType, TimeInForce, and more — no external reference needed.</p>
+          <p>Full tag reference for FIX 4.2, FIX 4.4 and FIX 5.0 — no external reference needed. Covers all standard tags across NewOrderSingle, ExecutionReport, OrderCancelRequest and more.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📝</div>
+          <h3>Raw Text Export</h3>
+          <p>Switch to Raw Text view for a clean, copyable representation of any parsed FIX message — perfect for support tickets, incident reports, and documentation.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🔒</div>
           <h3>100% Offline &amp; Private</h3>
-          <p>Your data never leaves your machine. No network calls, no telemetry, no cloud — everything is parsed and rendered locally. Safe for sensitive production logs.</p>
+          <p>Your FIX log data never leaves your machine. No network calls, no telemetry, no cloud upload — everything is parsed locally. Safe for sensitive production order flow.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">⚙️</div>
+          <h3>Works with Any FIX Engine</h3>
+          <p>Compatible with log output from QuickFIX, QuickFIX/J, Artio FIX, B2BITS, FIXIOM, and any engine that produces standard FIX 4.2 / 4.4 / 5.0 message strings.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🎨</div>
-          <h3>Dracula Theme</h3>
-          <p>A beautiful dark UI with the popular Dracula color palette. Easy on the eyes during long debugging sessions.</p>
+          <h3>Dark UI — Dracula Theme</h3>
+          <p>A beautiful dark interface with the popular Dracula color palette. Easy on the eyes during long debugging sessions on production FIX logs.</p>
         </div>
       </div>
     </div>
   </section>
 
+  <!-- ── FAQ ── -->
+  <section id="faq" class="features">
+    <div class="section-inner">
+      <h2>Frequently Asked Questions</h2>
+      <p class="section-sub">Common questions about FIX protocol parsing and AI FIX Parser.</p>
+
+      <div class="feature-grid" style="grid-template-columns: repeat(2, 1fr);">
+        <div class="feature-card">
+          <h3>What FIX versions are supported?</h3>
+          <p>AI FIX Parser supports FIX 4.0, FIX 4.1, FIX 4.2, FIX 4.4, FIX 5.0, FIX 5.0 SP1 and FIX 5.0 SP2 message formats. The built-in dictionary covers all standard tags across every version.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Does it support FIX 4.2?</h3>
+          <p>Yes. FIX 4.2 is fully supported. All standard FIX 4.2 message types are decoded including NewOrderSingle (D), ExecutionReport (8), OrderCancelRequest (F), OrderCancelReplaceRequest (G), and more.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Does it support FIX 4.4?</h3>
+          <p>Yes. FIX 4.4 is fully supported. AI FIX Parser decodes all FIX 4.4 tags and message types, including the additional fields introduced in FIX 4.4 such as CrossOrder and MultilegOrder.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Does it support FIX 5.0, FIX 5.0 SP1 and FIX 5.0 SP2?</h3>
+          <p>Yes. FIX 5.0, FIX 5.0 SP1 and FIX 5.0 SP2 (the latest FIX standard) are supported. Note: there is no "FIX 5.2" — FIX 5.0 SP2 is the most recent version of the FIX protocol specification.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Can I parse QuickFIX or Artio FIX logs?</h3>
+          <p>Yes. Paste raw FIX log lines from QuickFIX, QuickFIX/J, Artio FIX, B2BITS FIXIOM, or any FIX 4.2 / 4.4 / 5.0 engine and they are decoded instantly, fully offline.</p>
+        </div>
+        <div class="feature-card">
+          <h3>What FIX message types are decoded?</h3>
+          <p>All standard types: NewOrderSingle (D), ExecutionReport (8), OrderCancelRequest (F), OrderCancelReplaceRequest (G), MarketDataRequest (V), Heartbeat (0), Logon (A), Logout (5), and all other FIX 4.2/4.4/5.0 MsgTypes.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Does it send data to the cloud?</h3>
+          <p>No. AI FIX Parser is 100% offline. No network calls, no telemetry. Your order flow and FIX logs never leave your machine.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Is it really free?</h3>
+          <p>Yes — completely free, no subscription, no sign-up, no usage limits. Download and run on macOS or Windows.</p>
+        </div>
+        <div class="feature-card">
+          <h3>What is the FIX protocol?</h3>
+          <p>FIX (Financial Information eXchange) is the industry-standard messaging protocol for electronic trading. FIX 4.2 and FIX 4.4 are the most widely deployed versions across equities, derivatives, and FX order routing globally.</p>
+        </div>
+        <div class="feature-card">
+          <h3>How is this different from a FIX engine?</h3>
+          <p>A FIX engine (like QuickFIX or Artio FIX) connects to a counterparty and sends/receives orders. AI FIX Parser is a log viewer and debugger — it helps you understand and troubleshoot the messages your FIX engine produces.</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- ── Footer ── -->
   <footer class="footer">
     <div class="section-inner">
-      <p>⚡ AI FIX Parser · aifixparser.com</p>
-      <p class="footer-muted">Your data stays on your machine. Always.</p>
+      <p>⚡ AI FIX Parser · <a href="https://aifixparser.com">aifixparser.com</a></p>
+      <p class="footer-muted">Free FIX protocol parser for FIX 4.2, FIX 4.4 &amp; FIX 5.0 · Works with QuickFIX, Artio FIX and all FIX engines · Your data stays on your machine. Always.</p>
     </div>
   </footer>
 
