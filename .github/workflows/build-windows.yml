@@ -2,10 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main, "feautre/**", "feature/**"]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -57,7 +54,6 @@ jobs:
   # ─── Release (tags only) ──────────────────────────────────────────────────
   release:
     name: Attach to GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: build-windows
     runs-on: ubuntu-latest
     permissions:
