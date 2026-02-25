@@ -36,6 +36,15 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 .btn-clear:hover { background: #a4f0ff; }
 .btn-sample { background: #bd93f9; }
 .btn-sample:hover { background: #d0afff; }
+.btn-sample-inline {
+    background: transparent;
+    color: #bd93f9;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+.btn-sample-inline:hover { background: rgba(189,147,249,0.2); color: #d0afff; }
+.sample-label { color: #6272a4; font-size: 12px; margin-right: 4px; }
+.sample-sep { color: #44475a; font-size: 12px; }
 
 /* Textarea */
 .fix-input {

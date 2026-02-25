@@ -4,7 +4,7 @@ use crate::components::detail::detail_panel;
 use crate::components::timeline::timeline_panel;
 use crate::model::FixMessage;
 use crate::parser::parse_all;
-use crate::sample::sample_data;
+use crate::sample::{sample_data, FIX_SPECS};
 use crate::style::CSS;
 
 /// Root application component.
@@ -27,8 +27,8 @@ pub fn app() -> Element {
         selected_idx.set(None);
     };
 
-    let mut load_sample = move || {
-        let s = sample_data();
+    let mut load_sample = move |spec: &str| {
+        let s = sample_data(spec);
         let parsed = parse_all(&s);
         input.set(s);
         messages.set(parsed);
@@ -46,7 +46,18 @@ pub fn app() -> Element {
             div { class: "toolbar",
                 button { class: "btn btn-process", onclick: move |_| process(), "Process" }
                 button { class: "btn btn-clear", onclick: move |_| clear(), "Clear" }
-                button { class: "btn btn-sample", onclick: move |_| load_sample(), "Sample data" }
+                span { class: "sample-label", "Sample: " }
+                {FIX_SPECS.iter().enumerate().map(|(i, spec)| {
+                    let sep = if i > 0 { rsx! { span { class: "sample-sep", " | " } } } else { rsx! { } };
+                    rsx! {
+                        {sep}
+                        button {
+                            class: "btn btn-sample-inline",
+                            onclick: move |_| load_sample(spec),
+                            "{spec}"
+                        }
+                    }
+                })}
             }
 
             // ── Textarea ──
