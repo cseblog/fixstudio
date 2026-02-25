@@ -1,34 +1,74 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
 
-use crate::dictionary::{is_common_tag, tag_badge_class};
+use crate::dictionary::{is_common_tag, tag_badge_class, value_description};
 use crate::model::{FixField, FixMessage};
 
-/// Build a copyable raw-text representation of the message.
+// ── View mode constants ───────────────────────────────────────────────────────
+const VIEW_TABLE: u8 = 0;
+const VIEW_RAW:   u8 = 1;
+const VIEW_JSON:  u8 = 2;
+
+// ── Text builders ─────────────────────────────────────────────────────────────
+
 fn build_raw_text(msg: &FixMessage) -> String {
     let mut lines = Vec::new();
-
-    // Header: message type label
     lines.push(format!("{}>>", msg.msg_type_label));
-
     for field in &msg.fields {
         let name = if field.tag_description != "Unknown" {
             format!("{}({})", field.tag_description, field.tag)
         } else {
             field.tag.clone()
         };
-
-        let val_part = if field.value_description.is_empty() {
+        let val_desc = value_description(&field.tag, &field.value);
+        let val_part = if val_desc.is_empty() {
             field.value.clone()
         } else {
-            format!("{} [{}]", field.value, field.value_description)
+            format!("{} [{}]", field.value, val_desc)
         };
-
         lines.push(format!("  {}: {}", name, val_part));
     }
-
     lines.join("\n")
 }
+
+fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+     .replace('"',  "\\\"")
+     .replace('\n', "\\n")
+     .replace('\r', "\\r")
+     .replace('\t', "\\t")
+}
+
+/// Serialise all fields (skip_common not applied — JSON is a full export).
+fn build_json_text(msg: &FixMessage) -> String {
+    let entries: Vec<String> = msg.fields.iter().map(|f| {
+        let mut e = format!(
+            "  {{\"tag\": \"{}\", \"name\": \"{}\", \"value\": \"{}\"",
+            json_escape(&f.tag),
+            json_escape(f.tag_description),
+            json_escape(&f.value),
+        );
+        let val_desc = value_description(&f.tag, &f.value);
+        if !val_desc.is_empty() {
+            e.push_str(&format!(", \"decoded\": \"{}\"", json_escape(&val_desc)));
+        }
+        e.push('}');
+        e
+    }).collect();
+
+    format!("[\n{}\n]", entries.join(",\n"))
+}
+
+// ── Copy helper ───────────────────────────────────────────────────────────────
+
+fn copy_js(text: &str) -> String {
+    format!(
+        "navigator.clipboard.writeText(`{}`)",
+        text.replace('\\', "\\\\").replace('`', "\\`")
+    )
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 /// Renders the Detail panel (right side).
 #[component]
@@ -36,15 +76,15 @@ pub fn detail_panel(
     detail_msg: Option<FixMessage>,
     skip_common: Signal<bool>,
 ) -> Element {
-    let mut show_raw = use_signal(|| false);
+    let mut view   = use_signal(|| VIEW_TABLE);
     let mut copied = use_signal(|| false);
 
-    // Build raw text for the current message (if any)
-    let raw_text = detail_msg.as_ref().map(|m| build_raw_text(m));
+    let raw_text  = detail_msg.as_ref().map(|m| build_raw_text(m));
+    let json_text = detail_msg.as_ref().map(|m| build_json_text(m));
 
     rsx! {
         div { class: "panel-detail",
-            // ── Header row ──
+            // ── Header ──
             div { class: "panel-header",
                 h2 { "Detail" }
                 div { class: "header-actions",
@@ -59,24 +99,29 @@ pub fn detail_panel(
                 }
             }
 
-            // ── View toggle tabs ──
+            // ── Tabs (only when a message is selected) ──
             if detail_msg.is_some() {
                 div { class: "view-tabs",
                     button {
-                        class: if !*show_raw.read() { "tab-btn tab-active" } else { "tab-btn" },
-                        onclick: move |_| show_raw.set(false),
+                        class: if *view.read() == VIEW_TABLE { "tab-btn tab-active" } else { "tab-btn" },
+                        onclick: move |_| view.set(VIEW_TABLE),
                         "Table"
                     }
                     button {
-                        class: if *show_raw.read() { "tab-btn tab-active" } else { "tab-btn" },
-                        onclick: move |_| { show_raw.set(true); copied.set(false); },
+                        class: if *view.read() == VIEW_RAW { "tab-btn tab-active" } else { "tab-btn" },
+                        onclick: move |_| { view.set(VIEW_RAW); copied.set(false); },
                         "Raw Text"
+                    }
+                    button {
+                        class: if *view.read() == VIEW_JSON { "tab-btn tab-active" } else { "tab-btn" },
+                        onclick: move |_| { view.set(VIEW_JSON); copied.set(false); },
+                        "JSON"
                     }
                 }
             }
 
             // ── Table view ──
-            if !*show_raw.read() {
+            if *view.read() == VIEW_TABLE {
                 div { class: "table-wrap",
                     div { class: "tbl-header tbl-detail-row",
                         span { "Tag" }
@@ -95,12 +140,13 @@ pub fn detail_panel(
                                     for field in fields.iter() {
                                         {
                                             let desc_cls = tag_badge_class(&field.tag);
+                                            let val_desc = value_description(&field.tag, &field.value);
                                             rsx! {
                                                 div { class: "tbl-row tbl-detail-row",
                                                     span { class: "tag-num", "{field.tag}" }
                                                     span { span { class: "badge {desc_cls}", "{field.tag_description}" } }
                                                     span { "{field.value}" }
-                                                    span { "{field.value_description}" }
+                                                    span { "{val_desc}" }
                                                 }
                                             }
                                         }
@@ -115,23 +161,34 @@ pub fn detail_panel(
             }
 
             // ── Raw Text view ──
-            if *show_raw.read() {
+            if *view.read() == VIEW_RAW {
                 if let Some(ref text) = raw_text {
                     div { class: "raw-text-wrap",
                         div { class: "raw-text-toolbar",
                             button {
                                 class: if *copied.read() { "btn btn-copied" } else { "btn btn-copy" },
                                 onclick: {
-                                    let t = text.clone();
-                                    move |_| {
-                                        // Use the clipboard API via eval
-                                        let js = format!(
-                                            "navigator.clipboard.writeText(`{}`)",
-                                            t.replace('\\', "\\\\").replace('`', "\\`")
-                                        );
-                                        eval(&js);
-                                        copied.set(true);
-                                    }
+                                    let js = copy_js(text);
+                                    move |_| { eval(&js); copied.set(true); }
+                                },
+                                if *copied.read() { "Copied!" } else { "Copy" }
+                            }
+                        }
+                        pre { class: "raw-text", "{text}" }
+                    }
+                }
+            }
+
+            // ── JSON view ──
+            if *view.read() == VIEW_JSON {
+                if let Some(ref text) = json_text {
+                    div { class: "raw-text-wrap",
+                        div { class: "raw-text-toolbar",
+                            button {
+                                class: if *copied.read() { "btn btn-copied" } else { "btn btn-copy" },
+                                onclick: {
+                                    let js = copy_js(text);
+                                    move |_| { eval(&js); copied.set(true); }
                                 },
                                 if *copied.read() { "Copied!" } else { "Copy" }
                             }

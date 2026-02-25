@@ -15,10 +15,10 @@ pub struct FixMessage {
 }
 
 /// A single tag=value pair with resolved descriptions.
+/// value_description is computed lazily when the detail panel displays.
 #[derive(Clone, PartialEq)]
 pub struct FixField {
     pub tag: String,
     pub value: String,
     pub tag_description: &'static str,
-    pub value_description: String,
 }
