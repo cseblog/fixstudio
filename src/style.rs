@@ -1,14 +1,14 @@
 /// Global CSS for the application (Dracula theme).
 pub const CSS: &str = r#"
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #282a36; }
+html, body { height: 100%; overflow: hidden; background: #282a36; }
 
 .root {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     color: #f8f8f2;
     padding: 16px 20px;
     background: #282a36;
-    min-height: 100vh;
+    height: 100vh;
     font-size: 13px;
     display: flex;
     flex-direction: column;
