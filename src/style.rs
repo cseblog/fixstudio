@@ -34,6 +34,8 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 .btn-process:hover { background: #69ff94; }
 .btn-clear { background: #8be9fd; }
 .btn-clear:hover { background: #a4f0ff; }
+.btn-load { background: #ffb86c; }
+.btn-load:hover { background: #ffcc8c; }
 .btn-sample { background: #bd93f9; }
 .btn-sample:hover { background: #d0afff; }
 .btn-sample-inline {
@@ -166,7 +168,7 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 
 .tbl-timeline-row {
     display: grid;
-    grid-template-columns: 100px 72px 72px 150px 1fr 160px;
+    grid-template-columns: 170px 72px 72px 150px 1fr 160px;
     gap: 6px;
     padding: 6px 10px;
     align-items: center;

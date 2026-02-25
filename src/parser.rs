@@ -83,10 +83,24 @@ fn parse_single(raw: &str) -> FixMessage {
     msg
 }
 
+/// Format SendingTime (tag 52) for display: YYYYMMDD-HH:MM:SS -> YYYY-MM-DD HH:MM:SS
 fn extract_time(sending_time: &str) -> String {
     // Format: YYYYMMDD-HH:MM:SS or YYYYMMDD-HH:MM:SS.sss
     if let Some(pos) = sending_time.find('-') {
-        sending_time[pos + 1..].to_string()
+        let date_part = &sending_time[..pos];
+        let time_part = &sending_time[pos + 1..];
+        // Reformat date: 20121105 -> 2012-11-05
+        if date_part.len() == 8 && date_part.chars().all(|c| c.is_ascii_digit()) {
+            let formatted = format!(
+                "{}-{}-{} {}",
+                &date_part[0..4],
+                &date_part[4..6],
+                &date_part[6..8],
+                time_part
+            );
+            return formatted.trim_end().to_string();
+        }
+        format!("{date_part} {time_part}")
     } else {
         sending_time.to_string()
     }
