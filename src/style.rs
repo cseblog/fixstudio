@@ -1,14 +1,14 @@
 /// Global CSS for the application (Dracula theme).
 pub const CSS: &str = r#"
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #282a36; }
+html, body { height: 100%; overflow: hidden; background: #282a36; }
 
 .root {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     color: #f8f8f2;
     padding: 16px 20px;
     background: #282a36;
-    min-height: 100vh;
+    height: 100vh;
     font-size: 13px;
     display: flex;
     flex-direction: column;
@@ -34,8 +34,19 @@ body { background: #282a36; }
 .btn-process:hover { background: #69ff94; }
 .btn-clear { background: #8be9fd; }
 .btn-clear:hover { background: #a4f0ff; }
+.btn-load { background: #ffb86c; }
+.btn-load:hover { background: #ffcc8c; }
 .btn-sample { background: #bd93f9; }
 .btn-sample:hover { background: #d0afff; }
+.btn-sample-inline {
+    background: transparent;
+    color: #bd93f9;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+.btn-sample-inline:hover { background: rgba(189,147,249,0.2); color: #d0afff; }
+.sample-label { color: #6272a4; font-size: 12px; margin-right: 4px; }
+.sample-sep { color: #44475a; font-size: 12px; }
 
 /* Textarea */
 .fix-input {
@@ -157,7 +168,7 @@ body { background: #282a36; }
 
 .tbl-timeline-row {
     display: grid;
-    grid-template-columns: 100px 72px 72px 150px 1fr 160px;
+    grid-template-columns: 170px 72px 72px 150px 1fr 160px;
     gap: 6px;
     padding: 6px 10px;
     align-items: center;
@@ -176,6 +187,34 @@ body { background: #282a36; }
 .cell-time { font-variant-numeric: tabular-nums; color: #6272a4; }
 .cell-detail { color: #6272a4; font-size: 11px; }
 .tag-num { color: #bd93f9; font-variant-numeric: tabular-nums; text-align: right; }
+
+/* Column filters */
+.tbl-filter { background: #1e1f29; border-bottom: 1px solid #343746; }
+.col-filter {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid transparent;
+    color: #f8f8f2;
+    font-size: 11px;
+    font-family: inherit;
+    padding: 2px 2px;
+    outline: none;
+}
+.col-filter::placeholder { color: #44475a; }
+.col-filter:focus { border-bottom-color: #bd93f9; }
+.btn-clear-filter {
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid #ff5555;
+    background: transparent;
+    color: #ff5555;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.btn-clear-filter:hover { background: rgba(255,85,85,0.12); }
 
 .empty-state { padding: 20px; text-align: center; color: #6272a4; }
 

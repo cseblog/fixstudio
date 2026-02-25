@@ -12,6 +12,10 @@ path = "src/main.rs"
 [dependencies]
 dioxus = { version = "0.7.2", features = ["desktop"] }
 dioxus-desktop = "0.7.2"
+ico = "0.3"
+rayon = "1.10"
+rfd = "0.15"
+tao = "0.34"
 
 # ---------------------------------------------------------------------------
 # Platform-specific dependencies

@@ -54,6 +54,11 @@ pub fn msg_type_label(code: &str) -> &'static str {
         "AS" => "AllocationReport",
         "AT" => "AllocationReportAck",
         "AU" => "ConfirmationAck",
+        "j" => "BusinessMessageReject",
+        "BE" => "UserRequest",
+        "BF" => "UserResponse",
+        "BJ" => "DerivativeSecurityList",
+        "BK" => "DerivativeSecurityListRequest",
         _ => "Unknown",
     }
 }
@@ -275,98 +280,505 @@ pub fn tag_description(tag: &str) -> &'static str {
 }
 
 /// Resolve a human-readable description for a tag's value.
+/// Values sourced from FIX Trading Community specification (fix.dev, fixtrading.org).
 pub fn value_description(tag: &str, value: &str) -> String {
     match tag {
         "35" => msg_type_label(value).to_string(),
-        "39" => match value {
-            "0" => "New".into(),
-            "1" => "Partially filled".into(),
-            "2" => "Filled".into(),
-            "3" => "Done for day".into(),
-            "4" => "Canceled".into(),
-            "5" => "Replaced".into(),
-            "6" => "Pending Cancel".into(),
-            "7" => "Stopped".into(),
-            "8" => "Rejected".into(),
-            "9" => "Suspended".into(),
-            "A" => "Pending New".into(),
-            "B" => "Calculated".into(),
-            "C" => "Expired".into(),
-            "D" => "Accepted for bidding".into(),
-            "E" => "Pending Replace".into(),
-            _ => String::new(),
-        },
-        "40" => match value {
-            "1" => "Market".into(),
-            "2" => "Limit".into(),
-            "3" => "Stop".into(),
-            "4" => "Stop Limit".into(),
-            "5" => "Market On Close".into(),
-            "6" => "With Or Without".into(),
-            "7" => "Limit Or Better".into(),
-            "8" => "Limit With Or Without".into(),
-            "9" => "On Basis".into(),
-            "P" => "Pegged".into(),
-            _ => String::new(),
-        },
+        "39" => ord_status_label(value),
+        "40" => ord_type_label(value),
         "54" => side_label(value).to_string(),
-        "59" => match value {
-            "0" => "DAY".into(),
-            "1" => "GTC".into(),
-            "2" => "OPG".into(),
-            "3" => "IOC".into(),
-            "4" => "FOK".into(),
-            "5" => "GTX".into(),
-            "6" => "GTD".into(),
-            _ => String::new(),
-        },
-        "150" => match value {
-            "0" => "New".into(),
-            "1" => "Partial fill (deprecated)".into(),
-            "2" => "Fill (deprecated)".into(),
-            "3" => "Done for day".into(),
-            "4" => "Canceled".into(),
-            "5" => "Replaced".into(),
-            "6" => "Pending Cancel".into(),
-            "7" => "Stopped".into(),
-            "8" => "Rejected".into(),
-            "9" => "Suspended".into(),
-            "A" => "Pending New".into(),
-            "B" => "Calculated".into(),
-            "C" => "Expired".into(),
-            "D" => "Restated".into(),
-            "E" => "Pending Replace".into(),
-            "F" => "Trade".into(),
-            "G" => "Trade Correct".into(),
-            "H" => "Trade Cancel".into(),
-            "I" => "Order Status".into(),
-            _ => String::new(),
-        },
-        "21" => match value {
-            "1" => "Automated execution, no intervention".into(),
-            "2" => "Automated execution, intervention OK".into(),
-            "3" => "Manual order".into(),
-            _ => String::new(),
-        },
-        "98" => match value {
-            "0" => "NONE OTHER".into(),
-            "1" => "PKCS".into(),
-            "2" => "DES".into(),
-            "3" => "PKCS DES".into(),
-            "4" => "PGP DES".into(),
-            "5" => "PGP DES MD5".into(),
-            "6" => "PEM DES MD5".into(),
-            _ => String::new(),
-        },
-        "22" => match value {
-            "1" => "CUSIP".into(),
-            "2" => "SEDOL".into(),
-            "3" => "QUIK".into(),
-            "4" => "ISIN".into(),
-            "5" => "RIC".into(),
-            "8" => "Exchange Symbol".into(),
-            _ => String::new(),
-        },
+        "59" => time_in_force_label(value),
+        "150" => exec_type_label(value),
+        "21" => handl_inst_label(value),
+        "98" => encrypt_method_label(value),
+        "22" => security_id_source_label(value),
+        "20" => exec_trans_type_label(value),
+        "102" => cxl_rej_reason_label(value),
+        "103" => ord_rej_reason_label(value),
+        "373" => session_reject_reason_label(value),
+        "77" => position_effect_label(value),
+        "167" => security_type_label(value),
+        "263" => subscription_request_type_label(value),
+        "269" => md_entry_type_label(value),
+        "274" => tick_direction_label(value),
+        "279" => md_update_action_label(value),
+        "378" => exec_restatement_reason_label(value),
+        "434" => cxl_rej_response_to_label(value),
+        "460" => product_label(value),
+        "528" => order_capacity_label(value),
+        "201" => put_or_call_label(value),
+        "28" => ioi_trans_type_label(value),
+        "29" => last_capacity_label(value),
+        "63" => settl_type_label(value),
+        "385" => msg_direction_label(value),
+        _ => String::new(),
+    }
+}
+
+fn ord_status_label(value: &str) -> String {
+    match value {
+        "0" => "New".into(),
+        "1" => "Partially filled".into(),
+        "2" => "Filled".into(),
+        "3" => "Done for day".into(),
+        "4" => "Canceled".into(),
+        "5" => "Replaced".into(),
+        "6" => "Pending Cancel".into(),
+        "7" => "Stopped".into(),
+        "8" => "Rejected".into(),
+        "9" => "Suspended".into(),
+        "A" => "Pending New".into(),
+        "B" => "Calculated".into(),
+        "C" => "Expired".into(),
+        "D" => "Accepted for bidding".into(),
+        "E" => "Pending Replace".into(),
+        _ => String::new(),
+    }
+}
+
+fn ord_type_label(value: &str) -> String {
+    match value {
+        "1" => "Market".into(),
+        "2" => "Limit".into(),
+        "3" => "Stop".into(),
+        "4" => "Stop Limit".into(),
+        "5" => "Market On Close".into(),
+        "6" => "With Or Without".into(),
+        "7" => "Limit Or Better".into(),
+        "8" => "Limit With Or Without".into(),
+        "9" => "On Basis".into(),
+        "A" => "On Close".into(),
+        "B" => "Limit On Close".into(),
+        "C" => "Forex Market".into(),
+        "D" => "Previously Quoted".into(),
+        "E" => "Previously Indicated".into(),
+        "F" => "Forex Limit".into(),
+        "G" => "Forex Previously Quoted".into(),
+        "H" => "Funari".into(),
+        "I" => "Market If Touched".into(),
+        "J" => "Market With Left Over as Limit".into(),
+        "K" => "Previous Fund Valuation Point".into(),
+        "L" => "Next Fund Valuation Point".into(),
+        "M" => "Pegged".into(),
+        "P" => "Pegged".into(),
+        _ => String::new(),
+    }
+}
+
+fn time_in_force_label(value: &str) -> String {
+    match value {
+        "0" => "DAY".into(),
+        "1" => "GTC (Good Till Cancel)".into(),
+        "2" => "OPG (At the Opening)".into(),
+        "3" => "IOC (Immediate or Cancel)".into(),
+        "4" => "FOK (Fill or Kill)".into(),
+        "5" => "GTX (Good Till Crossing)".into(),
+        "6" => "GTD (Good Till Date)".into(),
+        "7" => "At the Close".into(),
+        "8" => "Good Through Crossing".into(),
+        "9" => "At Crossing".into(),
+        _ => String::new(),
+    }
+}
+
+fn exec_type_label(value: &str) -> String {
+    match value {
+        "0" => "New".into(),
+        "1" => "Partial fill (deprecated)".into(),
+        "2" => "Fill (deprecated)".into(),
+        "3" => "Done for day".into(),
+        "4" => "Canceled".into(),
+        "5" => "Replaced".into(),
+        "6" => "Pending Cancel".into(),
+        "7" => "Stopped".into(),
+        "8" => "Rejected".into(),
+        "9" => "Suspended".into(),
+        "A" => "Pending New".into(),
+        "B" => "Calculated".into(),
+        "C" => "Expired".into(),
+        "D" => "Restated".into(),
+        "E" => "Pending Replace".into(),
+        "F" => "Trade".into(),
+        "G" => "Trade Correct".into(),
+        "H" => "Trade Cancel".into(),
+        "I" => "Order Status".into(),
+        _ => String::new(),
+    }
+}
+
+fn handl_inst_label(value: &str) -> String {
+    match value {
+        "1" => "Automated execution, no intervention".into(),
+        "2" => "Automated execution, intervention OK".into(),
+        "3" => "Manual order".into(),
+        _ => String::new(),
+    }
+}
+
+fn encrypt_method_label(value: &str) -> String {
+    match value {
+        "0" => "None / Other".into(),
+        "1" => "PKCS".into(),
+        "2" => "DES".into(),
+        "3" => "PKCS/DES".into(),
+        "4" => "PGP/DES".into(),
+        "5" => "PGP/DES-MD5".into(),
+        "6" => "PEM/DES-MD5".into(),
+        _ => String::new(),
+    }
+}
+
+fn security_id_source_label(value: &str) -> String {
+    match value {
+        "1" => "CUSIP".into(),
+        "2" => "SEDOL".into(),
+        "3" => "QUIK".into(),
+        "4" => "ISIN".into(),
+        "5" => "RIC".into(),
+        "6" => "ISO Currency Code".into(),
+        "7" => "ISO Country Code".into(),
+        "8" => "Exchange Symbol".into(),
+        "9" => "Consolidated Tape Association".into(),
+        _ => String::new(),
+    }
+}
+
+fn exec_trans_type_label(value: &str) -> String {
+    match value {
+        "0" => "NEW".into(),
+        "1" => "CANCEL".into(),
+        "2" => "CORRECT".into(),
+        "3" => "STATUS".into(),
+        _ => String::new(),
+    }
+}
+
+fn cxl_rej_reason_label(value: &str) -> String {
+    match value {
+        "0" => "Too late to cancel".into(),
+        "1" => "Unknown order".into(),
+        "2" => "Broker / Exchange Option".into(),
+        "3" => "Order already in Pending Cancel or Pending Replace".into(),
+        "4" => "Unable to process Order Mass Cancel Request".into(),
+        "5" => "OrigOrdModTime did not match last TransactTime".into(),
+        "6" => "Duplicate ClOrdID received".into(),
+        "7" => "Price exceeds current price".into(),
+        "8" => "Price exceeds current price band".into(),
+        "18" => "Invalid price increment".into(),
+        "99" => "Other".into(),
+        _ => String::new(),
+    }
+}
+
+fn ord_rej_reason_label(value: &str) -> String {
+    match value {
+        "0" => "Broker / Exchange option".into(),
+        "1" => "Unknown symbol".into(),
+        "2" => "Exchange closed".into(),
+        "3" => "Order exceeds limit".into(),
+        "4" => "Too late to enter".into(),
+        "5" => "Unknown order".into(),
+        "6" => "Duplicate Order (e.g. dupe ClOrdID)".into(),
+        "7" => "Duplicate of a verbally communicated order".into(),
+        "8" => "Stale order".into(),
+        "9" => "Trade along required".into(),
+        "10" => "Invalid Investor ID".into(),
+        "11" => "Unsupported order characteristic".into(),
+        "12" => "Surveillance option".into(),
+        "13" => "Incorrect quantity".into(),
+        "14" => "Incorrect allocated quantity".into(),
+        "15" => "Unknown account(s)".into(),
+        "16" => "Price exceeds current price band".into(),
+        "18" => "Invalid price increment".into(),
+        "19" => "Reference price not available".into(),
+        "20" => "Notional value exceeds threshold".into(),
+        "21" => "Algorithm risk threshold breached".into(),
+        "22" => "Short sell not permitted".into(),
+        "23" => "Short sell rejected (security pre-borrow)".into(),
+        "24" => "Short sell rejected (account pre-borrow)".into(),
+        "25" => "Insufficient credit limit".into(),
+        "26" => "Exceeded clip size limit".into(),
+        "27" => "Exceeded maximum notional order amount".into(),
+        "28" => "Exceeded DV01/PV01 limit".into(),
+        "29" => "Exceeded CS01 limit".into(),
+        "99" => "Other".into(),
+        _ => String::new(),
+    }
+}
+
+fn session_reject_reason_label(value: &str) -> String {
+    match value {
+        "0" => "Invalid Tag Number".into(),
+        "1" => "Required Tag Missing".into(),
+        "2" => "Tag not defined for this message type".into(),
+        "3" => "Undefined tag".into(),
+        "4" => "Tag specified without a value".into(),
+        "5" => "Value is incorrect (out of range) for this tag".into(),
+        "6" => "Incorrect data format for value".into(),
+        "7" => "Decryption problem".into(),
+        "8" => "Signature problem".into(),
+        "9" => "CompID problem".into(),
+        "10" => "SendingTime Accuracy Problem".into(),
+        "11" => "Invalid MsgType".into(),
+        "12" => "XML Validation Error".into(),
+        "13" => "Tag appears more than once".into(),
+        "14" => "Tag specified out of required order".into(),
+        "15" => "Repeating group fields out of order".into(),
+        "16" => "Incorrect NumInGroup count for repeating group".into(),
+        "17" => "Non Data value includes field delimiter".into(),
+        "18" => "Invalid/Unsupported Application Version".into(),
+        "99" => "Other".into(),
+        _ => String::new(),
+    }
+}
+
+fn position_effect_label(value: &str) -> String {
+    match value {
+        "O" => "Open".into(),
+        "C" => "Close".into(),
+        "F" => "FIFO".into(),
+        "R" => "Rolled".into(),
+        _ => String::new(),
+    }
+}
+
+fn security_type_label(value: &str) -> String {
+    match value {
+        "ABS" => "Asset-backed securities".into(),
+        "AMENDED" => "Amended & Restated".into(),
+        "AN" => "Anticipation Notes".into(),
+        "BA" => "Bankers Acceptance".into(),
+        "BOND" => "Bond".into(),
+        "BRADY" => "Brady Bond".into(),
+        "BRIDGE" => "Bridge Loan".into(),
+        "CD" => "Certificate of Deposit".into(),
+        "CMBS" => "CMBS".into(),
+        "COFO" => "Certificate Of Obligation".into(),
+        "COFP" => "Certificate of Participation".into(),
+        "CORP" => "Corporate Bond".into(),
+        "CP" => "Commercial Paper".into(),
+        "CPP" => "Corporate Private Placement".into(),
+        "CS" => "Common Stock".into(),
+        "DEFLTED" => "Defaulted".into(),
+        "DINP" => "Debtor in Possession".into(),
+        "DN" => "Deposit Notes".into(),
+        "DUAL" => "Dual Currency".into(),
+        "EUCD" => "Euro Certificate of Deposit".into(),
+        "EUCORP" => "Euro Corporate Bond".into(),
+        "EUSOV" => "Euro Sovereign".into(),
+        "EUSUPRA" => "Euro Supranational Coupons".into(),
+        "FAC" => "Federal Agency Coupon".into(),
+        "FAD" => "Federal Agency Discount Note".into(),
+        "FOR" => "Foreign Exchange Contract".into(),
+        "FUT" => "Future".into(),
+        "GIC" => "Guaranteed Investment Contract".into(),
+        "GOVT" => "Government".into(),
+        "IET" => "IOETTE".into(),
+        "LOFC" => "Letter of Credit".into(),
+        "LQN" => "Liquidity Note".into(),
+        "MATURED" => "Matured".into(),
+        "MF" => "Mutual Fund".into(),
+        "MBS" => "Mortgage-backed securities".into(),
+        "MIO" => "Mortgage Interest Only".into(),
+        "MPO" => "Mortgage Principal Only".into(),
+        "MPP" => "Mortgage Private Placement".into(),
+        "MPT" => "Miscellaneous Pass-through".into(),
+        "MTN" => "Medium Term Notes".into(),
+        "MUNIC" => "Municipal".into(),
+        "NONE" => "No Security Type".into(),
+        "OPT" => "Option".into(),
+        "PEF" => "Private Export Funding".into(),
+        "PFAND" => "Pfandbriefe".into(),
+        "PS" => "Preferred Stock".into(),
+        "REPO" => "Repurchase".into(),
+        "RETIRED" => "Retired".into(),
+        "REV" => "Revenue Bonds".into(),
+        "RVLV" => "Revolver Loan".into(),
+        "RVLVTRM" => "Revolver/Term Loan".into(),
+        "SECLOAN" => "Secured Loan".into(),
+        "SLE" => "Sale Leaseback".into(),
+        "SLQ" => "Student Loan Marketing Assoc".into(),
+        "STN" => "Short Term Loan Note".into(),
+        "STRUCT" => "Structured Notes".into(),
+        "SUPRA" => "USD Supranational Coupons".into(),
+        "SVERN" => "Sovereign".into(),
+        "TAN" => "Tax Anticipation Note".into(),
+        "TAXA" => "Tax Allocation".into(),
+        "TBD" => "To Be Announced".into(),
+        "TECP" => "Tax Exempt Commercial Paper".into(),
+        "TRAN" => "Transmission".into(),
+        "TERM" => "Term Loan".into(),
+        "UST" => "US Treasury".into(),
+        "USTB" => "US Treasury Bill".into(),
+        "WAR" => "Warrant".into(),
+        "WITHDRN" => "Withdrawn".into(),
+        "WOF" => "Wellesley Off Shore Fund".into(),
+        _ => String::new(),
+    }
+}
+
+fn subscription_request_type_label(value: &str) -> String {
+    match value {
+        "0" => "Snapshot".into(),
+        "1" => "Snapshot + Updates (Subscribe)".into(),
+        "2" => "Disable previous Snapshot + Update (Unsubscribe)".into(),
+        _ => String::new(),
+    }
+}
+
+fn md_entry_type_label(value: &str) -> String {
+    match value {
+        "0" => "Bid".into(),
+        "1" => "Offer".into(),
+        "2" => "Trade".into(),
+        "3" => "Index value".into(),
+        "4" => "Opening price".into(),
+        "5" => "Closing price".into(),
+        "6" => "Settlement price".into(),
+        "7" => "Trading session high price".into(),
+        "8" => "Trading session low price".into(),
+        "9" => "Volume Weighted Average Price".into(),
+        "A" => "Imbalance".into(),
+        "B" => "Trade volume".into(),
+        "C" => "Open interest".into(),
+        "D" => "Composite underlying price".into(),
+        "H" => "Mid-price".into(),
+        "J" => "Empty book".into(),
+        "Q" => "Auction clearing price".into(),
+        "W" => "Fixing price".into(),
+        "t" => "Time Weighted Average Price".into(),
+        _ => String::new(),
+    }
+}
+
+fn tick_direction_label(value: &str) -> String {
+    match value {
+        "0" => "Plus Tick".into(),
+        "1" => "Zero-Plus Tick".into(),
+        "2" => "Minus Tick".into(),
+        "3" => "Zero-Minus Tick".into(),
+        _ => String::new(),
+    }
+}
+
+fn md_update_action_label(value: &str) -> String {
+    match value {
+        "0" => "New".into(),
+        "1" => "Change".into(),
+        "2" => "Delete".into(),
+        "3" => "Delete Thru".into(),
+        "4" => "Delete From".into(),
+        "5" => "Overlay".into(),
+        _ => String::new(),
+    }
+}
+
+fn exec_restatement_reason_label(value: &str) -> String {
+    match value {
+        "0" => "GT corporate action".into(),
+        "1" => "GT renewal / restatement (no corporate action)".into(),
+        "2" => "Verbal change".into(),
+        "3" => "Repricing of order".into(),
+        "6" => "Cancel on Trading Halt".into(),
+        "7" => "Cancel on System Failure".into(),
+        "9" => "Canceled, not best".into(),
+        "12" => "Cancel On Connection Loss".into(),
+        "13" => "Cancel On Logout".into(),
+        "99" => "Other".into(),
+        _ => String::new(),
+    }
+}
+
+fn cxl_rej_response_to_label(value: &str) -> String {
+    match value {
+        "1" => "Order Cancel Request (35=F)".into(),
+        "2" => "Order Cancel/Replace Request (35=G)".into(),
+        _ => String::new(),
+    }
+}
+
+fn product_label(value: &str) -> String {
+    match value {
+        "1" => "AGENCY".into(),
+        "2" => "COMMODITY".into(),
+        "3" => "CORPORATE".into(),
+        "4" => "CURRENCY".into(),
+        "5" => "EQUITY".into(),
+        "6" => "GOVERNMENT".into(),
+        "7" => "INDEX".into(),
+        "8" => "LOAN".into(),
+        "9" => "MONEYMARKET".into(),
+        "10" => "MORTGAGE".into(),
+        "11" => "MUNICIPAL".into(),
+        "12" => "OTHER".into(),
+        "13" => "FINANCING".into(),
+        _ => String::new(),
+    }
+}
+
+fn order_capacity_label(value: &str) -> String {
+    match value {
+        "A" => "Agency".into(),
+        "G" => "Proprietary".into(),
+        "I" => "Individual".into(),
+        "P" => "Principal".into(),
+        "R" => "Riskless Principal".into(),
+        "W" => "Agent for Other Member".into(),
+        "M" => "Mixed Capacity".into(),
+        _ => String::new(),
+    }
+}
+
+fn put_or_call_label(value: &str) -> String {
+    match value {
+        "0" => "Put".into(),
+        "1" => "Call".into(),
+        _ => String::new(),
+    }
+}
+
+fn msg_direction_label(value: &str) -> String {
+    match value {
+        "S" => "Send".into(),
+        "R" => "Receive".into(),
+        _ => String::new(),
+    }
+}
+
+fn ioi_trans_type_label(value: &str) -> String {
+    match value {
+        "N" => "New".into(),
+        "C" => "Cancel".into(),
+        "R" => "Replace".into(),
+        _ => String::new(),
+    }
+}
+
+fn last_capacity_label(value: &str) -> String {
+    match value {
+        "1" => "Agent".into(),
+        "2" => "Cross as agent".into(),
+        "3" => "Cross as principal".into(),
+        "4" => "Principal".into(),
+        "5" => "Riskless principal".into(),
+        _ => String::new(),
+    }
+}
+
+fn settl_type_label(value: &str) -> String {
+    match value {
+        "0" => "Regular / FX Spot (T+1 or T+2)".into(),
+        "1" => "Cash (TOD / T+0)".into(),
+        "2" => "Next Day (TOM / T+1)".into(),
+        "3" => "T+2".into(),
+        "4" => "T+3".into(),
+        "5" => "T+4".into(),
+        "6" => "Future".into(),
+        "7" => "When And If Issued".into(),
+        "8" => "Sellers Option".into(),
+        "9" => "T+5".into(),
+        "B" => "Broken date".into(),
+        "C" => "FX Spot Next (Spot+1)".into(),
         _ => String::new(),
     }
 }
