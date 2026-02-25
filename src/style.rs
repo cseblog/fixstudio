@@ -177,6 +177,34 @@ body { background: #282a36; }
 .cell-detail { color: #6272a4; font-size: 11px; }
 .tag-num { color: #bd93f9; font-variant-numeric: tabular-nums; text-align: right; }
 
+/* Column filters */
+.tbl-filter { background: #1e1f29; border-bottom: 1px solid #343746; }
+.col-filter {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid transparent;
+    color: #f8f8f2;
+    font-size: 11px;
+    font-family: inherit;
+    padding: 2px 2px;
+    outline: none;
+}
+.col-filter::placeholder { color: #44475a; }
+.col-filter:focus { border-bottom-color: #bd93f9; }
+.btn-clear-filter {
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid #ff5555;
+    background: transparent;
+    color: #ff5555;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.btn-clear-filter:hover { background: rgba(255,85,85,0.12); }
+
 .empty-state { padding: 20px; text-align: center; color: #6272a4; }
 
 /* Badges */
