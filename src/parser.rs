@@ -9,6 +9,7 @@ pub fn parse_all(input: &str) -> Vec<FixMessage> {
         .replace("^A", "|");
 
     // Split on "8=FIX" boundaries so we can handle multiple messages in one blob
+    // (also works for 8=FIXT.1.1 since "8=FIX" matches and remainder is "T.1.1")
     let mut raw_msgs: Vec<String> = Vec::new();
     let mut current = String::new();
 
