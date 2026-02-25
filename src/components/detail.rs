@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
 
-use crate::dictionary::{is_common_tag, tag_badge_class};
+use crate::dictionary::{is_common_tag, tag_badge_class, value_description};
 use crate::model::{FixField, FixMessage};
 
 // ── View mode constants ───────────────────────────────────────────────────────
@@ -20,10 +20,11 @@ fn build_raw_text(msg: &FixMessage) -> String {
         } else {
             field.tag.clone()
         };
-        let val_part = if field.value_description.is_empty() {
+        let val_desc = value_description(&field.tag, &field.value);
+        let val_part = if val_desc.is_empty() {
             field.value.clone()
         } else {
-            format!("{} [{}]", field.value, field.value_description)
+            format!("{} [{}]", field.value, val_desc)
         };
         lines.push(format!("  {}: {}", name, val_part));
     }
@@ -47,8 +48,9 @@ fn build_json_text(msg: &FixMessage) -> String {
             json_escape(f.tag_description),
             json_escape(&f.value),
         );
-        if !f.value_description.is_empty() {
-            e.push_str(&format!(", \"decoded\": \"{}\"", json_escape(&f.value_description)));
+        let val_desc = value_description(&f.tag, &f.value);
+        if !val_desc.is_empty() {
+            e.push_str(&format!(", \"decoded\": \"{}\"", json_escape(&val_desc)));
         }
         e.push('}');
         e
@@ -138,12 +140,13 @@ pub fn detail_panel(
                                     for field in fields.iter() {
                                         {
                                             let desc_cls = tag_badge_class(&field.tag);
+                                            let val_desc = value_description(&field.tag, &field.value);
                                             rsx! {
                                                 div { class: "tbl-row tbl-detail-row",
                                                     span { class: "tag-num", "{field.tag}" }
                                                     span { span { class: "badge {desc_cls}", "{field.tag_description}" } }
                                                     span { "{field.value}" }
-                                                    span { "{field.value_description}" }
+                                                    span { "{val_desc}" }
                                                 }
                                             }
                                         }
