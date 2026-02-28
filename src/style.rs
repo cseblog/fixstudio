@@ -106,10 +106,19 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     justify-content: space-between;
     margin-bottom: 8px;
 }
+.panel-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
 .panel-header h2 {
     font-size: 16px;
     font-weight: 700;
     color: #f8f8f2;
+}
+.parse-stats {
+    font-size: 11px;
+    color: #6272a4;
 }
 
 .check-label {

@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use dioxus::document::eval;
 
 use crate::dictionary::{is_common_tag, tag_badge_class, value_description};
-use crate::model::{FixField, FixMessage};
+use crate::model::FixMessage;
 
 // ── View mode constants ───────────────────────────────────────────────────────
 const VIEW_TABLE: u8 = 0;
@@ -133,22 +133,13 @@ pub fn detail_panel(
                         if let Some(ref msg) = detail_msg {
                             {
                                 let skip = *skip_common.read();
-                                let fields: Vec<&FixField> = msg.fields.iter()
-                                    .filter(|f| !(skip && is_common_tag(&f.tag)))
-                                    .collect();
                                 rsx! {
-                                    for field in fields.iter() {
-                                        {
-                                            let desc_cls = tag_badge_class(&field.tag);
-                                            let val_desc = value_description(&field.tag, &field.value);
-                                            rsx! {
-                                                div { class: "tbl-row tbl-detail-row",
-                                                    span { class: "tag-num", "{field.tag}" }
-                                                    span { span { class: "badge {desc_cls}", "{field.tag_description}" } }
-                                                    span { "{field.value}" }
-                                                    span { "{val_desc}" }
-                                                }
-                                            }
+                                    for field in msg.fields.iter().filter(|f| !(skip && is_common_tag(&f.tag))) {
+                                        div { class: "tbl-row tbl-detail-row",
+                                            span { class: "tag-num", "{field.tag}" }
+                                            span { span { class: "badge {tag_badge_class(&field.tag)}", "{field.tag_description}" } }
+                                            span { "{field.value}" }
+                                            span { "{value_description(&field.tag, &field.value)}" }
                                         }
                                     }
                                 }

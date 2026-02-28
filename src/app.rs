@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use dioxus::prelude::*;
 
 use crate::components::detail::detail_panel;
@@ -12,11 +14,15 @@ pub fn app() -> Element {
     let mut input = use_signal(String::new);
     let mut messages: Signal<Vec<FixMessage>> = use_signal(Vec::new);
     let mut selected_idx: Signal<Option<usize>> = use_signal(|| None);
-    let skip_heartbeats = use_signal(|| false);
+    let skip_heartbeats = use_signal(|| true);
     let skip_common = use_signal(|| false);
+    let mut parse_stats: Signal<Option<(usize, u64)>> = use_signal(|| None);
 
     let mut process = move || {
+        let t = Instant::now();
         let parsed = parse_all(&input.read());
+        let ms = t.elapsed().as_micros() as u64;
+        parse_stats.set(Some((parsed.len(), ms)));
         messages.set(parsed);
         selected_idx.set(None);
     };
@@ -25,11 +31,15 @@ pub fn app() -> Element {
         input.set(String::new());
         messages.set(Vec::new());
         selected_idx.set(None);
+        parse_stats.set(None);
     };
 
     let mut load_sample = move |spec: &str| {
         let s = sample_data(spec);
+        let t = Instant::now();
         let parsed = parse_all(&s);
+        let ms = t.elapsed().as_micros() as u64;
+        parse_stats.set(Some((parsed.len(), ms)));
         input.set(s);
         messages.set(parsed);
         selected_idx.set(None);
@@ -39,6 +49,7 @@ pub fn app() -> Element {
         let mut input = input.clone();
         let mut messages = messages.clone();
         let mut selected_idx = selected_idx.clone();
+        let mut parse_stats = parse_stats.clone();
         spawn(async move {
             if let Some(file) = rfd::AsyncFileDialog::new()
                 .add_filter("FIX log", &["txt", "log", "fix"])
@@ -48,7 +59,10 @@ pub fn app() -> Element {
             {
                 let bytes = file.read().await;
                 let content = String::from_utf8_lossy(&bytes).to_string();
+                let t = Instant::now();
                 let parsed = parse_all(&content);
+                let ms = t.elapsed().as_micros() as u64;
+                parse_stats.set(Some((parsed.len(), ms)));
                 input.set(content);
                 messages.set(parsed);
                 selected_idx.set(None);
@@ -96,6 +110,7 @@ pub fn app() -> Element {
                     messages: messages,
                     selected_idx: selected_idx,
                     skip_heartbeats: skip_heartbeats,
+                    parse_stats: parse_stats,
                 }
                 detail_panel {
                     detail_msg: detail_msg,
