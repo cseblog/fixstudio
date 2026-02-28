@@ -9,7 +9,12 @@ license = "MIT"
 name = "AIFixParser"
 path = "src/main.rs"
 
+[lib]
+name = "aifixparser"
+path = "src/lib.rs"
+
 [dependencies]
+compact_str = "0.8"
 dioxus = { version = "0.7.2", features = ["desktop"] }
 dioxus-desktop = "0.7.2"
 ico = "0.3"
@@ -26,8 +31,19 @@ tao = "0.34"
 
 # Windows – link the Windows manifest so the app gets a proper icon & DPI
 # awareness. winres is only needed at build time.
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "parser_bench"
+harness = false
+
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
 
 [profile.release]
 opt-level = "z"      # optimise for size
