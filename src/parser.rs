@@ -3,70 +3,34 @@ use rayon::prelude::*;
 use crate::dictionary::{msg_type_label, side_label, tag_description};
 use crate::model::{FixField, FixMessage};
 
-/// Normalize delimiters: SOH (0x01), \x01, ^A -> pipe. Single pass.
+/// Normalize delimiters: SOH (0x01), \x01, ^A -> pipe.
 fn normalize_delimiters(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{01}' {
-            out.push('|');
-        } else if c == '\\' && chars.peek() == Some(&'x') {
-            chars.next();
-            let a = chars.next();
-            let b = chars.next();
-            if a == Some('0') && b == Some('1') {
-                out.push('|');
-            } else {
-                out.push('\\');
-                if let Some(x) = a {
-                    out.push(x);
-                    if let Some(y) = b {
-                        out.push(y);
-                    }
-                }
-            }
-        } else if c == '^' && chars.peek() == Some(&'A') {
-            chars.next();
-            out.push('|');
-        } else {
-            out.push(c);
-        }
-    }
-    out
+    input
+        .replace('\u{01}', "|")   // SOH byte
+        .replace("\\x01", "|")   // literal \x01 text
+        .replace("^A", "|")      // caret-A
 }
 
 /// Parse a raw input string that may contain multiple FIX messages.
 pub fn parse_all(input: &str) -> Vec<FixMessage> {
     let normalized = normalize_delimiters(input);
 
-    // Split on "8=FIX" boundaries (also handles 8=FIXT.1.1)
-    let msg_count = normalized.matches("8=FIX").count();
-    let mut raw_msgs: Vec<String> = Vec::with_capacity(msg_count.max(1));
-    let mut current = String::new();
+    // Split on "8=FIX" boundaries (also handles FIXT.1.1)
+    let raw_msgs: Vec<String> = if normalized.contains("8=FIX") {
+        normalized
+            .split("8=FIX")
+            .filter_map(|s| {
+                let s = s.trim();
+                if s.is_empty() { None } else { Some(format!("8=FIX{s}")) }
+            })
+            .collect()
+    } else if !normalized.trim().is_empty() {
+        vec![normalized]
+    } else {
+        return vec![];
+    };
 
-    for segment in normalized.split("8=FIX") {
-        let segment = segment.trim();
-        if segment.is_empty() {
-            continue;
-        }
-        if !current.is_empty() {
-            raw_msgs.push(std::mem::take(&mut current));
-        }
-        current.reserve(6 + segment.len());
-        current.push_str("8=FIX");
-        current.push_str(segment);
-    }
-    if !current.is_empty() {
-        raw_msgs.push(current);
-    }
-    if raw_msgs.is_empty() && !normalized.trim().is_empty() {
-        raw_msgs.push(normalized);
-    }
-
-    raw_msgs
-        .par_iter()
-        .map(|raw| parse_single(raw))
-        .collect()
+    raw_msgs.par_iter().map(|raw| parse_single(raw)).collect()
 }
 
 /// Parse a single FIX message string into a [`FixMessage`].

@@ -43,31 +43,15 @@ const FIXT_LOGON_MESSAGES: &[&str] = &[
     "8=FIXT.1.1|9=71|35=A|34=1|49=BANZAI|52=20121105-23:24:06|56=EXEC|98=0|108=30|1137=FIX.4.4|10=003|",
 ];
 
-fn build_sample(spec: &str) -> String {
-    let bs = begin_string(spec);
-
-    if spec == "FIXT11" {
-        let logons = FIXT_LOGON_MESSAGES
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>();
-        let rest: Vec<String> = BASE_MESSAGES[2..]
-            .iter()
-            .map(|m| m.replace("8={{8}}|", "8=FIXT.1.1|"))
-            .collect();
-        [logons, rest].concat().join("\n")
-    } else {
-        BASE_MESSAGES
-            .iter()
-            .map(|m| m.replace("{{8}}", bs))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
 /// Returns sample FIX log data for the given spec.
-/// Defaults to FIX.4.1 if spec is unknown.
 pub fn sample_data(spec: &str) -> String {
-    build_sample(spec)
+    let bs = begin_string(spec);
+    if spec == "FIXT11" {
+        let mut lines: Vec<String> = FIXT_LOGON_MESSAGES.iter().map(|s| s.to_string()).collect();
+        lines.extend(BASE_MESSAGES[2..].iter().map(|m| m.replace("8={{8}}|", "8=FIXT.1.1|")));
+        lines.join("\n")
+    } else {
+        BASE_MESSAGES.iter().map(|m| m.replace("{{8}}", bs)).collect::<Vec<_>>().join("\n")
+    }
 }
 

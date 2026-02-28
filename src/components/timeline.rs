@@ -17,12 +17,24 @@ fn col_match(value: &str, filter: &str) -> bool {
     filter.is_empty() || value.to_lowercase().contains(filter)
 }
 
+/// Format a microsecond duration adaptively: µs / ms / s.
+fn format_duration(us: u64) -> String {
+    if us < 1_000 {
+        format!("{us}µs")
+    } else if us < 1_000_000 {
+        format!("{:.1}ms", us as f64 / 1_000.0)
+    } else {
+        format!("{:.2}s", us as f64 / 1_000_000.0)
+    }
+}
+
 /// Renders the Timeline panel (left side).
 #[component]
 pub fn timeline_panel(
     messages: Signal<Vec<FixMessage>>,
     selected_idx: Signal<Option<usize>>,
     skip_heartbeats: Signal<bool>,
+    parse_stats: Signal<Option<(usize, u64)>>,
 ) -> Element {
     // Per-column filter state (stored as lowercase so matching is cheap)
     let mut f_time   = use_signal(String::new);
@@ -66,7 +78,12 @@ pub fn timeline_panel(
     rsx! {
         div { class: "panel-timeline",
             div { class: "panel-header",
-                h2 { "Timeline" }
+                div { class: "panel-title",
+                    h2 { "Timeline" }
+                    if let Some((count, us)) = *parse_stats.read() {
+                        span { class: "parse-stats", "parsed {count} messages in {format_duration(us)}" }
+                    }
+                }
                 div { class: "header-actions",
                     if has_filter {
                         button {
@@ -132,25 +149,16 @@ pub fn timeline_panel(
                 }
                 // ── Rows ──
                 div { class: "tbl-body",
-                    for idx in timeline_indices.iter() {
-                        {
-                            let i = *idx;
-                            let m = &msgs[i];
-                            let is_sel = sel == Some(i);
-                            let badge_cls = badge_class(&m.msg_type_raw);
-                            let detail_text = build_detail_text(m);
-                            rsx! {
-                                div {
-                                    class: if is_sel { "tbl-row tbl-timeline-row row-selected" } else { "tbl-row tbl-timeline-row" },
-                                    onclick: move |_| selected_idx.set(Some(i)),
-                                    span { class: "cell-time", "{m.time}" }
-                                    span { "{m.sender}" }
-                                    span { "{m.target}" }
-                                    span { span { class: "badge {badge_cls}", "{m.msg_type_label}" } }
-                                    span { "{m.cl_ord_id}" }
-                                    span { class: "cell-detail", "{detail_text}" }
-                                }
-                            }
+                    for idx in timeline_indices.iter().copied() {
+                        div {
+                            class: if sel == Some(idx) { "tbl-row tbl-timeline-row row-selected" } else { "tbl-row tbl-timeline-row" },
+                            onclick: move |_| selected_idx.set(Some(idx)),
+                            span { class: "cell-time", "{msgs[idx].time}" }
+                            span { "{msgs[idx].sender}" }
+                            span { "{msgs[idx].target}" }
+                            span { span { class: "badge {badge_class(&msgs[idx].msg_type_raw)}", "{msgs[idx].msg_type_label}" } }
+                            span { "{msgs[idx].cl_ord_id}" }
+                            span { class: "cell-detail", "{build_detail_text(&msgs[idx])}" }
                         }
                     }
                     if timeline_indices.is_empty() {
