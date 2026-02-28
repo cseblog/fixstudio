@@ -18,11 +18,11 @@ fn build_raw_text(msg: &FixMessage) -> String {
         let name = if field.tag_description != "Unknown" {
             format!("{}({})", field.tag_description, field.tag)
         } else {
-            field.tag.clone()
+            field.tag.to_string()
         };
         let val_desc = value_description(&field.tag, &field.value);
         let val_part = if val_desc.is_empty() {
-            field.value.clone()
+            field.value.to_string()
         } else {
             format!("{} [{}]", field.value, val_desc)
         };

@@ -1,81 +1,104 @@
+use std::borrow::Cow;
+
+use compact_str::{CompactString, format_compact};
 use rayon::prelude::*;
 
 use crate::dictionary::{msg_type_label, side_label, tag_description};
 use crate::model::{FixField, FixMessage};
 
 /// Normalize delimiters: SOH (0x01), \x01, ^A -> pipe.
-fn normalize_delimiters(input: &str) -> String {
-    input
-        .replace('\u{01}', "|")   // SOH byte
-        .replace("\\x01", "|")   // literal \x01 text
-        .replace("^A", "|")      // caret-A
+/// Returns a borrowed slice when no special delimiters are present (zero allocation).
+fn normalize_delimiters(input: &str) -> Cow<'_, str> {
+    // Fast byte scan: if no SOH, backslash, or caret exists, nothing to do.
+    if !input.bytes().any(|b| matches!(b, 0x01 | b'\\' | b'^')) {
+        return Cow::Borrowed(input);
+    }
+    Cow::Owned(
+        input
+            .replace('\u{01}', "|")   // SOH byte
+            .replace("\\x01", "|")    // literal \x01 text
+            .replace("^A", "|"),      // caret-A
+    )
+}
+
+/// Split `input` on "8=FIX" boundaries, returning borrowed slices (no allocation per message).
+fn message_slices(input: &str) -> Vec<&str> {
+    let mut msgs = Vec::new();
+    let mut start = 0;
+    let mut found = false;
+
+    for (pos, _) in input.match_indices("8=FIX") {
+        if found {
+            let s = input[start..pos].trim();
+            if !s.is_empty() { msgs.push(s); }
+        }
+        start = pos;
+        found = true;
+    }
+    if found {
+        let s = input[start..].trim();
+        if !s.is_empty() { msgs.push(s); }
+    }
+    msgs
 }
 
 /// Parse a raw input string that may contain multiple FIX messages.
 pub fn parse_all(input: &str) -> Vec<FixMessage> {
     let normalized = normalize_delimiters(input);
 
-    // Split on "8=FIX" boundaries (also handles FIXT.1.1)
-    let raw_msgs: Vec<String> = if normalized.contains("8=FIX") {
-        normalized
-            .split("8=FIX")
-            .filter_map(|s| {
-                let s = s.trim();
-                if s.is_empty() { None } else { Some(format!("8=FIX{s}")) }
-            })
-            .collect()
-    } else if !normalized.trim().is_empty() {
-        vec![normalized]
-    } else {
-        return vec![];
-    };
+    if !normalized.contains("8=FIX") {
+        return if normalized.trim().is_empty() { vec![] } else { vec![parse_single(&normalized)] };
+    }
 
-    raw_msgs.par_iter().map(|raw| parse_single(raw)).collect()
+    message_slices(&normalized)
+        .into_par_iter()
+        .map(parse_single)
+        .collect()
 }
 
 /// Parse a single FIX message string into a [`FixMessage`].
 fn parse_single(raw: &str) -> FixMessage {
-    let field_count = raw.matches('|').count() + 1;
+    // Use a fixed capacity — typical FIX message has 10-25 fields.
+    // Avoids a full O(n) pre-scan of `raw.matches('|').count()`.
     let mut msg = FixMessage {
-        fields: Vec::with_capacity(field_count),
+        fields: Vec::with_capacity(24),
         ..Default::default()
     };
 
-    for token in raw.split('|').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-        let Some((tag, value)) = token.split_once('=') else {
-            continue;
-        };
+    for token in raw.split('|') {
+        let token = token.trim();
+        if token.is_empty() { continue; }
+        let Some((tag, value)) = token.split_once('=') else { continue };
 
+        // CompactString::from(&str) is inline (no heap alloc) for strings ≤ 24 bytes.
+        // FIX tags are 1-5 chars, values are usually ≤ 24 chars — nearly zero heap.
         msg.fields.push(FixField {
-            tag: tag.to_string(),
-            value: value.to_string(),
+            tag: CompactString::from(tag),
+            value: CompactString::from(value),
             tag_description: tag_description(tag),
         });
 
         match tag {
             "52" => msg.time = extract_time(value),
-            "49" => msg.sender = value.to_string(),
-            "56" => msg.target = value.to_string(),
+            "49" => msg.sender = CompactString::from(value),
+            "56" => msg.target = CompactString::from(value),
             "35" => {
-                msg.msg_type_raw = value.to_string();
+                msg.msg_type_raw = CompactString::from(value);
                 msg.msg_type_label = msg_type_label(value);
             }
-            "11" => msg.cl_ord_id = value.to_string(),
-            "54" => msg.side = side_label(value).to_string(),
-            "38" => msg.order_qty = value.to_string(),
-            "55" => msg.symbol = value.to_string(),
-            "58" => msg.text = value.to_string(),
+            "11" => msg.cl_ord_id = CompactString::from(value),
+            "54" => msg.side = CompactString::from(side_label(value)),
+            "38" => msg.order_qty = CompactString::from(value),
+            "55" => msg.symbol = CompactString::from(value),
+            "58" => msg.text = CompactString::from(value),
             "150" => {
-                // If ExecType is filled, override the label
-                if value == "F" || value == "2" {
-                    msg.msg_type_label = "ER FILL";
-                } else if value == "1" {
-                    msg.msg_type_label = "ER PARTIAL";
-                } else if value == "4" || value == "C" {
-                    msg.msg_type_label = "ER CANCELED";
-                } else if value == "8" {
-                    msg.msg_type_label = "Reject";
-                }
+                msg.msg_type_label = match value {
+                    "F" | "2" => "ER FILL",
+                    "1"       => "ER PARTIAL",
+                    "4" | "C" => "ER CANCELED",
+                    "8"       => "Reject",
+                    _         => msg.msg_type_label,
+                };
             }
             _ => {}
         }
@@ -83,27 +106,17 @@ fn parse_single(raw: &str) -> FixMessage {
     msg
 }
 
-/// Format SendingTime (tag 52) for display: YYYYMMDD-HH:MM:SS -> YYYY-MM-DD HH:MM:SS
-fn extract_time(sending_time: &str) -> String {
-    // Format: YYYYMMDD-HH:MM:SS or YYYYMMDD-HH:MM:SS.sss
-    if let Some(pos) = sending_time.find('-') {
-        let date_part = &sending_time[..pos];
-        let time_part = &sending_time[pos + 1..];
-        // Reformat date: 20121105 -> 2012-11-05
-        if date_part.len() == 8 && date_part.chars().all(|c| c.is_ascii_digit()) {
-            let formatted = format!(
-                "{}-{}-{} {}",
-                &date_part[0..4],
-                &date_part[4..6],
-                &date_part[6..8],
-                time_part
-            );
-            return formatted.trim_end().to_string();
+/// Format SendingTime (tag 52): YYYYMMDD-HH:MM:SS → YYYY-MM-DD HH:MM:SS
+fn extract_time(s: &str) -> CompactString {
+    if let Some(dash) = s.find('-') {
+        let date = &s[..dash];
+        let time = s[dash + 1..].trim_end();
+        if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) {
+            return format_compact!("{}-{}-{} {}", &date[0..4], &date[4..6], &date[6..8], time);
         }
-        format!("{date_part} {time_part}")
-    } else {
-        sending_time.to_string()
+        return format_compact!("{date} {time}");
     }
+    CompactString::from(s)
 }
 
 #[cfg(test)]
@@ -126,5 +139,13 @@ mod tests {
         let msgs = parse_all(input);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].fields.len(), 4);
+    }
+
+    #[test]
+    fn test_normalize_borrowed() {
+        // Pipe-delimited input must NOT allocate (Cow::Borrowed)
+        let input = "8=FIX.4.4|9=5|35=0|10=001|";
+        let result = normalize_delimiters(input);
+        assert!(matches!(result, Cow::Borrowed(_)));
     }
 }
