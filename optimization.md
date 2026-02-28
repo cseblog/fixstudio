@@ -75,3 +75,13 @@ Two parser tests verify correctness:
 - `test_normalize_soh` — SOH delimiter normalization
 
 Run with: `cargo test`
+
+
+Test 
+----
+100,000 messages, 16 MB, FIX.4.4 format, no heartbeats
+60,000 NewOrderSingle (35=D) — limit orders, BUY/SELL alternating across 10 symbols
+20,000 ExecutionReport fills (35=8, 150=F)
+20,000 OrderCancelRequest (35=F)
+Timestamps increment realistically from 20240115-09:30:00
+10 symbols: MSFT, AAPL, GOOG, AMZN, TSLA, SPY, QQQ, NVDA, META, NFLX

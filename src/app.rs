@@ -17,6 +17,7 @@ pub fn app() -> Element {
     let skip_heartbeats = use_signal(|| true);
     let skip_common = use_signal(|| false);
     let mut parse_stats: Signal<Option<(usize, u64)>> = use_signal(|| None);
+    let loading = use_signal(|| false);
 
     let mut process = move || {
         let t = Instant::now();
@@ -50,7 +51,9 @@ pub fn app() -> Element {
         let mut messages = messages.clone();
         let mut selected_idx = selected_idx.clone();
         let mut parse_stats = parse_stats.clone();
+        let mut loading = loading.clone();
         spawn(async move {
+            loading.set(true); // show loading before dialog — re-renders at the .await below
             if let Some(file) = rfd::AsyncFileDialog::new()
                 .add_filter("FIX log", &["txt", "log", "fix"])
                 .add_filter("All files", &["*"])
@@ -67,6 +70,7 @@ pub fn app() -> Element {
                 messages.set(parsed);
                 selected_idx.set(None);
             }
+            loading.set(false);
         });
     };
 
@@ -96,12 +100,16 @@ pub fn app() -> Element {
                 })}
             }
 
-            // ── Textarea ──
-            textarea {
-                class: "fix-input",
-                placeholder: "Paste FIX messages here …",
-                value: "{input.read()}",
-                oninput: move |evt| input.set(evt.value()),
+            // ── Textarea / loading state ──
+            if *loading.read() {
+                div { class: "fix-loading", "Loading file and parsing messages…" }
+            } else {
+                textarea {
+                    class: "fix-input",
+                    placeholder: "Paste FIX messages here …",
+                    value: "{input.read()}",
+                    oninput: move |evt| input.set(evt.value()),
+                }
             }
 
             // ── Main panels ──

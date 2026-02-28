@@ -48,7 +48,21 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 .sample-label { color: #6272a4; font-size: 12px; margin-right: 4px; }
 .sample-sep { color: #44475a; font-size: 12px; }
 
-/* Textarea */
+/* Textarea / loading placeholder */
+.fix-loading {
+    width: 100%;
+    min-height: 110px;
+    padding: 10px 12px;
+    border: 1px solid #bd93f9;
+    border-radius: 6px;
+    background: #21222c;
+    color: #bd93f9;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+}
 .fix-input {
     width: 100%;
     min-height: 110px;
