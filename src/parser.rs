@@ -1,16 +1,17 @@
 use std::borrow::Cow;
 
 use compact_str::{CompactString, format_compact};
+use memchr::{memchr3, memchr_iter, memmem};
 use rayon::prelude::*;
 
-use crate::dictionary::{msg_type_label, side_label, tag_description};
+use crate::dictionary::{msg_type_label, side_label};
 use crate::model::{FixField, FixMessage};
 
 /// Normalize delimiters: SOH (0x01), \x01, ^A -> pipe.
 /// Returns a borrowed slice when no special delimiters are present (zero allocation).
 fn normalize_delimiters(input: &str) -> Cow<'_, str> {
-    // Fast byte scan: if no SOH, backslash, or caret exists, nothing to do.
-    if !input.bytes().any(|b| matches!(b, 0x01 | b'\\' | b'^')) {
+    // SIMD scan for SOH / backslash / caret — avoids allocation for clean pipe input.
+    if memchr3(0x01, b'\\', b'^', input.as_bytes()).is_none() {
         return Cow::Borrowed(input);
     }
     Cow::Owned(
@@ -21,13 +22,13 @@ fn normalize_delimiters(input: &str) -> Cow<'_, str> {
     )
 }
 
-/// Split `input` on "8=FIX" boundaries, returning borrowed slices (no allocation per message).
+/// Split `input` on "8=FIX" boundaries using SIMD substring search.
 fn message_slices(input: &str) -> Vec<&str> {
     let mut msgs = Vec::new();
     let mut start = 0;
     let mut found = false;
 
-    for (pos, _) in input.match_indices("8=FIX") {
+    for pos in memmem::find_iter(input.as_bytes(), "8=FIX") {
         if found {
             let s = input[start..pos].trim();
             if !s.is_empty() { msgs.push(s); }
@@ -45,37 +46,34 @@ fn message_slices(input: &str) -> Vec<&str> {
 /// Parse a raw input string that may contain multiple FIX messages.
 pub fn parse_all(input: &str) -> Vec<FixMessage> {
     let normalized = normalize_delimiters(input);
-
-    if !normalized.contains("8=FIX") {
-        return if normalized.trim().is_empty() { vec![] } else { vec![parse_single(&normalized)] };
+    let slices = message_slices(&normalized);
+    if slices.is_empty() {
+        if normalized.trim().is_empty() { vec![] } else { vec![parse_single(&normalized)] }
+    } else {
+        slices.into_par_iter().map(parse_single).collect()
     }
-
-    message_slices(&normalized)
-        .into_par_iter()
-        .map(parse_single)
-        .collect()
 }
 
 /// Parse a single FIX message string into a [`FixMessage`].
 fn parse_single(raw: &str) -> FixMessage {
-    // Use a fixed capacity — typical FIX message has 10-25 fields.
-    // Avoids a full O(n) pre-scan of `raw.matches('|').count()`.
     let mut msg = FixMessage {
         fields: Vec::with_capacity(24),
         ..Default::default()
     };
 
-    for token in raw.split('|') {
-        let token = token.trim();
+    let bytes = raw.as_bytes();
+    let mut start = 0;
+
+    // SIMD '|' search; chain bytes.len() as a sentinel to capture the final token.
+    for end in memchr_iter(b'|', bytes).chain(std::iter::once(bytes.len())) {
+        let token = raw[start..end].trim();
+        start = end + 1;
         if token.is_empty() { continue; }
         let Some((tag, value)) = token.split_once('=') else { continue };
 
-        // CompactString::from(&str) is inline (no heap alloc) for strings ≤ 24 bytes.
-        // FIX tags are 1-5 chars, values are usually ≤ 24 chars — nearly zero heap.
         msg.fields.push(FixField {
             tag: CompactString::from(tag),
             value: CompactString::from(value),
-            tag_description: tag_description(tag),
         });
 
         match tag {

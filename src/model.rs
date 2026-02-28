@@ -16,11 +16,9 @@ pub struct FixMessage {
     pub text: CompactString,
 }
 
-/// A single tag=value pair with resolved descriptions.
-/// value_description is computed lazily when the detail panel displays.
+/// A single tag=value pair. tag_description is resolved lazily in the UI.
 #[derive(Clone, PartialEq)]
 pub struct FixField {
     pub tag: CompactString,
     pub value: CompactString,
-    pub tag_description: &'static str,
 }

@@ -15,6 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 compact_str = "0.8"
+memchr = "2"
 dioxus = { version = "0.7.2", features = ["desktop"] }
 dioxus-desktop = "0.7.2"
 ico = "0.3"

@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
 
-use crate::dictionary::{is_common_tag, tag_badge_class, value_description};
+use crate::dictionary::{is_common_tag, tag_badge_class, tag_description, value_description};
 use crate::model::FixMessage;
 
 // ── View mode constants ───────────────────────────────────────────────────────
@@ -15,8 +15,9 @@ fn build_raw_text(msg: &FixMessage) -> String {
     let mut lines = Vec::new();
     lines.push(format!("{}>>", msg.msg_type_label));
     for field in &msg.fields {
-        let name = if field.tag_description != "Unknown" {
-            format!("{}({})", field.tag_description, field.tag)
+        let td = tag_description(&field.tag);
+        let name = if td != "Unknown" {
+            format!("{}({})", td, field.tag)
         } else {
             field.tag.to_string()
         };
@@ -45,7 +46,7 @@ fn build_json_text(msg: &FixMessage) -> String {
         let mut e = format!(
             "  {{\"tag\": \"{}\", \"name\": \"{}\", \"value\": \"{}\"",
             json_escape(&f.tag),
-            json_escape(f.tag_description),
+            json_escape(tag_description(&f.tag)),
             json_escape(&f.value),
         );
         let val_desc = value_description(&f.tag, &f.value);
@@ -137,7 +138,7 @@ pub fn detail_panel(
                                     for field in msg.fields.iter().filter(|f| !(skip && is_common_tag(&f.tag))) {
                                         div { class: "tbl-row tbl-detail-row",
                                             span { class: "tag-num", "{field.tag}" }
-                                            span { span { class: "badge {tag_badge_class(&field.tag)}", "{field.tag_description}" } }
+                                            span { span { class: "badge {tag_badge_class(&field.tag)}", "{tag_description(&field.tag)}" } }
                                             span { "{field.value}" }
                                             span { "{value_description(&field.tag, &field.value)}" }
                                         }
