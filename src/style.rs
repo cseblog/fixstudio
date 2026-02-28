@@ -134,6 +134,17 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     font-size: 11px;
     color: #6272a4;
 }
+.filter-count {
+    font-size: 11px;
+    color: #8be9fd;
+}
+.cap-notice {
+    padding: 10px 20px;
+    text-align: center;
+    font-size: 11px;
+    color: #ffb86c;
+    border-top: 1px solid #44475a;
+}
 
 .check-label {
     display: flex;
