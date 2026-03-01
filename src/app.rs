@@ -18,6 +18,8 @@ pub fn app() -> Element {
     let skip_common = use_signal(|| false);
     let mut parse_stats: Signal<Option<(usize, u64)>> = use_signal(|| None);
     let loading = use_signal(|| false);
+    // Tracks the last file loaded via the file dialog (name only — not the content).
+    let mut file_name: Signal<Option<String>> = use_signal(|| None);
 
     let mut process = move || {
         let t = Instant::now();
@@ -26,6 +28,7 @@ pub fn app() -> Element {
         parse_stats.set(Some((parsed.len(), ms)));
         messages.set(parsed);
         selected_idx.set(None);
+        file_name.set(None);
     };
 
     let mut clear = move || {
@@ -33,6 +36,7 @@ pub fn app() -> Element {
         messages.set(Vec::new());
         selected_idx.set(None);
         parse_stats.set(None);
+        file_name.set(None);
     };
 
     let mut load_sample = move |spec: &str| {
@@ -44,31 +48,36 @@ pub fn app() -> Element {
         input.set(s);
         messages.set(parsed);
         selected_idx.set(None);
+        file_name.set(None);
     };
 
     let load_file = move || {
-        let mut input = input.clone();
-        let mut messages = messages.clone();
+        let mut messages    = messages.clone();
         let mut selected_idx = selected_idx.clone();
         let mut parse_stats = parse_stats.clone();
-        let mut loading = loading.clone();
+        let mut loading     = loading.clone();
+        let mut file_name   = file_name.clone();
         spawn(async move {
-            loading.set(true); // show loading before dialog — re-renders at the .await below
+            loading.set(true);
             if let Some(file) = rfd::AsyncFileDialog::new()
                 .add_filter("FIX log", &["txt", "log", "fix"])
                 .add_filter("All files", &["*"])
                 .pick_file()
                 .await
             {
+                let name  = file.file_name();
                 let bytes = file.read().await;
-                let content = String::from_utf8_lossy(&bytes).to_string();
+                // Use from_utf8_lossy but do NOT store the content in a Signal —
+                // 135 MB in a reactive signal serialises to the WebView on every render.
+                let content = String::from_utf8_lossy(&bytes);
                 let t = Instant::now();
                 let parsed = parse_all(&content);
                 let ms = t.elapsed().as_micros() as u64;
+                // `content` (and `bytes`) are dropped here — not kept in any signal.
                 parse_stats.set(Some((parsed.len(), ms)));
-                input.set(content);
                 messages.set(parsed);
                 selected_idx.set(None);
+                file_name.set(Some(name));
             }
             loading.set(false);
         });
@@ -83,7 +92,10 @@ pub fn app() -> Element {
         div { class: "root",
             // ── Toolbar ──
             div { class: "toolbar",
-                button { class: "btn btn-process", onclick: move |_| process(), "Process" }
+                // "Process" only makes sense when the user has pasted text manually.
+                if file_name.read().is_none() {
+                    button { class: "btn btn-process", onclick: move |_| process(), "Process" }
+                }
                 button { class: "btn btn-clear", onclick: move |_| clear(), "Clear" }
                 button { class: "btn btn-load", onclick: move |_| load_file(), "Load file" }
                 span { class: "sample-label", "Sample: " }
@@ -100,9 +112,16 @@ pub fn app() -> Element {
                 })}
             }
 
-            // ── Textarea / loading state ──
+            // ── Input area ──
             if *loading.read() {
                 div { class: "fix-loading", "Loading file and parsing messages…" }
+            } else if let Some(ref name) = *file_name.read() {
+                // File was loaded via dialog — don't put 135 MB in the textarea.
+                div { class: "fix-file-banner",
+                    span { class: "fix-file-icon", "📂" }
+                    span { class: "fix-file-name", "{name}" }
+                    span { class: "fix-file-hint", "— click Clear to reset" }
+                }
             } else {
                 textarea {
                     class: "fix-input",

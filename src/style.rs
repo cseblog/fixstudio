@@ -63,6 +63,24 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     display: flex;
     align-items: center;
 }
+.fix-file-banner {
+    width: 100%;
+    min-height: 60px;
+    padding: 10px 16px;
+    border: 1px solid #ffb86c;
+    border-radius: 6px;
+    background: rgba(255,184,108,0.05);
+    color: #ffb86c;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.fix-file-icon { font-size: 18px; }
+.fix-file-name { font-weight: 700; }
+.fix-file-hint { color: #6272a4; font-size: 12px; }
+
 .fix-input {
     width: 100%;
     min-height: 110px;
