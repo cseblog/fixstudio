@@ -1,15 +1,21 @@
 [package]
-name = "AIFixParser"
-version = "0.1.0"
+name = "AiFIXParser"
+version = "1.0.0"
 edition = "2021"
 description = "AI FIX Parser – Parse and analyze FIX protocol messages with AI-powered insights"
-license = "MIT"
+license = "aifixparser.com"
 
 [[bin]]
 name = "AIFixParser"
 path = "src/main.rs"
 
+[lib]
+name = "aifixparser"
+path = "src/lib.rs"
+
 [dependencies]
+compact_str = "0.8"
+memchr = "2"
 dioxus = { version = "0.7.2", features = ["desktop"] }
 dioxus-desktop = "0.7.2"
 ico = "0.3"
@@ -26,12 +32,24 @@ tao = "0.34"
 
 # Windows – link the Windows manifest so the app gets a proper icon & DPI
 # awareness. winres is only needed at build time.
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "parser_bench"
+harness = false
+
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 
+[profile.bench]
+opt-level = 3
+lto = "thin"
+
 [profile.release]
-opt-level = "z"      # optimise for size
+opt-level = 3        # max speed (desktop app — binary size doesn't matter)
 lto = true           # link-time optimisation
 strip = true         # strip debug symbols
 codegen-units = 1    # single codegen unit for better optimisation
+panic = "abort"      # no unwinding machinery needed
 

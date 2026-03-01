@@ -1,20 +1,50 @@
 use dioxus::prelude::*;
+use dioxus::document::eval;
 
 use crate::dictionary::badge_class;
 use crate::model::FixMessage;
 
+const INITIAL_DISPLAY: usize = 1000;
+const LOAD_MORE: usize = 1000;
+
 fn build_detail_text(m: &FixMessage) -> String {
     let mut parts = Vec::new();
-    if !m.side.is_empty() { parts.push(m.side.clone()); }
+    if !m.side.is_empty()      { parts.push(m.side.clone()); }
     if !m.order_qty.is_empty() { parts.push(m.order_qty.clone()); }
-    if !m.symbol.is_empty() { parts.push(m.symbol.clone()); }
-    if !m.text.is_empty() { parts.push(m.text.clone()); }
+    if !m.symbol.is_empty()    { parts.push(m.symbol.clone()); }
+    if !m.text.is_empty()      { parts.push(m.text.clone()); }
     parts.join("  ")
 }
 
-/// Case-insensitive substring match; empty filter means "show all".
+/// Case-insensitive substring match; `filter` must already be ASCII-lowercased.
+/// Zero-allocation: avoids the heap alloc from `to_ascii_lowercase()` on every row.
 fn col_match(value: &str, filter: &str) -> bool {
-    filter.is_empty() || value.to_lowercase().contains(filter)
+    if filter.is_empty() { return true; }
+    let fb = filter.as_bytes();
+    if fb.len() > value.len() { return false; }
+    value.as_bytes().windows(fb.len())
+        .any(|w| w.iter().zip(fb).all(|(&a, &b)| a.to_ascii_lowercase() == b))
+}
+
+/// Time filter: supports `>=` / `<=` prefixes for range queries or plain substring match.
+/// Timestamps are `YYYY-MM-DD HH:MM:SS` (pure ASCII digits/punctuation) so both
+/// lexicographic ordering and case-insensitive substring match work without allocation.
+fn time_match(time: &str, filter: &str) -> bool {
+    if filter.is_empty() { return true; }
+    if let Some(t) = filter.strip_prefix(">=") { return time >= t.trim(); }
+    if let Some(t) = filter.strip_prefix("<=") { return time <= t.trim(); }
+    time.contains(filter)
+}
+
+/// Format a microsecond duration adaptively: µs / ms / s.
+fn format_duration(us: u64) -> String {
+    if us < 1_000 {
+        format!("{us}µs")
+    } else if us < 1_000_000 {
+        format!("{:.1}ms", us as f64 / 1_000.0)
+    } else {
+        format!("{:.2}s", us as f64 / 1_000_000.0)
+    }
 }
 
 /// Renders the Timeline panel (left side).
@@ -23,56 +53,160 @@ pub fn timeline_panel(
     messages: Signal<Vec<FixMessage>>,
     selected_idx: Signal<Option<usize>>,
     skip_heartbeats: Signal<bool>,
+    parse_stats: Signal<Option<(usize, u64)>>,
 ) -> Element {
-    // Per-column filter state (stored as lowercase so matching is cheap)
-    let mut f_time   = use_signal(String::new);
+    let mut f_time    = use_signal(String::new);
+    let mut f_time_op = use_signal(|| String::from("="));  // "=" | ">=" | "<="
     let mut f_sender = use_signal(String::new);
     let mut f_target = use_signal(String::new);
     let mut f_msg    = use_signal(String::new);
     let mut f_clord  = use_signal(String::new);
     let mut f_detail = use_signal(String::new);
 
-    let skip_hb = *skip_heartbeats.read();
-    let msgs    = messages.read();
-    let sel     = *selected_idx.read();
+    let mut display_limit = use_signal(|| INITIAL_DISPLAY);
 
-    // Pre-lowercase once so every row comparison is fast
-    let ft  = f_time.read().to_lowercase();
-    let fs  = f_sender.read().to_lowercase();
-    let fta = f_target.read().to_lowercase();
-    let fm  = f_msg.read().to_lowercase();
-    let fc  = f_clord.read().to_lowercase();
-    let fd  = f_detail.read().to_lowercase();
+    // ── One-time JS scroll listener ──────────────────────────────────────────
+    // Reads NO reactive signals → runs exactly once on mount.
+    // Installs a native browser scroll listener on #timeline-scroll.
+    // When within 200 px of the bottom AND .cap-notice sentinel is present,
+    // JS calls dioxus.send(true). Rust increments display_limit.
+    use_effect(move || {
+        let mut dl = display_limit.clone();
+        spawn(async move {
+            let mut e = eval(r#"
+                (function() {
+                    var cooldown = false;
+                    var attached = false;
+                    function attach() {
+                        if (attached) return;
+                        var el = document.getElementById('timeline-scroll');
+                        if (!el) { setTimeout(attach, 100); return; }
+                        attached = true;
+                        el.addEventListener('scroll', function() {
+                            if (cooldown) return;
+                            if (!el.querySelector('.cap-notice')) return;
+                            var dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+                            if (dist < 200) {
+                                cooldown = true;
+                                setTimeout(function() { cooldown = false; }, 400);
+                                dioxus.send(true);
+                            }
+                        });
+                    }
+                    attach();
+                })();
+            "#);
+            loop {
+                match e.recv::<bool>().await {
+                    Ok(true)  => { let cur = *dl.read(); dl.set(cur + LOAD_MORE); }
+                    Ok(false) => {}
+                    Err(_)    => break,
+                }
+            }
+        });
+    });
 
-    let has_filter = !ft.is_empty() || !fs.is_empty() || !fta.is_empty()
-        || !fm.is_empty() || !fc.is_empty() || !fd.is_empty();
+    // ── Reset on filter / dataset change ────────────────────────────────────
+    // Reads filter signals + message count → re-runs whenever they change.
+    use_effect(move || {
+        f_time.read();
+        f_time_op.read();
+        f_sender.read();
+        f_target.read();
+        f_msg.read();
+        f_clord.read();
+        f_detail.read();
+        skip_heartbeats.read();
+        let _ = messages.read().len();
+        display_limit.set(INITIAL_DISPLAY);
+        eval("var el = document.getElementById('timeline-scroll'); if (el) el.scrollTop = 0;");
+    });
 
-    let timeline_indices: Vec<usize> = msgs
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
-        .filter(|(_, m)| {
-            let detail = build_detail_text(m);
-            col_match(&m.time, &ft)
-                && col_match(&m.sender, &fs)
-                && col_match(&m.target, &fta)
-                && col_match(m.msg_type_label, &fm)
-                && col_match(&m.cl_ord_id, &fc)
-                && col_match(&detail, &fd)
-        })
-        .map(|(i, _)| i)
-        .collect();
+    // ── Memoized filter ──────────────────────────────────────────────────────
+    // Re-computes ONLY when a filter signal, skip_heartbeats, or messages change.
+    // Crucially, scrolling (display_limit changes) does NOT trigger a re-scan —
+    // the cached Vec<usize> is reused, making scroll completely free.
+    let timeline_indices = use_memo(move || -> Vec<usize> {
+        let skip_hb = *skip_heartbeats.read();
+        let msgs    = messages.read();
+        // Combine operator + value into the format time_match expects:
+        //   "="  → plain value (substring match)
+        //   ">=" / "<=" → prefixed, e.g. ">=2024-01-02 10:00:00"
+        let ft_val = f_time.read().clone();
+        let ft_op  = f_time_op.read().clone();
+        let ft_raw = if ft_op == "=" || ft_val.is_empty() {
+            ft_val
+        } else {
+            format!("{}{}", ft_op, ft_val)
+        };
+        let fs      = f_sender.read().to_ascii_lowercase();
+        let fta     = f_target.read().to_ascii_lowercase();
+        let fm      = f_msg.read().to_ascii_lowercase();
+        let fc      = f_clord.read().to_ascii_lowercase();
+        let fd      = f_detail.read().to_ascii_lowercase();
+
+        let mut indices: Vec<usize> = msgs.iter()
+            .enumerate()
+            .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
+            .filter(|(_, m)| {
+                time_match(&m.time, &ft_raw)
+                    && col_match(&m.sender, &fs)
+                    && col_match(&m.target, &fta)
+                    && col_match(m.msg_type_label, &fm)
+                    && col_match(&m.cl_ord_id, &fc)
+                    && (fd.is_empty() || col_match(&build_detail_text(m), &fd))
+            })
+            .map(|(i, _)| i)
+            .collect();
+        // Newest first — ISO timestamps sort lexicographically so this is correct.
+        indices.sort_unstable_by(|&a, &b| msgs[b].time.cmp(&msgs[a].time));
+        indices
+    });
+
+    // ── Render-time state ────────────────────────────────────────────────────
+    let msgs = messages.read();
+    let sel  = *selected_idx.read();
+
+    // Filter values for input bindings and has_filter check.
+    // No lowercasing needed here — has_filter only tests emptiness, and the
+    // input value= attributes bind to the raw signal directly.
+    let ft_val = f_time.read().clone();
+    let ft_op  = f_time_op.read().clone();
+
+    let has_filter = !ft_val.is_empty()
+        || !f_sender.read().is_empty()
+        || !f_target.read().is_empty()
+        || !f_msg.read().is_empty()
+        || !f_clord.read().is_empty()
+        || !f_detail.read().is_empty();
+
+    // Cached result from the memo — free if filters/messages haven't changed.
+    let indices     = timeline_indices.read();
+    let total_count = indices.len();
+    let display_end = (*display_limit.read()).min(total_count);
+    let has_more    = display_end < total_count;
 
     rsx! {
         div { class: "panel-timeline",
             div { class: "panel-header",
-                h2 { "Timeline" }
+                div { class: "panel-title",
+                    h2 { "Timeline" }
+                    if let Some((count, us)) = *parse_stats.read() {
+                        span { class: "parse-stats", "parsed {count} messages in {format_duration(us)}" }
+                    }
+                    if has_more {
+                        span { class: "filter-count", "showing {display_end} of {total_count}" }
+                    } else if has_filter && total_count > 0 {
+                        span { class: "filter-count", "{total_count} matched" }
+                    }
+                }
                 div { class: "header-actions",
                     if has_filter {
                         button {
                             class: "btn-clear-filter",
                             onclick: move |_| {
                                 f_time.set(String::new());
+                                f_time_op.set(String::from("="));
                                 f_sender.set(String::new());
                                 f_target.set(String::new());
                                 f_msg.set(String::new());
@@ -94,7 +228,6 @@ pub fn timeline_panel(
             }
 
             div { class: "table-wrap",
-                // ── Column headers ──
                 div { class: "tbl-header tbl-timeline-row",
                     span { "Time" }
                     span { "Sender" }
@@ -103,11 +236,19 @@ pub fn timeline_panel(
                     span { "Client order ID" }
                     span { "Detail" }
                 }
-                // ── Per-column filter inputs (same grid, sits just below headers) ──
                 div { class: "tbl-filter tbl-timeline-row",
-                    input { class: "col-filter", placeholder: "filter…",
-                        value: "{f_time.read()}",
-                        oninput: move |e| f_time.set(e.value()),
+                    div { class: "time-filter-wrap",
+                        select {
+                            class: "time-op-select",
+                            onchange: move |e| f_time_op.set(e.value()),
+                            option { value: "=",  selected: ft_op == "=",  "=" }
+                            option { value: ">=", selected: ft_op == ">=", "≥" }
+                            option { value: "<=", selected: ft_op == "<=", "≤" }
+                        }
+                        input { class: "col-filter", placeholder: "2024-01-02 08:00:00.000",
+                            value: "{f_time.read()}",
+                            oninput: move |e| f_time.set(e.value()),
+                        }
                     }
                     input { class: "col-filter", placeholder: "filter…",
                         value: "{f_sender.read()}",
@@ -130,34 +271,28 @@ pub fn timeline_panel(
                         oninput: move |e| f_detail.set(e.value()),
                     }
                 }
-                // ── Rows ──
-                div { class: "tbl-body",
-                    for idx in timeline_indices.iter() {
-                        {
-                            let i = *idx;
-                            let m = &msgs[i];
-                            let is_sel = sel == Some(i);
-                            let badge_cls = badge_class(&m.msg_type_raw);
-                            let detail_text = build_detail_text(m);
-                            rsx! {
-                                div {
-                                    class: if is_sel { "tbl-row tbl-timeline-row row-selected" } else { "tbl-row tbl-timeline-row" },
-                                    onclick: move |_| selected_idx.set(Some(i)),
-                                    span { class: "cell-time", "{m.time}" }
-                                    span { "{m.sender}" }
-                                    span { "{m.target}" }
-                                    span { span { class: "badge {badge_cls}", "{m.msg_type_label}" } }
-                                    span { "{m.cl_ord_id}" }
-                                    span { class: "cell-detail", "{detail_text}" }
-                                }
-                            }
+                div { class: "tbl-body", id: "timeline-scroll",
+                    for idx in indices[..display_end].iter().copied() {
+                        div {
+                            class: if sel == Some(idx) { "tbl-row tbl-timeline-row row-selected" } else { "tbl-row tbl-timeline-row" },
+                            onclick: move |_| selected_idx.set(Some(idx)),
+                            span { class: "cell-time", "{msgs[idx].time}" }
+                            span { "{msgs[idx].sender}" }
+                            span { "{msgs[idx].target}" }
+                            span { span { class: "badge {badge_class(&msgs[idx].msg_type_raw)}", "{msgs[idx].msg_type_label}" } }
+                            span { "{msgs[idx].cl_ord_id}" }
+                            span { class: "cell-detail", "{build_detail_text(&msgs[idx])}" }
                         }
                     }
-                    if timeline_indices.is_empty() {
+                    if indices.is_empty() {
                         div { class: "empty-state",
                             if has_filter { "No messages match the current filters." }
                             else { "No messages parsed yet." }
                         }
+                    }
+                    // Sentinel: JS checks for this element before sending load-more.
+                    if has_more {
+                        div { class: "cap-notice", "Scroll down to load more…" }
                     }
                 }
             }

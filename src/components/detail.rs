@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
 
-use crate::dictionary::{is_common_tag, tag_badge_class, value_description};
-use crate::model::{FixField, FixMessage};
+use crate::dictionary::{is_common_tag, tag_badge_class, tag_description, value_description};
+use crate::model::FixMessage;
 
 // ── View mode constants ───────────────────────────────────────────────────────
 const VIEW_TABLE: u8 = 0;
@@ -15,18 +15,18 @@ fn build_raw_text(msg: &FixMessage) -> String {
     let mut lines = Vec::new();
     lines.push(format!("{}>>", msg.msg_type_label));
     for field in &msg.fields {
-        let name = if field.tag_description != "Unknown" {
-            format!("{}({})", field.tag_description, field.tag)
+        let td = tag_description(&field.tag);
+        let name = if td != "Unknown" {
+            format!("{}({})", td, field.tag)
         } else {
-            field.tag.clone()
+            field.tag.to_string()
         };
         let val_desc = value_description(&field.tag, &field.value);
-        let val_part = if val_desc.is_empty() {
-            field.value.clone()
+        if val_desc.is_empty() {
+            lines.push(format!("  {}: {}", name, field.value));
         } else {
-            format!("{} [{}]", field.value, val_desc)
-        };
-        lines.push(format!("  {}: {}", name, val_part));
+            lines.push(format!("  {}: {} [{}]", name, field.value, val_desc));
+        }
     }
     lines.join("\n")
 }
@@ -45,7 +45,7 @@ fn build_json_text(msg: &FixMessage) -> String {
         let mut e = format!(
             "  {{\"tag\": \"{}\", \"name\": \"{}\", \"value\": \"{}\"",
             json_escape(&f.tag),
-            json_escape(f.tag_description),
+            json_escape(tag_description(&f.tag)),
             json_escape(&f.value),
         );
         let val_desc = value_description(&f.tag, &f.value);
@@ -79,8 +79,10 @@ pub fn detail_panel(
     let mut view   = use_signal(|| VIEW_TABLE);
     let mut copied = use_signal(|| false);
 
-    let raw_text  = detail_msg.as_ref().map(|m| build_raw_text(m));
-    let json_text = detail_msg.as_ref().map(|m| build_json_text(m));
+    // Only build text for the active tab — no point computing both up front.
+    let view_now  = *view.read();
+    let raw_text  = if view_now == VIEW_RAW  { detail_msg.as_ref().map(|m| build_raw_text(m))  } else { None };
+    let json_text = if view_now == VIEW_JSON { detail_msg.as_ref().map(|m| build_json_text(m)) } else { None };
 
     rsx! {
         div { class: "panel-detail",
@@ -133,22 +135,13 @@ pub fn detail_panel(
                         if let Some(ref msg) = detail_msg {
                             {
                                 let skip = *skip_common.read();
-                                let fields: Vec<&FixField> = msg.fields.iter()
-                                    .filter(|f| !(skip && is_common_tag(&f.tag)))
-                                    .collect();
                                 rsx! {
-                                    for field in fields.iter() {
-                                        {
-                                            let desc_cls = tag_badge_class(&field.tag);
-                                            let val_desc = value_description(&field.tag, &field.value);
-                                            rsx! {
-                                                div { class: "tbl-row tbl-detail-row",
-                                                    span { class: "tag-num", "{field.tag}" }
-                                                    span { span { class: "badge {desc_cls}", "{field.tag_description}" } }
-                                                    span { "{field.value}" }
-                                                    span { "{val_desc}" }
-                                                }
-                                            }
+                                    for field in msg.fields.iter().filter(|f| !(skip && is_common_tag(&f.tag))) {
+                                        div { class: "tbl-row tbl-detail-row",
+                                            span { class: "tag-num", "{field.tag}" }
+                                            span { span { class: "badge {tag_badge_class(&field.tag)}", "{tag_description(&field.tag)}" } }
+                                            span { "{field.value}" }
+                                            span { "{value_description(&field.tag, &field.value)}" }
                                         }
                                     }
                                 }

@@ -298,3 +298,163 @@ a:hover { text-decoration: underline; }
   .hero h1 { font-size: 28px; }
   .features h2, .preview h2, .download h2, .tech h2, .hero-download h2 { font-size: 26px; }
 }
+
+/* ─── v0.3 Visual improvements ───────────────────────────────────────────── */
+
+/* Hero: richer layered gradient + animated glow orb */
+.hero {
+  background:
+    radial-gradient(ellipse 80% 55% at 50%  0%,  rgba(189,147,249,0.13) 0%, transparent 65%),
+    radial-gradient(ellipse 55% 40% at 12%  65%, rgba(80,250,123,0.06)  0%, transparent 55%),
+    radial-gradient(ellipse 55% 40% at 88%  65%, rgba(139,233,253,0.06) 0%, transparent 55%),
+    var(--bg);
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -8%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 900px;
+  height: 600px;
+  background: radial-gradient(ellipse, rgba(189,147,249,0.11) 0%, transparent 70%);
+  animation: hero-orb 9s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes hero-orb {
+  0%, 100% { transform: translateX(-50%) scale(1);    opacity: 0.55; }
+  50%       { transform: translateX(-50%) scale(1.18); opacity: 1; }
+}
+.hero-inner { position: relative; z-index: 1; }
+
+/* Badge: highlight the perf claim in green */
+.hero-badge strong { color: var(--green); font-style: normal; }
+
+/* Primary button: shadow lift */
+.btn-primary { box-shadow: 0 4px 20px rgba(189,147,249,0.30); }
+.btn-primary:hover { box-shadow: 0 6px 32px rgba(189,147,249,0.55); }
+
+/* Download card on hover: glow ring */
+.download-card:hover {
+  box-shadow: 0 0 0 1px var(--purple), 0 8px 32px rgba(189,147,249,0.15);
+}
+
+/* Preview window: gentle float */
+.hero-preview { animation: preview-float 5s ease-in-out infinite; }
+@keyframes preview-float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-8px); }
+}
+
+/* ── Performance stat strip ────────────────────────────────────────────── */
+.perf-strip {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  margin: 44px 0 0;
+}
+.perf-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px 28px;
+  text-align: center;
+  min-width: 155px;
+  background: rgba(45,47,61,0.55);
+  transition: transform 0.2s;
+}
+.perf-card:hover { transform: translateY(-3px); }
+.perf-card-green  { border-color: rgba(80,250,123,0.35); }
+.perf-card-purple { border-color: rgba(189,147,249,0.50); }
+.perf-card-cyan   { border-color: rgba(139,233,253,0.35); }
+/* Centre card: larger + glow */
+.perf-card-center {
+  padding: 28px 42px;
+  background: rgba(189,147,249,0.06);
+  box-shadow: 0 0 40px rgba(189,147,249,0.13), inset 0 0 0 1px rgba(189,147,249,0.20);
+}
+.perf-val {
+  font-size: 36px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -1.5px;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+.perf-card-center .perf-val { font-size: 44px; }
+.perf-card-green  .perf-val { color: #50fa7b; }
+.perf-card-purple .perf-val { color: #bd93f9; }
+.perf-card-cyan   .perf-val { color: #8be9fd; }
+.perf-sfx { font-size: 18px; font-weight: 700; opacity: 0.75; }
+.perf-card-center .perf-sfx { font-size: 24px; }
+.perf-name { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 3px; }
+.perf-desc { font-size: 11px; color: var(--surface); }
+
+/* Parse simulation bar */
+.perf-bar-section { max-width: 560px; margin: 22px auto 0; }
+.perf-bar-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.perf-bar-tag { color: var(--purple); font-weight: 700; }
+.perf-bar-track {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--bg-darker);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.perf-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #50fa7b 0%, #8be9fd 55%, #bd93f9 100%);
+  transform: scaleX(0);
+  transform-origin: left;
+  animation: perf-bar-grow 1.65s 0.85s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes perf-bar-grow { to { transform: scaleX(1); } }
+.perf-bar-note { font-size: 11px; color: var(--surface); text-align: center; margin-top: 7px; }
+
+/* ── Featured performance feature card ─────────────────────────────────── */
+.feature-card-speed {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  border-color: rgba(80,250,123,0.35);
+  background: rgba(80,250,123,0.03);
+}
+.feature-card-speed:hover { border-color: #50fa7b; transform: translateY(-2px); }
+.feature-card-speed .feature-icon { font-size: 52px; flex-shrink: 0; margin-bottom: 0; margin-top: 2px; }
+.feature-card-speed h3 { font-size: 20px; }
+.feature-speed-chip {
+  display: inline-block;
+  margin-top: 12px;
+  background: rgba(80,250,123,0.10);
+  border: 1px solid rgba(80,250,123,0.30);
+  color: #50fa7b;
+  padding: 4px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+/* ── Scroll reveal ──────────────────────────────────────────────────────── */
+.fade-reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+.fade-reveal.visible { opacity: 1; transform: translateY(0); }
+
+/* ── Responsive additions ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .perf-strip { flex-direction: column; align-items: center; }
+  .perf-card, .perf-card-center { width: 100%; max-width: 300px; }
+  .feature-card-speed { flex-direction: column; }
+}
