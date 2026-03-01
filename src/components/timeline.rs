@@ -9,25 +9,31 @@ const LOAD_MORE: usize = 1000;
 
 fn build_detail_text(m: &FixMessage) -> String {
     let mut parts = Vec::new();
-    if !m.side.is_empty() { parts.push(m.side.clone()); }
+    if !m.side.is_empty()      { parts.push(m.side.clone()); }
     if !m.order_qty.is_empty() { parts.push(m.order_qty.clone()); }
-    if !m.symbol.is_empty() { parts.push(m.symbol.clone()); }
-    if !m.text.is_empty() { parts.push(m.text.clone()); }
+    if !m.symbol.is_empty()    { parts.push(m.symbol.clone()); }
+    if !m.text.is_empty()      { parts.push(m.text.clone()); }
     parts.join("  ")
 }
 
-/// Case-insensitive substring match; empty filter means "show all".
+/// Case-insensitive substring match; `filter` must already be ASCII-lowercased.
+/// Zero-allocation: avoids the heap alloc from `to_ascii_lowercase()` on every row.
 fn col_match(value: &str, filter: &str) -> bool {
-    filter.is_empty() || value.to_ascii_lowercase().contains(filter)
+    if filter.is_empty() { return true; }
+    let fb = filter.as_bytes();
+    if fb.len() > value.len() { return false; }
+    value.as_bytes().windows(fb.len())
+        .any(|w| w.iter().zip(fb).all(|(&a, &b)| a.to_ascii_lowercase() == b))
 }
 
 /// Time filter: supports `>=` / `<=` prefixes for range queries or plain substring match.
-/// Timestamps are `YYYY-MM-DD HH:MM:SS`, so lexicographic order is correct.
+/// Timestamps are `YYYY-MM-DD HH:MM:SS` (pure ASCII digits/punctuation) so both
+/// lexicographic ordering and case-insensitive substring match work without allocation.
 fn time_match(time: &str, filter: &str) -> bool {
     if filter.is_empty() { return true; }
     if let Some(t) = filter.strip_prefix(">=") { return time >= t.trim(); }
     if let Some(t) = filter.strip_prefix("<=") { return time <= t.trim(); }
-    time.to_ascii_lowercase().contains(&filter.to_ascii_lowercase())
+    time.contains(filter)
 }
 
 /// Format a microsecond duration adaptively: µs / ms / s.
@@ -59,11 +65,10 @@ pub fn timeline_panel(
     let mut display_limit = use_signal(|| INITIAL_DISPLAY);
 
     // ── One-time JS scroll listener ──────────────────────────────────────────
-    // This effect reads NO reactive signals → runs exactly once on mount.
-    // It installs a native browser scroll listener on #timeline-scroll.
-    // When the user is within 200 px of the bottom AND the .cap-notice sentinel
-    // is present (meaning there is more to load), JS calls dioxus.send(true).
-    // A Rust loop receives those events and increments display_limit.
+    // Reads NO reactive signals → runs exactly once on mount.
+    // Installs a native browser scroll listener on #timeline-scroll.
+    // When within 200 px of the bottom AND .cap-notice sentinel is present,
+    // JS calls dioxus.send(true). Rust increments display_limit.
     use_effect(move || {
         let mut dl = display_limit.clone();
         spawn(async move {
@@ -78,7 +83,6 @@ pub fn timeline_panel(
                         attached = true;
                         el.addEventListener('scroll', function() {
                             if (cooldown) return;
-                            // Only fire when the sentinel is present (more items exist).
                             if (!el.querySelector('.cap-notice')) return;
                             var dist = el.scrollHeight - el.scrollTop - el.clientHeight;
                             if (dist < 200) {
@@ -91,7 +95,6 @@ pub fn timeline_panel(
                     attach();
                 })();
             "#);
-            // Receive load-more signals; JS sends `true` when near bottom.
             loop {
                 match e.recv::<bool>().await {
                     Ok(true)  => { let cur = *dl.read(); dl.set(cur + LOAD_MORE); }
@@ -114,15 +117,43 @@ pub fn timeline_panel(
         skip_heartbeats.read();
         let _ = messages.read().len();
         display_limit.set(INITIAL_DISPLAY);
-        // Scroll the list back to the top (fire-and-forget, no dioxus.send needed).
         eval("var el = document.getElementById('timeline-scroll'); if (el) el.scrollTop = 0;");
     });
 
-    let skip_hb = *skip_heartbeats.read();
-    let msgs    = messages.read();
-    let sel     = *selected_idx.read();
+    // ── Memoized filter ──────────────────────────────────────────────────────
+    // Re-computes ONLY when a filter signal, skip_heartbeats, or messages change.
+    // Crucially, scrolling (display_limit changes) does NOT trigger a re-scan —
+    // the cached Vec<usize> is reused, making scroll completely free.
+    let timeline_indices = use_memo(move || -> Vec<usize> {
+        let skip_hb = *skip_heartbeats.read();
+        let msgs    = messages.read();
+        let ft_raw  = f_time.read().clone();
+        let fs      = f_sender.read().to_ascii_lowercase();
+        let fta     = f_target.read().to_ascii_lowercase();
+        let fm      = f_msg.read().to_ascii_lowercase();
+        let fc      = f_clord.read().to_ascii_lowercase();
+        let fd      = f_detail.read().to_ascii_lowercase();
 
-    // Time filter kept raw for >= / <= comparisons; others pre-lowercased.
+        msgs.iter()
+            .enumerate()
+            .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
+            .filter(|(_, m)| {
+                time_match(&m.time, &ft_raw)
+                    && col_match(&m.sender, &fs)
+                    && col_match(&m.target, &fta)
+                    && col_match(m.msg_type_label, &fm)
+                    && col_match(&m.cl_ord_id, &fc)
+                    && (fd.is_empty() || col_match(&build_detail_text(m), &fd))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    });
+
+    // ── Render-time state ────────────────────────────────────────────────────
+    let msgs = messages.read();
+    let sel  = *selected_idx.read();
+
+    // Filter strings re-read here for input value bindings and has_filter check.
     let ft_raw = f_time.read().clone();
     let fs  = f_sender.read().to_ascii_lowercase();
     let fta = f_target.read().to_ascii_lowercase();
@@ -133,22 +164,9 @@ pub fn timeline_panel(
     let has_filter = !ft_raw.is_empty() || !fs.is_empty() || !fta.is_empty()
         || !fm.is_empty() || !fc.is_empty() || !fd.is_empty();
 
-    let timeline_indices: Vec<usize> = msgs
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
-        .filter(|(_, m)| {
-            time_match(&m.time, &ft_raw)
-                && col_match(&m.sender, &fs)
-                && col_match(&m.target, &fta)
-                && col_match(m.msg_type_label, &fm)
-                && col_match(&m.cl_ord_id, &fc)
-                && (fd.is_empty() || col_match(&build_detail_text(m), &fd))
-        })
-        .map(|(i, _)| i)
-        .collect();
-
-    let total_count = timeline_indices.len();
+    // Cached result from the memo — free if filters/messages haven't changed.
+    let indices     = timeline_indices.read();
+    let total_count = indices.len();
     let display_end = (*display_limit.read()).min(total_count);
     let has_more    = display_end < total_count;
 
@@ -228,7 +246,7 @@ pub fn timeline_panel(
                     }
                 }
                 div { class: "tbl-body", id: "timeline-scroll",
-                    for idx in timeline_indices[..display_end].iter().copied() {
+                    for idx in indices[..display_end].iter().copied() {
                         div {
                             class: if sel == Some(idx) { "tbl-row tbl-timeline-row row-selected" } else { "tbl-row tbl-timeline-row" },
                             onclick: move |_| selected_idx.set(Some(idx)),
@@ -240,7 +258,7 @@ pub fn timeline_panel(
                             span { class: "cell-detail", "{build_detail_text(&msgs[idx])}" }
                         }
                     }
-                    if timeline_indices.is_empty() {
+                    if indices.is_empty() {
                         div { class: "empty-state",
                             if has_filter { "No messages match the current filters." }
                             else { "No messages parsed yet." }

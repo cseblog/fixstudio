@@ -80,8 +80,10 @@ pub fn detail_panel(
     let mut view   = use_signal(|| VIEW_TABLE);
     let mut copied = use_signal(|| false);
 
-    let raw_text  = detail_msg.as_ref().map(|m| build_raw_text(m));
-    let json_text = detail_msg.as_ref().map(|m| build_json_text(m));
+    // Only build text for the active tab — no point computing both up front.
+    let view_now  = *view.read();
+    let raw_text  = if view_now == VIEW_RAW  { detail_msg.as_ref().map(|m| build_raw_text(m))  } else { None };
+    let json_text = if view_now == VIEW_JSON { detail_msg.as_ref().map(|m| build_json_text(m)) } else { None };
 
     rsx! {
         div { class: "panel-detail",
