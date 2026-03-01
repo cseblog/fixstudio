@@ -220,7 +220,7 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 
 .tbl-timeline-row {
     display: grid;
-    grid-template-columns: 170px 72px 72px 150px 1fr 160px;
+    grid-template-columns: 200px 72px 72px 150px 1fr 160px;
     gap: 6px;
     padding: 6px 10px;
     align-items: center;
