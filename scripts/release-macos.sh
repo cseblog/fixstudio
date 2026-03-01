@@ -42,13 +42,20 @@ codesign --force --deep --timestamp --options runtime \
     --sign "$SIGN_ID" \
     "$APP_PATH"
 
-# Rebuild DMG with the properly signed app (old DMG has invalid signature)
+# Rebuild DMG with app + Applications folder (drag-to-install layout)
 echo "Creating DMG..."
 DMG_NAME="AiFixParser_1.0.0_aarch64.dmg"
 DMG_PATH="$BUNDLE_DIR/dmg/$DMG_NAME"
 rm -f "$DMG_PATH"
-hdiutil create -volname "AiFixParser" -srcfolder "$APP_PATH" \
+
+DMG_LAYOUT=$(mktemp -d)
+cp -R "$APP_PATH" "$DMG_LAYOUT/"
+ln -s /Applications "$DMG_LAYOUT/Applications"
+
+hdiutil create -volname "AiFixParser" -srcfolder "$DMG_LAYOUT" \
     -ov -format UDZO "$DMG_PATH"
+
+rm -rf "$DMG_LAYOUT"
 
 # Sign the DMG
 echo "Signing DMG..."
