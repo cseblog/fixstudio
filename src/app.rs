@@ -2,6 +2,7 @@ use std::time::Instant;
 use std::mem;
 
 use dioxus::prelude::*;
+use dioxus::document::eval;
 
 use crate::components::detail::detail_panel;
 use crate::components::timeline::timeline_panel;
@@ -98,6 +99,37 @@ pub fn app() -> Element {
     let sel = *selected_idx.read();
     let detail_msg: Option<FixMessage> = sel.and_then(|i| messages.read().get(i).cloned());
 
+    // Show hero landing when nothing is loaded yet.
+    let show_hero = messages.read().is_empty() && file_name.read().is_none() && !*loading.read();
+
+    // Re-run the JS counter animation every time the hero becomes visible
+    // (on mount and whenever the user clears back to empty state).
+    use_effect(move || {
+        let visible = messages.read().is_empty() && file_name.read().is_none() && !*loading.read();
+        if visible {
+            eval(r#"
+                (function() {
+                    function animCounter(id, target, dur) {
+                        var el = document.getElementById(id);
+                        if (!el) return;
+                        var t0 = performance.now();
+                        (function tick() {
+                            var p = Math.min((performance.now() - t0) / dur, 1);
+                            var v = Math.round((1 - Math.pow(1 - p, 3)) * target);
+                            el.textContent = (p >= 1 ? target : v).toLocaleString('en-US');
+                            if (p < 1) requestAnimationFrame(tick);
+                        })();
+                    }
+                    setTimeout(function() {
+                        animCounter('hero-msg-count',  1000000, 1600);
+                        animCounter('hero-parse-ms',   150,     1200);
+                        animCounter('hero-throughput', 631,     1000);
+                    }, 150);
+                })();
+            "#);
+        }
+    });
+
     rsx! {
         style { {CSS} }
         div { class: "root",
@@ -123,36 +155,86 @@ pub fn app() -> Element {
                 })}
             }
 
-            // ── Input area ──
-            if *loading.read() {
-                div { class: "fix-loading", "Loading file and parsing messages…" }
-            } else if let Some(ref name) = *file_name.read() {
-                // File was loaded via dialog — don't put 135 MB in the textarea.
-                div { class: "fix-file-banner",
-                    span { class: "fix-file-icon", "📂" }
-                    span { class: "fix-file-name", "{name}" }
-                    span { class: "fix-file-hint", "— click Clear to reset" }
+            if show_hero {
+                // ── Hero landing (replaces input + panels when nothing is loaded) ──
+                div { class: "hero",
+                    div { class: "hero-title",
+                        span { class: "hero-icon", "⚡" }
+                        h1 { "FIX Studio" }
+                        p { "High-performance FIX protocol parser & inspector" }
+                    }
+                    div { class: "hero-stats",
+                        div { class: "hero-stat hero-stat-green",
+                            div { class: "hero-stat-value", id: "hero-msg-count", "0" }
+                            div { class: "hero-stat-unit", "messages" }
+                            div { class: "hero-stat-label", "parsed in one shot" }
+                        }
+                        div { class: "hero-stat hero-stat-purple hero-stat-featured",
+                            div { class: "hero-stat-value",
+                                span { id: "hero-parse-ms", "0" }
+                                span { class: "hero-stat-suffix", "ms" }
+                            }
+                            div { class: "hero-stat-unit", "parse time" }
+                            div { class: "hero-stat-label", "for 1,000,000 messages" }
+                        }
+                        div { class: "hero-stat hero-stat-cyan",
+                            div { class: "hero-stat-value",
+                                span { id: "hero-throughput", "0" }
+                                span { class: "hero-stat-suffix", " MiB/s" }
+                            }
+                            div { class: "hero-stat-unit", "throughput" }
+                            div { class: "hero-stat-label", "streaming parse" }
+                        }
+                    }
+                    div { class: "hero-demo",
+                        div { class: "hero-demo-label",
+                            span { "Simulating 1,000,000 FIX message parse…" }
+                            span { class: "hero-demo-time", "150 ms" }
+                        }
+                        div { class: "hero-bar-track",
+                            div { class: "hero-bar-fill" }
+                        }
+                    }
+                    p { class: "hero-hint",
+                        "Paste FIX data and click "
+                        span { class: "hero-hint-kbd", "Process" }
+                        "  ·  "
+                        span { class: "hero-hint-kbd", "Load file" }
+                        "  ·  or pick a sample from the toolbar"
+                    }
                 }
             } else {
-                textarea {
-                    class: "fix-input",
-                    placeholder: "Paste FIX messages here …",
-                    value: "{input.read()}",
-                    oninput: move |evt| input.set(evt.value()),
+                // ── Input area ──
+                if *loading.read() {
+                    div { class: "fix-loading", "Loading file and parsing messages…" }
+                } else if let Some(ref name) = *file_name.read() {
+                    // File was loaded via dialog — don't put 135 MB in the textarea.
+                    div { class: "fix-file-banner",
+                        span { class: "fix-file-icon", "📂" }
+                        span { class: "fix-file-name", "{name}" }
+                        span { class: "fix-file-hint", "— click Clear to reset" }
+                    }
+                } else {
+                    textarea {
+                        class: "fix-input",
+                        placeholder: "Paste FIX messages here …",
+                        value: "{input.read()}",
+                        oninput: move |evt| input.set(evt.value()),
+                    }
                 }
-            }
 
-            // ── Main panels ──
-            div { class: "panels",
-                timeline_panel {
-                    messages: messages,
-                    selected_idx: selected_idx,
-                    skip_heartbeats: skip_heartbeats,
-                    parse_stats: parse_stats,
-                }
-                detail_panel {
-                    detail_msg: detail_msg,
-                    skip_common: skip_common,
+                // ── Main panels ──
+                div { class: "panels",
+                    timeline_panel {
+                        messages: messages,
+                        selected_idx: selected_idx,
+                        skip_heartbeats: skip_heartbeats,
+                        parse_stats: parse_stats,
+                    }
+                    detail_panel {
+                        detail_msg: detail_msg,
+                        skip_common: skip_common,
+                    }
                 }
             }
         }
