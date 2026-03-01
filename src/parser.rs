@@ -9,17 +9,30 @@ use crate::model::{FixField, FixMessage};
 
 /// Normalize delimiters: SOH (0x01), \x01, ^A -> pipe.
 /// Returns a borrowed slice when no special delimiters are present (zero allocation).
+/// When conversion is needed, a single pass is used — three chained `.replace()` calls
+/// would each allocate the full buffer, tripling peak memory for large files.
 fn normalize_delimiters(input: &str) -> Cow<'_, str> {
-    // SIMD scan for SOH / backslash / caret — avoids allocation for clean pipe input.
+    // SIMD scan for SOH / backslash / caret — fast zero-alloc check for clean input.
     if memchr3(0x01, b'\\', b'^', input.as_bytes()).is_none() {
         return Cow::Borrowed(input);
     }
-    Cow::Owned(
-        input
-            .replace('\u{01}', "|")   // SOH byte
-            .replace("\\x01", "|")    // literal \x01 text
-            .replace("^A", "|"),      // caret-A
-    )
+    // Single pass — one allocation, exactly input.len() capacity.
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            0x01 => { out.push('|'); i += 1; }
+            b'\\' if bytes.get(i + 1..i + 4) == Some(b"x01") => {
+                out.push('|'); i += 4;
+            }
+            b'^' if bytes.get(i + 1) == Some(&b'A') => {
+                out.push('|'); i += 2;
+            }
+            b => { out.push(b as char); i += 1; }
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// Split `input` on "8=FIX" boundaries using SIMD substring search.

@@ -164,17 +164,18 @@ pub fn timeline_panel(
     let msgs = messages.read();
     let sel  = *selected_idx.read();
 
-    // Filter strings re-read here for input value bindings and has_filter check.
+    // Filter values for input bindings and has_filter check.
+    // No lowercasing needed here — has_filter only tests emptiness, and the
+    // input value= attributes bind to the raw signal directly.
     let ft_val = f_time.read().clone();
     let ft_op  = f_time_op.read().clone();
-    let fs  = f_sender.read().to_ascii_lowercase();
-    let fta = f_target.read().to_ascii_lowercase();
-    let fm  = f_msg.read().to_ascii_lowercase();
-    let fc  = f_clord.read().to_ascii_lowercase();
-    let fd  = f_detail.read().to_ascii_lowercase();
 
-    let has_filter = !ft_val.is_empty() || !fs.is_empty() || !fta.is_empty()
-        || !fm.is_empty() || !fc.is_empty() || !fd.is_empty();
+    let has_filter = !ft_val.is_empty()
+        || !f_sender.read().is_empty()
+        || !f_target.read().is_empty()
+        || !f_msg.read().is_empty()
+        || !f_clord.read().is_empty()
+        || !f_detail.read().is_empty();
 
     // Cached result from the memo — free if filters/messages haven't changed.
     let indices     = timeline_indices.read();

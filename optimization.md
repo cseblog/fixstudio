@@ -109,3 +109,20 @@ memchr3 in normalize_delimiters — SIMD scans 16–32 bytes/cycle to detect SOH
 memmem::find_iter in message_slices — SIMD-accelerated Aho-Corasick search for "8=FIX" across the 15.8 MB file
 memchr_iter in parse_single — SIMD | delimiter search per message instead of a scalar byte loop
 Lazy tag_description — eliminated 1.5M match-table lookups from the parse hot path; they now only run when you open a message in the detail panel
+
+
+
+
+--- Optimization 3 -------
+Implemented (5 changes)
+Change	Effect
+A	opt-level = 3 + panic = "abort"	Release builds get LLVM vectorization/unrolling — ~10–30% faster parse & filter
+B	value_description → &'static str across all 27 sub-functions	Eliminates ~30 heap allocs per detail-panel render (all label strings were static data)
+C	normalize_delimiters single-pass	SOH input now allocates once (135 MB) instead of 3× chained .replace() (405 MB peak)
+D	Remove 5 redundant to_ascii_lowercase() from timeline render body	Those allocations existed only for has_filter emptiness checks — fixed to use .is_empty() directly
+E	offload_replace: old Vec<FixMessage> dropped on a background thread	Loading a new 1M-message file no longer freezes the UI during deallocation
+Larger refactors still available (not yet done)
+FixField::tag as u16 — shrinks each field from 48 → ~26 bytes, turns string match into jump table; significant cross-file refactor
+Pass index to detail_panel instead of cloning FixMessage — eliminates one Vec<FixField> deep-clone per render
+Pre-compute detail_text in FixMessage at parse time — eliminates the build_detail_text alloc from the 1M filter scan and render loop
+
