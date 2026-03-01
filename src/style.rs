@@ -242,6 +242,30 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 
 /* Column filters */
 .tbl-filter { background: #1e1f29; border-bottom: 1px solid #343746; }
+
+/* Time filter: operator dropdown + value input side-by-side */
+.time-filter-wrap {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    width: 100%;
+}
+.time-op-select {
+    flex-shrink: 0;
+    width: 34px;
+    background: #2d2f3f;
+    border: 1px solid #44475a;
+    border-radius: 3px;
+    color: #8be9fd;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: inherit;
+    padding: 1px 2px;
+    outline: none;
+    cursor: pointer;
+    text-align: center;
+}
+.time-op-select:focus { border-color: #bd93f9; }
 .col-filter {
     width: 100%;
     background: transparent;
