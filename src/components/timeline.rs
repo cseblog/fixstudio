@@ -55,7 +55,8 @@ pub fn timeline_panel(
     skip_heartbeats: Signal<bool>,
     parse_stats: Signal<Option<(usize, u64)>>,
 ) -> Element {
-    let mut f_time   = use_signal(String::new);
+    let mut f_time    = use_signal(String::new);
+    let mut f_time_op = use_signal(|| String::from("="));  // "=" | ">=" | "<="
     let mut f_sender = use_signal(String::new);
     let mut f_target = use_signal(String::new);
     let mut f_msg    = use_signal(String::new);
@@ -109,6 +110,7 @@ pub fn timeline_panel(
     // Reads filter signals + message count → re-runs whenever they change.
     use_effect(move || {
         f_time.read();
+        f_time_op.read();
         f_sender.read();
         f_target.read();
         f_msg.read();
@@ -127,7 +129,16 @@ pub fn timeline_panel(
     let timeline_indices = use_memo(move || -> Vec<usize> {
         let skip_hb = *skip_heartbeats.read();
         let msgs    = messages.read();
-        let ft_raw  = f_time.read().clone();
+        // Combine operator + value into the format time_match expects:
+        //   "="  → plain value (substring match)
+        //   ">=" / "<=" → prefixed, e.g. ">=2024-01-02 10:00:00"
+        let ft_val = f_time.read().clone();
+        let ft_op  = f_time_op.read().clone();
+        let ft_raw = if ft_op == "=" || ft_val.is_empty() {
+            ft_val
+        } else {
+            format!("{}{}", ft_op, ft_val)
+        };
         let fs      = f_sender.read().to_ascii_lowercase();
         let fta     = f_target.read().to_ascii_lowercase();
         let fm      = f_msg.read().to_ascii_lowercase();
@@ -154,14 +165,15 @@ pub fn timeline_panel(
     let sel  = *selected_idx.read();
 
     // Filter strings re-read here for input value bindings and has_filter check.
-    let ft_raw = f_time.read().clone();
+    let ft_val = f_time.read().clone();
+    let ft_op  = f_time_op.read().clone();
     let fs  = f_sender.read().to_ascii_lowercase();
     let fta = f_target.read().to_ascii_lowercase();
     let fm  = f_msg.read().to_ascii_lowercase();
     let fc  = f_clord.read().to_ascii_lowercase();
     let fd  = f_detail.read().to_ascii_lowercase();
 
-    let has_filter = !ft_raw.is_empty() || !fs.is_empty() || !fta.is_empty()
+    let has_filter = !ft_val.is_empty() || !fs.is_empty() || !fta.is_empty()
         || !fm.is_empty() || !fc.is_empty() || !fd.is_empty();
 
     // Cached result from the memo — free if filters/messages haven't changed.
@@ -190,6 +202,7 @@ pub fn timeline_panel(
                             class: "btn-clear-filter",
                             onclick: move |_| {
                                 f_time.set(String::new());
+                                f_time_op.set(String::from("="));
                                 f_sender.set(String::new());
                                 f_target.set(String::new());
                                 f_msg.set(String::new());
@@ -220,9 +233,18 @@ pub fn timeline_panel(
                     span { "Detail" }
                 }
                 div { class: "tbl-filter tbl-timeline-row",
-                    input { class: "col-filter", placeholder: "exact · >= · <=",
-                        value: "{f_time.read()}",
-                        oninput: move |e| f_time.set(e.value()),
+                    div { class: "time-filter-wrap",
+                        select {
+                            class: "time-op-select",
+                            onchange: move |e| f_time_op.set(e.value()),
+                            option { value: "=",  selected: ft_op == "=",  "=" }
+                            option { value: ">=", selected: ft_op == ">=", "≥" }
+                            option { value: "<=", selected: ft_op == "<=", "≤" }
+                        }
+                        input { class: "col-filter", placeholder: "2024-01-02 08:00:00",
+                            value: "{f_time.read()}",
+                            oninput: move |e| f_time.set(e.value()),
+                        }
                     }
                     input { class: "col-filter", placeholder: "filter…",
                         value: "{f_sender.read()}",
