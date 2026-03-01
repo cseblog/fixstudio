@@ -160,7 +160,7 @@ pub fn app() -> Element {
                 div { class: "hero",
                     div { class: "hero-title",
                         span { class: "hero-icon", "⚡" }
-                        h1 { "FIX Studio" }
+                        h1 { "AiFIXParser.com" }
                         p { "High-performance FIX protocol parser & inspector" }
                     }
                     div { class: "hero-stats",
