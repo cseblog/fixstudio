@@ -145,7 +145,7 @@ pub fn timeline_panel(
         let fc      = f_clord.read().to_ascii_lowercase();
         let fd      = f_detail.read().to_ascii_lowercase();
 
-        msgs.iter()
+        let mut indices: Vec<usize> = msgs.iter()
             .enumerate()
             .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
             .filter(|(_, m)| {
@@ -157,7 +157,10 @@ pub fn timeline_panel(
                     && (fd.is_empty() || col_match(&build_detail_text(m), &fd))
             })
             .map(|(i, _)| i)
-            .collect()
+            .collect();
+        // Newest first — ISO timestamps sort lexicographically so this is correct.
+        indices.sort_unstable_by(|&a, &b| msgs[b].time.cmp(&msgs[a].time));
+        indices
     });
 
     // ── Render-time state ────────────────────────────────────────────────────
@@ -242,7 +245,7 @@ pub fn timeline_panel(
                             option { value: ">=", selected: ft_op == ">=", "≥" }
                             option { value: "<=", selected: ft_op == "<=", "≤" }
                         }
-                        input { class: "col-filter", placeholder: "2024-01-02 08:00:00",
+                        input { class: "col-filter", placeholder: "2024-01-02 08:00:00.000",
                             value: "{f_time.read()}",
                             oninput: move |e| f_time.set(e.value()),
                         }
