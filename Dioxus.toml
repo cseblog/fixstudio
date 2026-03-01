@@ -12,6 +12,9 @@ short_description = "AI FIX Parser – Parse and analyze FIX protocol messages w
 
 [bundle.macos]
 minimum_system_version = "12.0"
+entitlements = "entitlements.plist"
+provider_short_name = "438CH4PXMR"
+hardened_runtime = true
 
 [bundle.windows]
 icon_path = "assets/icon.ico"
