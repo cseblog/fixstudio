@@ -22,12 +22,11 @@ fn build_raw_text(msg: &FixMessage) -> String {
             field.tag.to_string()
         };
         let val_desc = value_description(&field.tag, &field.value);
-        let val_part = if val_desc.is_empty() {
-            field.value.to_string()
+        if val_desc.is_empty() {
+            lines.push(format!("  {}: {}", name, field.value));
         } else {
-            format!("{} [{}]", field.value, val_desc)
-        };
-        lines.push(format!("  {}: {}", name, val_part));
+            lines.push(format!("  {}: {} [{}]", name, field.value, val_desc));
+        }
     }
     lines.join("\n")
 }

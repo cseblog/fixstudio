@@ -47,8 +47,9 @@ opt-level = 3
 lto = "thin"
 
 [profile.release]
-opt-level = "z"      # optimise for size
+opt-level = 3        # max speed (desktop app — binary size doesn't matter)
 lto = true           # link-time optimisation
 strip = true         # strip debug symbols
 codegen-units = 1    # single codegen unit for better optimisation
+panic = "abort"      # no unwinding machinery needed
 

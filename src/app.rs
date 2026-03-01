@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::mem;
 
 use dioxus::prelude::*;
 
@@ -8,6 +9,16 @@ use crate::model::FixMessage;
 use crate::parser::parse_all;
 use crate::sample::{sample_data, FIX_SPECS};
 use crate::style::CSS;
+
+/// Replace `signal`'s value with `new_data`, then drop the old `Vec<FixMessage>`
+/// on a background thread so the main UI thread isn't blocked by deallocation
+/// of potentially millions of structs.
+fn offload_replace(signal: &mut Signal<Vec<FixMessage>>, new_data: Vec<FixMessage>) {
+    let old = mem::replace(&mut *signal.write(), new_data);
+    if !old.is_empty() {
+        std::thread::spawn(move || drop(old));
+    }
+}
 
 /// Root application component.
 pub fn app() -> Element {
@@ -26,14 +37,14 @@ pub fn app() -> Element {
         let parsed = parse_all(&input.read());
         let ms = t.elapsed().as_micros() as u64;
         parse_stats.set(Some((parsed.len(), ms)));
-        messages.set(parsed);
+        offload_replace(&mut messages, parsed);
         selected_idx.set(None);
         file_name.set(None);
     };
 
     let mut clear = move || {
         input.set(String::new());
-        messages.set(Vec::new());
+        offload_replace(&mut messages, Vec::new());
         selected_idx.set(None);
         parse_stats.set(None);
         file_name.set(None);
@@ -46,7 +57,7 @@ pub fn app() -> Element {
         let ms = t.elapsed().as_micros() as u64;
         parse_stats.set(Some((parsed.len(), ms)));
         input.set(s);
-        messages.set(parsed);
+        offload_replace(&mut messages, parsed);
         selected_idx.set(None);
         file_name.set(None);
     };
@@ -75,7 +86,7 @@ pub fn app() -> Element {
                 let ms = t.elapsed().as_micros() as u64;
                 // `content` (and `bytes`) are dropped here — not kept in any signal.
                 parse_stats.set(Some((parsed.len(), ms)));
-                messages.set(parsed);
+                offload_replace(&mut messages, parsed);
                 selected_idx.set(None);
                 file_name.set(Some(name));
             }
