@@ -1,9 +1,9 @@
 [package]
-name = "AIFixParser"
-version = "0.1.0"
+name = "AiFIXParser"
+version = "1.0.0"
 edition = "2021"
 description = "AI FIX Parser – Parse and analyze FIX protocol messages with AI-powered insights"
-license = "MIT"
+license = "aifixparser.com"
 
 [[bin]]
 name = "AIFixParser"
