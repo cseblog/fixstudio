@@ -4,6 +4,27 @@ use std::mem;
 use dioxus::prelude::*;
 use dioxus::document::eval;
 
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION_URL: &str = "https://aifixparser.com/latest-version";
+const DOWNLOAD_URL: &str = "https://aifixparser.com/#download";
+
+#[derive(Clone, PartialEq)]
+enum UpdateStatus {
+    Idle,
+    Checking,
+    Available(String), // latest version string
+    UpToDate,
+}
+
+/// Returns true when `latest` is a higher semver than `current`.
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    let parse = |s: &str| -> [u32; 3] {
+        let mut it = s.split('.').filter_map(|p| p.parse().ok());
+        [it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0)]
+    };
+    parse(latest) > parse(current)
+}
+
 use crate::components::detail::detail_panel;
 use crate::components::timeline::timeline_panel;
 use crate::model::FixMessage;
@@ -32,6 +53,7 @@ pub fn app() -> Element {
     let loading = use_signal(|| false);
     // Tracks the last file loaded via the file dialog (name only — not the content).
     let mut file_name: Signal<Option<String>> = use_signal(|| None);
+    let mut update_status: Signal<UpdateStatus> = use_signal(|| UpdateStatus::Idle);
 
     let mut process = move || {
         let t = Instant::now();
@@ -102,6 +124,31 @@ pub fn app() -> Element {
     // Show hero landing when nothing is loaded yet.
     let show_hero = messages.read().is_empty() && file_name.read().is_none() && !*loading.read();
 
+    // Auto-check for updates once on mount (no reactive reads → runs exactly once).
+    use_effect(move || {
+        update_status.set(UpdateStatus::Checking);
+        spawn(async move {
+            let mut ev = eval(&format!(
+                r#"(async () => {{
+                    try {{
+                        const r = await fetch('{VERSION_URL}',
+                            {{ signal: AbortSignal.timeout(6000) }});
+                        window.dioxus.send((await r.text()).trim());
+                    }} catch(e) {{
+                        window.dioxus.send('');
+                    }}
+                }})();"#
+            ));
+            update_status.set(match ev.recv::<String>().await {
+                Ok(v) if !v.is_empty() && is_newer_version(&v, CURRENT_VERSION) => {
+                    UpdateStatus::Available(v)
+                }
+                Ok(v) if !v.is_empty() => UpdateStatus::UpToDate,
+                _ => UpdateStatus::Idle,
+            });
+        });
+    });
+
     // Re-run the JS counter animation every time the hero becomes visible
     // (on mount and whenever the user clears back to empty state).
     use_effect(move || {
@@ -153,6 +200,35 @@ pub fn app() -> Element {
                         }
                     }
                 })}
+
+                // Push update button to the right
+                div { class: "toolbar-spacer" }
+
+                // Update indicator / button
+                {
+                    let status = update_status.read().clone();
+                    match status {
+                        UpdateStatus::Checking => rsx! {
+                            span { class: "update-checking", "Checking for updates…" }
+                        },
+                        UpdateStatus::Available(v) => rsx! {
+                            button {
+                                class: "btn btn-update-available",
+                                onclick: move |_| {
+                                    let url = DOWNLOAD_URL.to_string();
+                                    std::thread::spawn(move || { let _ = open::that(url); });
+                                },
+                                "⬆ v{v} — Update now"
+                            }
+                        },
+                        UpdateStatus::UpToDate => rsx! {
+                            span { class: "update-ok", "✓ v{CURRENT_VERSION}" }
+                        },
+                        UpdateStatus::Idle => rsx! {
+                            span { class: "update-version", "v{CURRENT_VERSION}" }
+                        },
+                    }
+                }
             }
 
             if show_hero {
