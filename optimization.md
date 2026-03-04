@@ -98,7 +98,7 @@ The single change that mattered most was switching String → CompactString in t
 FIX tags ("35", "49", etc.) are always 1–5 chars → always stored inline, zero heap alloc
 Timestamps like "20240115-09:30:01.000" are 23 chars → still fit inline
 format_compact! in extract_time avoids going through a temporary String
-This eliminated ~3 million heap allocations per 100k message parse. That was the bottleneck the whole time — Rayon was already parallelising perfectly, the string allocator was just drowning the CPU in malloc/free churn.
+This eliminated ~3 million heap allocations per 100k message parse. That was the bottleneck the whole time — **Rayon** was already parallelising perfectly, the string allocator was just drowning the CPU in malloc/free churn.
 
 At 431 MiB/s for real FIX log data, this is competitive with the fastest production FIX parsers written in any language
 
@@ -119,7 +119,7 @@ Change	Effect
 A	opt-level = 3 + panic = "abort"	Release builds get LLVM vectorization/unrolling — ~10–30% faster parse & filter
 B	value_description → &'static str across all 27 sub-functions	Eliminates ~30 heap allocs per detail-panel render (all label strings were static data)
 C	normalize_delimiters single-pass	SOH input now allocates once (135 MB) instead of 3× chained .replace() (405 MB peak)
-D	Remove 5 redundant to_ascii_lowercase() from timeline render body	Those allocations existed only for has_filter emptiness checks — fixed to use .is_empty() directly
+D	Remove 5 redundant to_ascii_lowercase() from timeline render body	Those allocati◊ons existed only for has_filter emptiness checks — fixed to use .is_empty() directly
 E	offload_replace: old Vec<FixMessage> dropped on a background thread	Loading a new 1M-message file no longer freezes the UI during deallocation
 Larger refactors still available (not yet done)
 FixField::tag as u16 — shrinks each field from 48 → ~26 bytes, turns string match into jump table; significant cross-file refactor

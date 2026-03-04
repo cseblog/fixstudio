@@ -4,10 +4,32 @@ use std::mem;
 use dioxus::prelude::*;
 use dioxus::document::eval;
 
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION_URL: &str = "https://aifixparser.com/latest-version";
+const DOWNLOAD_URL: &str = "https://aifixparser.com/#download";
+const GA_ID: &str = "G-Y9J423BNZ0"; // ← replace with your GA4 Measurement ID
+
+#[derive(Clone, PartialEq)]
+enum UpdateStatus {
+    Idle,
+    Checking,
+    Available(String), // latest version string
+    UpToDate,
+}
+
+/// Returns true when `latest` is a higher semver than `current`.
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    let parse = |s: &str| -> [u32; 3] {
+        let mut it = s.split('.').filter_map(|p| p.parse().ok());
+        [it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0)]
+    };
+    parse(latest) > parse(current)
+}
+
 use crate::components::detail::detail_panel;
 use crate::components::timeline::timeline_panel;
 use crate::model::FixMessage;
-use crate::parser::parse_all;
+use crate::parser::{parse_all, parse_all_simd};
 use crate::sample::{sample_data, FIX_SPECS};
 use crate::style::CSS;
 
@@ -32,6 +54,7 @@ pub fn app() -> Element {
     let loading = use_signal(|| false);
     // Tracks the last file loaded via the file dialog (name only — not the content).
     let mut file_name: Signal<Option<String>> = use_signal(|| None);
+    let mut update_status: Signal<UpdateStatus> = use_signal(|| UpdateStatus::Idle);
 
     let mut process = move || {
         let t = Instant::now();
@@ -57,10 +80,15 @@ pub fn app() -> Element {
         let parsed = parse_all(&s);
         let ms = t.elapsed().as_micros() as u64;
         parse_stats.set(Some((parsed.len(), ms)));
+        let count = parsed.len();
         input.set(s);
         offload_replace(&mut messages, parsed);
         selected_idx.set(None);
         file_name.set(None);
+        eval(&format!(
+            "window.gtag && window.gtag('event', 'sample_loaded', \
+             {{ sample: '{spec}', message_count: {count}, parse_us: {ms} }});"
+        ));
     };
 
     let load_file = move || {
@@ -79,17 +107,31 @@ pub fn app() -> Element {
             {
                 let name  = file.file_name();
                 let bytes = file.read().await;
-                // Use from_utf8_lossy but do NOT store the content in a Signal —
-                // 135 MB in a reactive signal serialises to the WebView on every render.
-                let content = String::from_utf8_lossy(&bytes);
+                // Detect delimiter style from the first 4 KB — no need to scan the whole file.
+                // Real FIX logs use SOH (0x01); pipe-delimited files come from tools/exports.
+                let is_soh = bytes.iter().take(4096).any(|&b| b == 0x01);
                 let t = Instant::now();
-                let parsed = parse_all(&content);
+                let parsed = if is_soh {
+                    // SOH path: parse_all_simd skips the normalize allocation (+40% faster).
+                    let content = String::from_utf8_lossy(&bytes);
+                    parse_all_simd(&content)
+                } else {
+                    // Pipe path: parse_all with Cow::Borrowed fast-path (zero extra alloc).
+                    let content = String::from_utf8_lossy(&bytes);
+                    parse_all(&content)
+                };
                 let ms = t.elapsed().as_micros() as u64;
+                let count = parsed.len();
                 // `content` (and `bytes`) are dropped here — not kept in any signal.
-                parse_stats.set(Some((parsed.len(), ms)));
+                parse_stats.set(Some((count, ms)));
                 offload_replace(&mut messages, parsed);
                 selected_idx.set(None);
                 file_name.set(Some(name));
+                let delimiter = if is_soh { "soh" } else { "pipe" };
+                eval(&format!(
+                    "window.gtag && window.gtag('event', 'file_parsed', \
+                     {{ message_count: {count}, parse_us: {ms}, delimiter: '{delimiter}' }});"
+                ));
             }
             loading.set(false);
         });
@@ -101,6 +143,64 @@ pub fn app() -> Element {
 
     // Show hero landing when nothing is loaded yet.
     let show_hero = messages.read().is_empty() && file_name.read().is_none() && !*loading.read();
+
+    // Inject GA4 once on mount and fire app_open event.
+    use_effect(move || {
+        let os = std::env::consts::OS;
+        eval(&format!(
+            r#"(function(id) {{
+                if (window._ga_inited) return;
+                window._ga_inited = true;
+                var s = document.createElement('script');
+                s.async = true;
+                s.src = 'https://www.googletagmanager.com/gtag/js?id=' + id;
+                document.head.appendChild(s);
+                s.onload = function() {{
+                    window.dataLayer = window.dataLayer || [];
+                    function gtag(){{ window.dataLayer.push(arguments); }}
+                    window.gtag = gtag;
+                    gtag('js', new Date());
+                    gtag('config', id, {{ send_page_view: false }});
+                    var _ga_start = Date.now();
+                    gtag('event', 'app_open', {{ app_version: '{CURRENT_VERSION}', platform: '{os}' }});
+                    window.addEventListener('beforeunload', function() {{
+                        var sec = Math.round((Date.now() - _ga_start) / 1000);
+                        gtag('event', 'session_end', {{
+                            session_duration_sec: sec,
+                            app_version: '{CURRENT_VERSION}',
+                            platform: '{os}',
+                            transport_type: 'beacon'
+                        }});
+                    }});
+                }};
+            }})('{GA_ID}');"#
+        ));
+    });
+
+    // Auto-check for updates once on mount (no reactive reads → runs exactly once).
+    use_effect(move || {
+        update_status.set(UpdateStatus::Checking);
+        spawn(async move {
+            let mut ev = eval(&format!(
+                r#"(async () => {{
+                    try {{
+                        const r = await fetch('{VERSION_URL}',
+                            {{ signal: AbortSignal.timeout(6000) }});
+                        window.dioxus.send((await r.text()).trim());
+                    }} catch(e) {{
+                        window.dioxus.send('');
+                    }}
+                }})();"#
+            ));
+            update_status.set(match ev.recv::<String>().await {
+                Ok(v) if !v.is_empty() && is_newer_version(&v, CURRENT_VERSION) => {
+                    UpdateStatus::Available(v)
+                }
+                Ok(v) if !v.is_empty() => UpdateStatus::UpToDate,
+                _ => UpdateStatus::Idle,
+            });
+        });
+    });
 
     // Re-run the JS counter animation every time the hero becomes visible
     // (on mount and whenever the user clears back to empty state).
@@ -153,6 +253,35 @@ pub fn app() -> Element {
                         }
                     }
                 })}
+
+                // Push update button to the right
+                div { class: "toolbar-spacer" }
+
+                // Update indicator / button
+                {
+                    let status = update_status.read().clone();
+                    match status {
+                        UpdateStatus::Checking => rsx! {
+                            span { class: "update-checking", "Checking for updates…" }
+                        },
+                        UpdateStatus::Available(v) => rsx! {
+                            button {
+                                class: "btn btn-update-available",
+                                onclick: move |_| {
+                                    let url = DOWNLOAD_URL.to_string();
+                                    std::thread::spawn(move || { let _ = open::that(url); });
+                                },
+                                "⬆ v{v} — Update now"
+                            }
+                        },
+                        UpdateStatus::UpToDate => rsx! {
+                            span { class: "update-ok", "✓ v{CURRENT_VERSION}" }
+                        },
+                        UpdateStatus::Idle => rsx! {
+                            span { class: "update-version", "v{CURRENT_VERSION}" }
+                        },
+                    }
+                }
             }
 
             if show_hero {

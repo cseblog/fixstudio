@@ -47,6 +47,22 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 .btn-sample-inline:hover { background: rgba(189,147,249,0.2); color: #d0afff; }
 .sample-label { color: #6272a4; font-size: 12px; margin-right: 4px; }
 .sample-sep { color: #44475a; font-size: 12px; }
+.toolbar-spacer { flex: 1; }
+.update-version { color: #44475a; font-size: 11px; align-self: center; }
+.update-ok { color: #50fa7b; font-size: 11px; align-self: center; }
+.update-checking { color: #6272a4; font-size: 11px; align-self: center; font-style: italic; }
+.btn-update-available {
+    background: #50fa7b;
+    color: #282a36;
+    padding: 5px 14px;
+    font-size: 12px;
+    animation: pulse-update 2s ease-in-out infinite;
+}
+.btn-update-available:hover { background: #69ff94; }
+@keyframes pulse-update {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(80,250,123,0.5); }
+    50%       { box-shadow: 0 0 0 7px rgba(80,250,123,0); }
+}
 
 /* Textarea / loading placeholder */
 .fix-loading {
