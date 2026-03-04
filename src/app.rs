@@ -7,6 +7,7 @@ use dioxus::document::eval;
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VERSION_URL: &str = "https://aifixparser.com/latest-version";
 const DOWNLOAD_URL: &str = "https://aifixparser.com/#download";
+const GA_ID: &str = "G-Y9J423BNZ0"; // ← replace with your GA4 Measurement ID
 
 #[derive(Clone, PartialEq)]
 enum UpdateStatus {
@@ -79,10 +80,15 @@ pub fn app() -> Element {
         let parsed = parse_all(&s);
         let ms = t.elapsed().as_micros() as u64;
         parse_stats.set(Some((parsed.len(), ms)));
+        let count = parsed.len();
         input.set(s);
         offload_replace(&mut messages, parsed);
         selected_idx.set(None);
         file_name.set(None);
+        eval(&format!(
+            "window.gtag && window.gtag('event', 'sample_loaded', \
+             {{ sample: '{spec}', message_count: {count}, parse_us: {ms} }});"
+        ));
     };
 
     let load_file = move || {
@@ -115,11 +121,17 @@ pub fn app() -> Element {
                     parse_all(&content)
                 };
                 let ms = t.elapsed().as_micros() as u64;
+                let count = parsed.len();
                 // `content` (and `bytes`) are dropped here — not kept in any signal.
-                parse_stats.set(Some((parsed.len(), ms)));
+                parse_stats.set(Some((count, ms)));
                 offload_replace(&mut messages, parsed);
                 selected_idx.set(None);
                 file_name.set(Some(name));
+                let delimiter = if is_soh { "soh" } else { "pipe" };
+                eval(&format!(
+                    "window.gtag && window.gtag('event', 'file_parsed', \
+                     {{ message_count: {count}, parse_us: {ms}, delimiter: '{delimiter}' }});"
+                ));
             }
             loading.set(false);
         });
@@ -131,6 +143,39 @@ pub fn app() -> Element {
 
     // Show hero landing when nothing is loaded yet.
     let show_hero = messages.read().is_empty() && file_name.read().is_none() && !*loading.read();
+
+    // Inject GA4 once on mount and fire app_open event.
+    use_effect(move || {
+        let os = std::env::consts::OS;
+        eval(&format!(
+            r#"(function(id) {{
+                if (window._ga_inited) return;
+                window._ga_inited = true;
+                var s = document.createElement('script');
+                s.async = true;
+                s.src = 'https://www.googletagmanager.com/gtag/js?id=' + id;
+                document.head.appendChild(s);
+                s.onload = function() {{
+                    window.dataLayer = window.dataLayer || [];
+                    function gtag(){{ window.dataLayer.push(arguments); }}
+                    window.gtag = gtag;
+                    gtag('js', new Date());
+                    gtag('config', id, {{ send_page_view: false }});
+                    var _ga_start = Date.now();
+                    gtag('event', 'app_open', {{ app_version: '{CURRENT_VERSION}', platform: '{os}' }});
+                    window.addEventListener('beforeunload', function() {{
+                        var sec = Math.round((Date.now() - _ga_start) / 1000);
+                        gtag('event', 'session_end', {{
+                            session_duration_sec: sec,
+                            app_version: '{CURRENT_VERSION}',
+                            platform: '{os}',
+                            transport_type: 'beacon'
+                        }});
+                    }});
+                }};
+            }})('{GA_ID}');"#
+        ));
+    });
 
     // Auto-check for updates once on mount (no reactive reads → runs exactly once).
     use_effect(move || {
