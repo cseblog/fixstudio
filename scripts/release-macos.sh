@@ -44,7 +44,7 @@ codesign --force --deep --timestamp --options runtime \
 
 # Rebuild DMG with app + Applications folder (drag-to-install layout)
 echo "Creating DMG..."
-DMG_NAME="AiFixParser_1.0.0_aarch64.dmg"
+DMG_NAME="AiFixParser_aarch64.dmg"
 DMG_PATH="$BUNDLE_DIR/dmg/$DMG_NAME"
 rm -f "$DMG_PATH"
 
