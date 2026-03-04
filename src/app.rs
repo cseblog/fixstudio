@@ -28,7 +28,7 @@ fn is_newer_version(latest: &str, current: &str) -> bool {
 use crate::components::detail::detail_panel;
 use crate::components::timeline::timeline_panel;
 use crate::model::FixMessage;
-use crate::parser::parse_all;
+use crate::parser::{parse_all, parse_all_simd};
 use crate::sample::{sample_data, FIX_SPECS};
 use crate::style::CSS;
 
@@ -101,11 +101,19 @@ pub fn app() -> Element {
             {
                 let name  = file.file_name();
                 let bytes = file.read().await;
-                // Use from_utf8_lossy but do NOT store the content in a Signal —
-                // 135 MB in a reactive signal serialises to the WebView on every render.
-                let content = String::from_utf8_lossy(&bytes);
+                // Detect delimiter style from the first 4 KB — no need to scan the whole file.
+                // Real FIX logs use SOH (0x01); pipe-delimited files come from tools/exports.
+                let is_soh = bytes.iter().take(4096).any(|&b| b == 0x01);
                 let t = Instant::now();
-                let parsed = parse_all(&content);
+                let parsed = if is_soh {
+                    // SOH path: parse_all_simd skips the normalize allocation (+40% faster).
+                    let content = String::from_utf8_lossy(&bytes);
+                    parse_all_simd(&content)
+                } else {
+                    // Pipe path: parse_all with Cow::Borrowed fast-path (zero extra alloc).
+                    let content = String::from_utf8_lossy(&bytes);
+                    parse_all(&content)
+                };
                 let ms = t.elapsed().as_micros() as u64;
                 // `content` (and `bytes`) are dropped here — not kept in any signal.
                 parse_stats.set(Some((parsed.len(), ms)));
