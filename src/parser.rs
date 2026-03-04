@@ -67,6 +67,103 @@ pub fn parse_all(input: &str) -> Vec<FixMessage> {
     }
 }
 
+// ── AVX2 / SIMD path ─────────────────────────────────────────────────────────
+
+/// Like [`parse_all`] but skips the normalise step.
+///
+/// Instead of converting SOH → '|' (which allocates a new `String` for every
+/// SOH-delimited message), `parse_all_simd` feeds raw bytes straight into
+/// [`parse_single_simd`], which uses the AVX2 scanner from `crate::simd` to
+/// locate both SOH and pipe delimiters in a single 32-byte-window pass.
+///
+/// Speedup profile:
+/// - **Pipe input**:  saves 1 `memchr3` scan per message (~2→1 passes).
+/// - **SOH input**:   saves the normalize allocation + copy (~3→1 passes).
+pub fn parse_all_simd(input: &str) -> Vec<FixMessage> {
+    // message_slices works on raw bytes (memmem only looks for "8=FIX").
+    let slices = message_slices(input);
+    if slices.is_empty() {
+        if input.trim().is_empty() {
+            vec![]
+        } else {
+            vec![parse_single_simd(input.as_bytes())]
+        }
+    } else {
+        slices
+            .into_par_iter()
+            .map(|s| parse_single_simd(s.as_bytes()))
+            .collect()
+    }
+}
+
+/// Parse a single FIX message from raw bytes — handles both SOH and pipe
+/// delimiters without any intermediate allocation.
+fn parse_single_simd(raw: &[u8]) -> FixMessage {
+    let mut msg = FixMessage {
+        fields: Vec::with_capacity(24),
+        ..Default::default()
+    };
+
+    // One AVX2 pass finds all delimiter positions.
+    let delims = crate::simd::find_delimiters(raw);
+    let mut start = 0usize;
+
+    for end in delims.into_iter().chain(std::iter::once(raw.len())) {
+        let token = trim_bytes(&raw[start..end]);
+        start = end + 1;
+        if token.is_empty() { continue; }
+
+        let Some(eq) = token.iter().position(|&b| b == b'=') else { continue };
+        let tag_b = trim_bytes(&token[..eq]);
+        let val_b = trim_bytes(&token[eq + 1..]);
+
+        // FIX messages are pure ASCII; from_utf8 succeeds unless the file is corrupt.
+        let Ok(tag)   = std::str::from_utf8(tag_b)   else { continue };
+        let Ok(value) = std::str::from_utf8(val_b)   else { continue };
+
+        msg.fields.push(FixField {
+            tag:   CompactString::from(tag),
+            value: CompactString::from(value),
+        });
+
+        match tag {
+            "52" => msg.time = extract_time(value),
+            "49" => msg.sender = CompactString::from(value),
+            "56" => msg.target = CompactString::from(value),
+            "35" => {
+                msg.msg_type_raw   = CompactString::from(value);
+                msg.msg_type_label = msg_type_label(value);
+            }
+            "11" => msg.cl_ord_id  = CompactString::from(value),
+            "54" => msg.side       = CompactString::from(side_label(value)),
+            "38" => msg.order_qty  = CompactString::from(value),
+            "55" => msg.symbol     = CompactString::from(value),
+            "58" => msg.text       = CompactString::from(value),
+            "150" => {
+                msg.msg_type_label = match value {
+                    "F" | "2" => "ER FILL",
+                    "1"       => "ER PARTIAL",
+                    "4" | "C" => "ER CANCELED",
+                    "8"       => "Reject",
+                    _         => msg.msg_type_label,
+                };
+            }
+            _ => {}
+        }
+    }
+    msg
+}
+
+/// Trim ASCII whitespace from both ends of a byte slice without allocation.
+#[inline]
+fn trim_bytes(b: &[u8]) -> &[u8] {
+    let s = b.iter().position(|x| !x.is_ascii_whitespace()).unwrap_or(b.len());
+    let e = b.iter().rposition(|x| !x.is_ascii_whitespace()).map(|i| i + 1).unwrap_or(0);
+    if s < e { &b[s..e] } else { &[] }
+}
+
+// ── Scalar path ───────────────────────────────────────────────────────────────
+
 /// Parse a single FIX message string into a [`FixMessage`].
 fn parse_single(raw: &str) -> FixMessage {
     let mut msg = FixMessage {
