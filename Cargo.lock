@@ -12,6 +12,7 @@ dependencies = [
  "dioxus-desktop",
  "ico",
  "memchr",
+ "memmap2",
  "open",
  "rayon",
  "rfd 0.15.4",

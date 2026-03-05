@@ -58,6 +58,17 @@ fn bench_100k(c: &mut Criterion) {
         |b, input| b.iter(|| aifixparser::parser::parse_all_simd(black_box(input))),
     );
 
+    // ── AVX2 bytes path, SOH-delimited ────────────────────────────────────
+    // parse_all_simd_bytes: inlined AVX2 scan (no Vec<usize> per message),
+    // accepts &[u8] directly (mmap-friendly, no &str conversion).
+    let soh_bytes_raw = soh_str.as_bytes();
+    group.throughput(Throughput::Bytes(soh_bytes));
+    group.bench_with_input(
+        BenchmarkId::new("avx2_bytes_soh", format!("{:.1} MB", soh_bytes as f64 / 1_048_576.0)),
+        &soh_bytes_raw,
+        |b, input| b.iter(|| aifixparser::parser::parse_all_simd_bytes(black_box(input))),
+    );
+
     group.finish();
 }
 
@@ -89,6 +100,10 @@ fn bench_single(c: &mut Criterion) {
         b.iter(|| aifixparser::parser::parse_all_simd(black_box(soh_msg.as_str())))
     });
 
+    group.bench_function("avx2_bytes_soh", |b| {
+        b.iter(|| aifixparser::parser::parse_all_simd_bytes(black_box(soh_msg.as_bytes())))
+    });
+
     group.finish();
 }
 
@@ -117,6 +132,14 @@ fn bench_1m_soh(c: &mut Criterion) {
         BenchmarkId::new("avx2_soh", format!("{:.0} MB", bytes as f64 / 1_048_576.0)),
         &soh_str,
         |b, input| b.iter(|| aifixparser::parser::parse_all_simd(black_box(input))),
+    );
+
+    let soh_bytes_raw = soh_str.as_bytes();
+    group.throughput(Throughput::Bytes(bytes));
+    group.bench_with_input(
+        BenchmarkId::new("avx2_bytes_soh", format!("{:.0} MB", bytes as f64 / 1_048_576.0)),
+        &soh_bytes_raw,
+        |b, input| b.iter(|| aifixparser::parser::parse_all_simd_bytes(black_box(input))),
     );
 
     group.finish();
