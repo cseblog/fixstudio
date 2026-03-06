@@ -17,7 +17,20 @@ fn load_icon() -> Option<tao::window::Icon> {
     tao::window::Icon::from_rgba(image.rgba_data().to_vec(), image.width(), image.height()).ok()
 }
 
+fn prewarm() {
+    // 1. Spin up Rayon thread pool now so first parse doesn't pay thread-spawn cost.
+    rayon::ThreadPoolBuilder::new()
+        .build_global()
+        .ok();
+
+    // 2. Touch a tiny dummy parse so mimalloc TLS arenas and CPU i-cache are warm.
+    let dummy = b"8=FIX.4.2\x019=5\x0135=D\x0110=000\x01";
+    let _ = parser::parse_all_simd_bytes(dummy);
+}
+
 fn main() {
+    prewarm();
+
     let config = Config::default().with_window(
         WindowBuilder::new()
             .with_title("AI FIX Parser")

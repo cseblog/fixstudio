@@ -15,6 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 compact_str = "0.8"
+mimalloc = { version = "0.1", default-features = false }
 memmap2 = "0.9"
 memchr = "2"
 dioxus = { version = "0.7.2", features = ["desktop"] }

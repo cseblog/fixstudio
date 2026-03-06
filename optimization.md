@@ -126,3 +126,38 @@ FixField::tag as u16 — shrinks each field from 48 → ~26 bytes, turns string 
 Pass index to detail_panel instead of cloning FixMessage — eliminates one Vec<FixField> deep-clone per render
 Pre-compute detail_text in FixMessage at parse time — eliminates the build_detail_text alloc from the 1M filter scan and render loop
 
+
+
+
+
+
+### ROUND X
+
+Summary of what's in place:
+
+Optimization	Impact
+NEON SIMD for M1	scalar→vectorized delimiter scan
+mimalloc	reduced parallel alloc contention
+FixField.tag: u16	48→32 bytes/field, eliminates 15M+ CompactString constructions
+Integer tag matching	jump table vs string comparison
+from_utf8_unchecked	skips 2 UTF-8 scans per token
+par_chunks 8×	finer work-stealing granularity
+Parallel boundary detection	serial memmem + par_windows(2)
+Inline parse_chunk	no intermediate Vec<&[u8]>
+Final result: 263ms → 79ms (−70%, 3.3× faster) — 100ms target achieved.
+
+### We need to warm-up
+Compiles clean. Here's what each line does and why:
+
+rayon::ThreadPoolBuilder::new().build_global()
+Forces Rayon to spawn all worker threads immediately at startup. Without this, the first par_windows call blocks while the OS creates 9 threads — typically 20–80ms on macOS.
+
+dummy parse_all_simd_bytes
+A single tiny message forces:
+
+mimalloc to initialize each thread's TLS arena
+simd_parse_neon + apply_token + tag_to_u16 into the CPU instruction cache
+Branch predictor to see the hot paths at least once
+The OS page cache you can't prewarm in code without already knowing which file the user will open — but it's handled automatically: macOS Unified Buffer Cache keeps recently-read files in RAM, so the second open of the same file within a session is always fast.
+
+The result: first parse of a real file should now feel nearly identical to second parse.

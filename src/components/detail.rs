@@ -15,13 +15,13 @@ fn build_raw_text(msg: &FixMessage) -> String {
     let mut lines = Vec::new();
     lines.push(format!("{}>>", msg.msg_type_label));
     for field in &msg.fields {
-        let td = tag_description(&field.tag);
+        let td = tag_description(field.tag);
         let name = if td != "Unknown" {
             format!("{}({})", td, field.tag)
         } else {
             field.tag.to_string()
         };
-        let val_desc = value_description(&field.tag, &field.value);
+        let val_desc = value_description(field.tag, &field.value);
         if val_desc.is_empty() {
             lines.push(format!("  {}: {}", name, field.value));
         } else {
@@ -44,11 +44,11 @@ fn build_json_text(msg: &FixMessage) -> String {
     let entries: Vec<String> = msg.fields.iter().map(|f| {
         let mut e = format!(
             "  {{\"tag\": \"{}\", \"name\": \"{}\", \"value\": \"{}\"",
-            json_escape(&f.tag),
-            json_escape(tag_description(&f.tag)),
+            f.tag,
+            json_escape(tag_description(f.tag)),
             json_escape(&f.value),
         );
-        let val_desc = value_description(&f.tag, &f.value);
+        let val_desc = value_description(f.tag, &f.value);
         if !val_desc.is_empty() {
             e.push_str(&format!(", \"decoded\": \"{}\"", json_escape(&val_desc)));
         }
@@ -136,12 +136,12 @@ pub fn detail_panel(
                             {
                                 let skip = *skip_common.read();
                                 rsx! {
-                                    for field in msg.fields.iter().filter(|f| !(skip && is_common_tag(&f.tag))) {
+                                    for field in msg.fields.iter().filter(|f| !(skip && is_common_tag(f.tag))) {
                                         div { class: "tbl-row tbl-detail-row",
                                             span { class: "tag-num", "{field.tag}" }
-                                            span { span { class: "badge {tag_badge_class(&field.tag)}", "{tag_description(&field.tag)}" } }
+                                            span { span { class: "badge {tag_badge_class(field.tag)}", "{tag_description(field.tag)}" } }
                                             span { "{field.value}" }
-                                            span { "{value_description(&field.tag, &field.value)}" }
+                                            span { "{value_description(field.tag, &field.value)}" }
                                         }
                                     }
                                 }

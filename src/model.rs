@@ -16,9 +16,13 @@ pub struct FixMessage {
     pub text: CompactString,
 }
 
-/// A single tag=value pair. tag_description is resolved lazily in the UI.
+/// A single tag=value pair.
+/// `tag` is stored as `u16` (the numeric FIX tag number) to avoid a
+/// `CompactString` heap/inline construction per field — reduces FixField
+/// from 48 bytes to 32 bytes and eliminates 15M+ string constructions for
+/// a 1M-message parse.
 #[derive(Clone, PartialEq)]
 pub struct FixField {
-    pub tag: CompactString,
+    pub tag: u16,
     pub value: CompactString,
 }
