@@ -547,4 +547,239 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     from { opacity: 0; transform: translateY(16px); }
     to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Premium / License UI ─────────────────────────────────────────────── */
+
+/* Upgrade button in toolbar */
+.btn-upgrade {
+    background: linear-gradient(135deg, #bd93f9 0%, #ff79c6 100%);
+    color: #282a36;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 6px;
+    animation: pulse-upgrade 3s ease-in-out infinite;
+}
+.btn-upgrade:hover { opacity: 0.88; }
+@keyframes pulse-upgrade {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(189,147,249,0.45); }
+    50%       { box-shadow: 0 0 0 7px rgba(189,147,249,0); }
+}
+
+/* Pro badge */
+.pro-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 5px;
+    background: linear-gradient(135deg, #bd93f9 0%, #ff79c6 100%);
+    color: #282a36;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    align-self: center;
+    cursor: pointer;
+}
+.pro-badge:hover { opacity: 0.85; }
+
+/* Export CSV button */
+.btn-export {
+    background: #50fa7b;
+    color: #282a36;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 700;
+}
+.btn-export:hover { background: #69ff94; }
+
+/* Panel view tabs (Timeline / Lifecycle) */
+.panel-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+.panel-tab {
+    padding: 5px 16px;
+    border-radius: 6px;
+    border: 1px solid #44475a;
+    background: transparent;
+    color: #6272a4;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.panel-tab:hover { background: #343746; color: #f8f8f2; }
+.panel-tab-active {
+    background: #44475a !important;
+    color: #f8f8f2 !important;
+    border-color: #6272a4;
+}
+.panel-tab-pro {
+    color: #bd93f9;
+    border-color: rgba(189,147,249,0.35);
+}
+.panel-tab-pro:hover { background: rgba(189,147,249,0.1); color: #d0afff; }
+
+/* Modal overlay */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 21, 28, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+    animation: modal-fade-in 0.18s ease both;
+}
+@keyframes modal-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.modal {
+    background: #282a36;
+    border: 1px solid #44475a;
+    border-radius: 12px;
+    padding: 28px 32px;
+    width: 460px;
+    max-width: 90vw;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    animation: modal-slide-up 0.2s cubic-bezier(0.22,1,0.36,1) both;
+}
+@keyframes modal-slide-up {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+.modal-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #f8f8f2;
+}
+.modal-close {
+    background: transparent;
+    border: none;
+    color: #6272a4;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+.modal-close:hover { color: #f8f8f2; }
+.modal-desc {
+    font-size: 13px;
+    color: #6272a4;
+    margin-bottom: 18px;
+    line-height: 1.6;
+}
+.modal-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: #8be9fd;
+    margin-bottom: 6px;
+}
+.license-input {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid #44475a;
+    border-radius: 6px;
+    background: #21222c;
+    color: #f8f8f2;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+    margin-bottom: 14px;
+}
+.license-input::placeholder { color: #44475a; }
+.license-input:focus { border-color: #bd93f9; }
+.modal-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.btn-activate {
+    background: linear-gradient(135deg, #bd93f9 0%, #ff79c6 100%);
+    color: #282a36;
+    padding: 8px 22px;
+    font-size: 13px;
+    font-weight: 700;
+}
+.btn-activate:hover { opacity: 0.88; }
+.btn-activate:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-buy {
+    background: transparent;
+    border: 1px solid #bd93f9;
+    color: #bd93f9;
+    padding: 7px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.btn-buy:hover { background: rgba(189,147,249,0.12); }
+.activate-status {
+    font-size: 12px;
+    margin-top: 10px;
+    min-height: 18px;
+}
+.activate-ok    { color: #50fa7b; }
+.activate-err   { color: #ff5555; }
+.activate-wait  { color: #6272a4; font-style: italic; }
+.modal-deactivate {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #44475a;
+    font-size: 12px;
+    color: #6272a4;
+}
+.btn-deactivate {
+    background: transparent;
+    border: 1px solid #ff5555;
+    color: #ff5555;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-left: 10px;
+    transition: all 0.15s;
+}
+.btn-deactivate:hover { background: rgba(255,85,85,0.1); }
+
+/* ── Lifecycle panel ──────────────────────────────────────────────────── */
+
+.tbl-lc-row {
+    display: grid;
+    grid-template-columns: 160px 80px 50px 70px 120px 36px 1fr;
+    gap: 6px;
+    padding: 6px 10px;
+    align-items: center;
+    font-size: 12px;
+}
+.tbl-lc-chain-row {
+    display: grid;
+    grid-template-columns: 32px 160px 130px 1fr;
+    gap: 6px;
+    padding: 6px 10px;
+    align-items: center;
+    font-size: 12px;
+}
+.lc-clordid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #bd93f9; }
+.lc-symbol  { color: #f8f8f2; font-weight: 600; }
+.lc-side    { color: #8be9fd; font-weight: 600; }
+.lc-qty     { color: #f8f8f2; font-variant-numeric: tabular-nums; }
+.lc-count   { color: #6272a4; font-weight: 700; text-align: center; }
+.lc-time    { color: #6272a4; font-size: 11px; font-variant-numeric: tabular-nums; }
+.lc-seq     { color: #6272a4; text-align: right; font-variant-numeric: tabular-nums; }
+.lc-info    { color: #6272a4; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lc-selected-id { font-size: 12px; color: #bd93f9; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.lc-empty   { padding: 30px 20px; text-align: center; color: #6272a4; font-size: 13px; }
 "#;

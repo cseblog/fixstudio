@@ -17,6 +17,8 @@ dependencies = [
  "open",
  "rayon",
  "rfd 0.15.4",
+ "serde",
+ "serde_json",
  "tao",
  "winres",
 ]
