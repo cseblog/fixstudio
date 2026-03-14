@@ -778,6 +778,8 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     position: relative;
     margin: 0 1px;
     cursor: col-resize;
+    user-select: none;
+    -webkit-user-select: none;
 }
 /* Visual bar only — pointer events handled by parent .resize-handle */
 .resize-handle-bar {

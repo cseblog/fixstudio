@@ -130,8 +130,8 @@ pub fn app() -> Element {
         }
         if (!sw || sw < 10) return; // panel is collapsed/hidden
 
-        e.preventDefault();
         document.body.style.userSelect = 'none';
+        document.body.style.webkitUserSelect = 'none';
         var sx = e.clientX, go = false;
 
         function onmove(e2) {
@@ -150,6 +150,7 @@ pub fn app() -> Element {
             document.removeEventListener('mouseup', onup);
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
+            document.body.style.webkitUserSelect = '';
             if (go) window.dioxus.send('w:' + parseFloat(panel.style.width));
         }
 
@@ -716,21 +717,32 @@ pub fn app() -> Element {
                     div { class: "collapse-panel-btns",
                         button {
                             class: "collapse-panel-btn",
-                            title: if left_collapsed { "Expand left panel" } else { "Collapse left panel" },
-                            onclick: move |_| {
-                                let c = *left_panel_collapsed.read();
-                                left_panel_collapsed.set(!c);
-                            },
-                            if left_collapsed { "▶" } else { "◀" }
-                        }
-                        button {
-                            class: "collapse-panel-btn",
                             title: if right_collapsed { "Expand right panel" } else { "Collapse right panel" },
                             onclick: move |_| {
                                 let c = *right_panel_collapsed.read();
-                                right_panel_collapsed.set(!c);
+                                if c {
+                                    // Expanding: signal already holds the saved width
+                                    right_panel_collapsed.set(false);
+                                } else {
+                                    // Collapsing: read actual DOM width first so we survive any
+                                    // JS↔Rust async lag, then collapse
+                                    let mut rpw = right_panel_width;
+                                    let mut rpc = right_panel_collapsed;
+                                    spawn(async move {
+                                        if let Ok(v) = eval(r#"(function(){
+                                            var p = document.getElementById('premium-panel-main');
+                                            var w = parseFloat(p.style.width);
+                                            return (w > 50) ? w : p.getBoundingClientRect().width;
+                                        })()"#).await {
+                                            if let Some(w) = v.as_f64() {
+                                                if w > 50.0 { rpw.set(w); }
+                                            }
+                                        }
+                                        rpc.set(true);
+                                    });
+                                }
                             },
-                            if right_collapsed { "◀" } else { "▶" }
+                            if right_collapsed { "▶" } else { "◀" }
                         }
                     }
                 }
@@ -757,7 +769,22 @@ pub fn app() -> Element {
                         button {
                             class: "panel-collapse-btn",
                             title: "Collapse panel",
-                            onclick: move |_| right_panel_collapsed.set(true),
+                            onclick: move |_| {
+                                let mut rpw = right_panel_width;
+                                let mut rpc = right_panel_collapsed;
+                                spawn(async move {
+                                    if let Ok(v) = eval(r#"(function(){
+                                        var p = document.getElementById('premium-panel-main');
+                                        var w = parseFloat(p.style.width);
+                                        return (w > 50) ? w : p.getBoundingClientRect().width;
+                                    })()"#).await {
+                                        if let Some(w) = v.as_f64() {
+                                            if w > 50.0 { rpw.set(w); }
+                                        }
+                                    }
+                                    rpc.set(true);
+                                });
+                            },
                             "›"
                         }
                     }
