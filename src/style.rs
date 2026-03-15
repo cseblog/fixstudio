@@ -1038,9 +1038,9 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     align-items: center;
     font-size: 12px;
 }
-.lc-clordid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #bd93f9; }
-.lc-symbol  { color: #f8f8f2; font-weight: 600; }
-.lc-side    { color: #8be9fd; font-weight: 600; }
+.lc-clordid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #7060a8; }
+.lc-symbol  { color: #c8cad8; font-weight: 600; }
+.lc-side    { color: #c8cad8; font-weight: 600; }
 .lc-qty     { color: #f8f8f2; font-variant-numeric: tabular-nums; }
 .lc-count   { color: #6272a4; font-weight: 700; text-align: center; }
 .lc-time    { color: #6272a4; font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -1050,6 +1050,11 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 .lc-empty   { padding: 30px 20px; text-align: center; color: #6272a4; font-size: 13px; }
 
 /* ── Trade Latency Analysis panel ─────────────────────────────────────────── */
+/*
+ * Color principle: numbers are white. Color means "attention required."
+ * Caution = #a89040 (dark gold)  Warning = #a06030 (burnt amber)  Critical = #903030 (dark red)
+ * Everything normal: #d4d6e0 (cool near-white)
+ */
 .latency-panel {
     display: flex;
     flex-direction: column;
@@ -1058,51 +1063,53 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     padding: 16px;
     gap: 16px;
     box-sizing: border-box;
-    background: #282a36;
+    background: #1e1f28;
 }
 .latency-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .latency-header-left { display: flex; flex-direction: column; gap: 3px; }
-.latency-title { margin: 0; font-size: 16px; font-weight: 700; color: #f8f8f2; letter-spacing: 0.3px; }
-.latency-header-meta { font-size: 11px; color: #6272a4; }
+.latency-title { margin: 0; font-size: 15px; font-weight: 600; color: #c8cad8; letter-spacing: 0.2px; }
+.latency-header-meta { font-size: 11px; color: #44465a; }
 .latency-section { display: flex; flex-direction: column; gap: 8px; }
 .latency-section-title {
-    font-size: 10px; font-weight: 700; letter-spacing: 1px;
-    color: #6272a4; text-transform: uppercase;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.8px;
+    color: #44465a; text-transform: uppercase;
 }
-.latency-section-sub { font-size: 10px; color: #6272a4; margin-top: -4px; }
-.latency-chart-wrap { background: #1e1f29; border-radius: 6px; padding: 8px; overflow: hidden; }
+.latency-section-sub { font-size: 10px; color: #44465a; margin-top: -4px; }
+.latency-chart-wrap { background: #181920; border-radius: 5px; padding: 6px; overflow: hidden; }
 .latency-stat-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .latency-stat-item {
     flex: 1; min-width: 70px;
-    background: #1e1f29; border-radius: 6px; padding: 8px 10px;
+    background: #181920; border-radius: 5px; padding: 8px 10px;
     display: flex; flex-direction: column; align-items: center; gap: 2px;
-    border-top: 2px solid transparent;
+    border-top: 2px solid #2a2b38;
 }
-.latency-stat-val { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.latency-stat-lbl { font-size: 10px; color: #6272a4; text-transform: uppercase; letter-spacing: 0.5px; }
-.latency-stat-green  { border-color: #50fa7b; } .latency-stat-green  .latency-stat-val { color: #50fa7b; }
-.latency-stat-cyan   { border-color: #8be9fd; } .latency-stat-cyan   .latency-stat-val { color: #8be9fd; }
-.latency-stat-yellow { border-color: #f1fa8c; } .latency-stat-yellow .latency-stat-val { color: #f1fa8c; }
-.latency-stat-orange { border-color: #ffb86c; } .latency-stat-orange .latency-stat-val { color: #ffb86c; }
-.latency-stat-red    { border-color: #ff5555; } .latency-stat-red    .latency-stat-val { color: #ff5555; }
+.latency-stat-val { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; color: #d4d6e0; }
+.latency-stat-lbl { font-size: 10px; color: #44465a; text-transform: uppercase; letter-spacing: 0.5px; }
+/* All stat items use neutral by default; only signal problem states */
+.latency-stat-green  { border-color: #2a2b38; } .latency-stat-green  .latency-stat-val { color: #d4d6e0; }
+.latency-stat-cyan   { border-color: #2a2b38; } .latency-stat-cyan   .latency-stat-val { color: #d4d6e0; }
+.latency-stat-yellow { border-color: #a89040; } .latency-stat-yellow .latency-stat-val { color: #a89040; }
+.latency-stat-orange { border-color: #a06030; } .latency-stat-orange .latency-stat-val { color: #a06030; }
+.latency-stat-red    { border-color: #903030; } .latency-stat-red    .latency-stat-val { color: #903030; }
 .tbl-sym-row, .tbl-slow-row {
     display: grid; align-items: center; font-size: 12px; padding: 5px 8px; gap: 6px;
 }
 .tbl-sym-row  { grid-template-columns: 80px 50px 48px 70px 70px 60px 60px; }
 .tbl-slow-row { grid-template-columns: 130px 70px 38px 68px 68px 40px 1fr; }
-.latency-tbl-body .tbl-row:nth-child(even) { background: #2a2c3a; }
-.latency-tbl-body .tbl-row:hover { background: #383a4a; }
-.latency-cell-mean { color: #8be9fd; font-variant-numeric: tabular-nums; }
-.latency-cell-p95  { color: #f1fa8c; font-variant-numeric: tabular-nums; }
-.latency-cell-min  { color: #50fa7b; font-variant-numeric: tabular-nums; }
-.latency-cell-max  { color: #ff5555; font-variant-numeric: tabular-nums; }
+.latency-tbl-body .tbl-row:nth-child(even) { background: #1c1d26; }
+.latency-tbl-body .tbl-row:hover { background: #252636; }
+/* Latency cells: plain white for normal, amber/red for slow */
+.latency-cell-mean { color: #d4d6e0; font-variant-numeric: tabular-nums; }
+.latency-cell-p95  { color: #a89040; font-variant-numeric: tabular-nums; }
+.latency-cell-min  { color: #d4d6e0; font-variant-numeric: tabular-nums; }
+.latency-cell-max  { color: #903030; font-variant-numeric: tabular-nums; }
 .latency-empty {
     display: flex; flex-direction: column; align-items: center;
     justify-content: center; padding: 40px 20px; gap: 8px;
-    color: #6272a4; text-align: center;
+    color: #44465a; text-align: center;
 }
 .latency-empty-icon  { font-size: 40px; }
-.latency-empty-title { font-size: 15px; font-weight: 600; color: #f8f8f2; margin: 0; }
+.latency-empty-title { font-size: 15px; font-weight: 600; color: #c8cad8; margin: 0; }
 .latency-empty-hint  { font-size: 12px; margin: 0; }
 .latency-empty-list  { font-size: 12px; text-align: left; padding-left: 20px; }
 
@@ -1127,10 +1134,218 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     cursor: pointer;
     transition: background 0.1s;
 }
-.flow-row-clickable:hover { background: #383a4a !important; }
+.flow-row-clickable:hover { background: #252636 !important; }
 .flow-row-selected {
-    background: #2d2f45 !important;
-    outline: 1px solid #bd93f9;
+    background: #21223a !important;
+    outline: 1px solid #5a527a;
     cursor: pointer;
+}
+
+/* ── Lifecycle Reconstructor ─────────────────────────────── */
+.tbl-chain-row {
+    display: grid;
+    grid-template-columns: 9rem 6rem 3.5rem 4rem 6rem 6rem 6rem 6rem 6rem 6rem 3.5rem;
+    gap: 0;
+    align-items: center;
+    padding: 0 8px;
+}
+.recon-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.recon-filter-input {
+    background: #181920;
+    border: 1px solid #2a2b38;
+    border-radius: 4px;
+    color: #c8cad8;
+    font-size: 12px;
+    padding: 4px 8px;
+    width: 160px;
+    outline: none;
+}
+.recon-filter-input:focus { border-color: #5a527a; }
+.recon-filter-btn {
+    background: #181920;
+    border: 1px solid #2a2b38;
+    border-radius: 4px;
+    color: #44465a;
+    font-size: 11px;
+    padding: 3px 9px;
+    cursor: pointer;
+    transition: all 0.1s;
+}
+.recon-filter-btn:hover { border-color: #5a527a; color: #c8cad8; }
+.recon-filter-btn-active { background: #252636; color: #c8cad8; border-color: #5a527a; }
+.recon-more {
+    color: #6272a4;
+    font-size: 11px;
+    text-align: center;
+    padding: 8px 0 4px;
+}
+/* Status badges — muted, semantic colors only */
+.status-filled    { color: #4a9060; font-weight: 600; font-size: 11px; }
+.status-partial   { color: #a89040; font-weight: 600; font-size: 11px; }
+.status-cancelled { color: #787060; font-size: 11px; }
+.status-rejected  { color: #903030; font-weight: 600; font-size: 11px; }
+.status-expired   { color: #44465a; font-size: 11px; }
+.status-open      { color: #5a7898; font-size: 11px; }
+.status-unknown   { color: #44465a; font-size: 11px; }
+/* Type badges */
+.chain-type-rfq    { color: #7060a8; font-size: 11px; font-weight: 600; }
+.chain-type-direct { color: #44465a; font-size: 11px; }
+/* Sortable column headers */
+.lc-sort-hdr { cursor: pointer; user-select: none; transition: color 0.1s; }
+.lc-sort-hdr:hover { color: #7868a8; }
+.lc-sort-hdr-active { color: #8878b8; font-weight: 700; }
+
+/* ── Phase overview: cards + detail ─────────────────────────────────────── */
+.phase-overview-wrap { gap: 0; }
+
+/* 4-card row */
+.phase-cards-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+}
+.phase-card {
+    background: #181920;
+    border: 1px solid #2a2b38;
+    border-radius: 6px;
+    padding: 12px 14px 10px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.phase-card:hover { border-color: #3a3b50; background: #1c1d26; }
+.phase-card-active { border-color: #3a3b58 !important; background: #1a1b28 !important; border-bottom-left-radius: 0 !important; border-bottom-right-radius: 0 !important; border-bottom-color: transparent !important; }
+.phase-card-label { font-size: 10px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: #44465a; }
+/* P50 number is always white — the colored left-accent on the card shows health */
+.phase-card-p50 { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; line-height: 1.1; color: #d4d6e0; }
+.phase-card-sub { font-size: 11px; color: #38394a; }
+.phase-card-caret { position: absolute; top: 10px; right: 12px; font-size: 9px; color: #38394a; }
+/* Health: colored left-border accent on card; P50 text stays white */
+.health-green  { color: #d4d6e0; }  /* normal, no alarm */
+.health-yellow { color: #a89040; }  /* caution */
+.health-orange { color: #a06030; }  /* warning */
+.health-red    { color: #903030; }  /* critical */
+.health-none   { color: #38394a; }
+/* Card left-border accent by health — applied via the card wrapper */
+.phase-card:has(.health-yellow) { border-left: 3px solid #a89040; }
+.phase-card:has(.health-orange) { border-left: 3px solid #a06030; }
+.phase-card:has(.health-red)    { border-left: 3px solid #903030; }
+
+/* Detail panel — connects below the active card */
+.phase-detail {
+    background: #181920;
+    border: 1px solid #2a2b38;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    padding: 12px 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.phase-detail-meta { display: flex; align-items: center; gap: 12px; }
+.phase-detail-count { font-size: 12px; color: #8a8ca0; font-weight: 600; }
+.phase-detail-hint  { font-size: 11px; color: #38394a; font-style: italic; }
+.phase-hist-full { width: 100%; }
+
+/* Stat table inside detail: Min/Mean/P50 = neutral white; P95 = amber; P99/Max = red */
+.phase-stats-table { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.phase-stat-cell {
+    background: #1c1d26; border-radius: 5px; padding: 8px 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    border-top: 2px solid #252633;
+}
+.phase-stat-val { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: #d4d6e0; }
+.phase-stat-lbl { font-size: 10px; color: #38394a; text-transform: uppercase; letter-spacing: 0.5px; }
+/* Neutral cells — white numbers, no accent */
+.phase-stat-green  { border-color: #252633; } .phase-stat-green  .phase-stat-val { color: #d4d6e0; }
+.phase-stat-cyan   { border-color: #252633; } .phase-stat-cyan   .phase-stat-val { color: #d4d6e0; }
+/* Problem cells — P95 caution, P99/Max critical */
+.phase-stat-yellow { border-color: #a89040; } .phase-stat-yellow .phase-stat-val { color: #a89040; }
+.phase-stat-orange { border-color: #a06030; } .phase-stat-orange .phase-stat-val { color: #a06030; }
+.phase-stat-red    { border-color: #903030; } .phase-stat-red    .phase-stat-val { color: #903030; }
+
+/* Clickable percentile cells */
+.phase-stat-drill {
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s;
+}
+.phase-stat-drill:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    border-top-width: 3px;
+}
+/* Active drill cell — subtle inset ring, no neon */
+.phase-stat-drilling {
+    box-shadow: inset 0 0 0 1px #5a527a, 0 4px 12px rgba(0,0,0,0.5);
+    transform: translateY(-1px);
+}
+
+/* Drill banner above chain table */
+.drill-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(80,80,120,0.12);
+    border: 1px solid rgba(90,82,122,0.4);
+    border-radius: 5px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: #8878b8;
+    margin-bottom: 8px;
+    font-variant-numeric: tabular-nums;
+}
+.drill-banner-clear {
+    margin-left: auto;
+    cursor: pointer;
+    color: #44465a;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 3px;
+    transition: color 0.1s;
+}
+.drill-banner-clear:hover { color: #903030; }
+
+.phase-no-data { font-size: 11px; color: #44465a; padding: 12px 0; }
+
+/* ── Inline chain timeline expansion ────────────────────────────────────── */
+.chain-inline-expand {
+    background: #181920;
+    border-left: 2px solid #3a3b58;
+    padding: 10px 12px 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 11.5px;
+    font-family: 'JetBrains Mono', 'Fira Mono', 'Consolas', monospace;
+    overflow-x: auto;
+}
+.cit-line {
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+    gap: 0;
+}
+.cit-arrow {
+    color: #6272a4;
+    padding: 0 2px;
+    user-select: none;
+}
+.cit-node {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+    font-weight: 600;
+    font-size: 11px;
+    background: rgba(0,0,0,0.25);
 }
 "#;

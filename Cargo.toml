@@ -9,6 +9,10 @@ license = "aifixparser.com"
 name = "AIFixParser"
 path = "src/main.rs"
 
+[[bin]]
+name = "gen_fix"
+path = "src/bin/gen_fix.rs"
+
 [lib]
 name = "aifixparser"
 path = "src/lib.rs"

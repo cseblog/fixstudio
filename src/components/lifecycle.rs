@@ -1,51 +1,25 @@
+//! Trade Lifecycle Reconstructor
+//!
+//! Groups all related FIX messages into a single timeline per order by
+//! chaining: QuoteRequest (tag 131) → Quote (tag 117) → NewOrder (tag 11)
+//! → ExecutionReports → CancelRequest (tag 41 OrigClOrdID) → ER(Cancelled).
+//!
+//! Also renders latency statistics (histogram, scatter, per-symbol breakdown).
+
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
 use crate::model::FixMessage;
 
-// ─── Data structures ─────────────────────────────────────────────────────────
+// ─── Helper: tag value lookup ─────────────────────────────────────────────────
 
-#[derive(Clone, PartialEq)]
-struct OrderLatency {
-    cl_ord_id: String,
-    symbol: String,
-    side: String,
-    first_time: String,
-    ack_latency_us: Option<i64>,
-    fill_latency_us: Option<i64>,
-    msg_count: usize,
+fn tag_val<'a>(msg: &'a FixMessage, tag: u16) -> &'a str {
+    msg.fields.iter().find(|f| f.tag == tag).map(|f| f.value.as_str()).unwrap_or("")
 }
 
-#[derive(Clone, PartialEq)]
-struct LatencyStats {
-    total_orders: usize,
-    orders_with_ack: usize,
-    mean_us: f64,
-    min_us: i64,
-    max_us: i64,
-    p50_us: i64,
-    p95_us: i64,
-    p99_us: i64,
-}
+// ─── Time helpers ─────────────────────────────────────────────────────────────
 
-#[derive(Clone, PartialEq)]
-struct SymbolStats {
-    symbol: String,
-    total: usize,
-    with_ack: usize,
-    mean_us: f64,
-    p95_us: i64,
-    min_us: i64,
-    max_us: i64,
-}
-
-// ─── Time parsing ─────────────────────────────────────────────────────────────
-
-/// Parse FIX timestamp in either raw form "YYYYMMDD-HH:MM:SS[.ffffff]"
-/// or the stored display form "YYYY-MM-DD HH:MM:SS[.ffffff]" → microseconds since midnight.
 fn parse_fix_time_us(s: &str) -> Option<i64> {
-    // Stored format: "YYYY-MM-DD HH:MM:SS[.ffffff]" — split on space
-    // Raw format:    "YYYYMMDD-HH:MM:SS[.ffffff]"    — split on '-' after 8-char date
     let time_part: &str = if let Some(sp) = s.find(' ') {
         &s[sp + 1..]
     } else if let Some(dash) = s.find('-') {
@@ -65,13 +39,12 @@ fn parse_fix_time_us(s: &str) -> Option<i64> {
     if let Some(frac) = frac_str {
         let flen = frac.len().min(6);
         let fval: i64 = frac[..flen].parse().unwrap_or(0);
-        let mult: i64 = 10i64.pow((6 - flen) as u32);
-        us += fval * mult;
+        us += fval * 10i64.pow((6 - flen) as u32);
     }
     Some(us)
 }
 
-fn fmt_us(us: i64) -> String {
+pub fn fmt_us(us: i64) -> String {
     if us < 0 { return "—".into(); }
     if us < 1_000 { format!("{}μs", us) }
     else if us < 10_000 { format!("{:.2}ms", us as f64 / 1_000.0) }
@@ -86,165 +59,541 @@ fn fmt_us_short(us: i64) -> String {
     else { format!("{:.1}s", us as f64 / 1_000_000.0) }
 }
 
-// ─── Data computation ─────────────────────────────────────────────────────────
-
-fn build_latency_data(messages: &[FixMessage]) -> Vec<OrderLatency> {
-    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut order: Vec<String> = Vec::new();
-
-    for (i, msg) in messages.iter().enumerate() {
-        if msg.cl_ord_id.is_empty() { continue; }
-        let key = msg.cl_ord_id.to_string();
-        let entry = groups.entry(key.clone()).or_insert_with(|| {
-            order.push(key.clone());
-            Vec::new()
-        });
-        entry.push(i);
-    }
-
-    let mut result = Vec::with_capacity(order.len());
-    for key in &order {
-        let Some(indices) = groups.get(key) else { continue };
-        if indices.is_empty() { continue; }
-
-        let first = &messages[indices[0]];
-        let first_us = parse_fix_time_us(&first.time);
-
-        // ACK latency: time to first Execution Report (35=8) after the first message
-        let ack_latency_us = indices.iter()
-            .skip(1)
-            .map(|&i| &messages[i])
-            .find(|m| m.msg_type_raw == "8")
-            .and_then(|m| parse_fix_time_us(&m.time))
-            .zip(first_us)
-            .map(|(er, ord)| er - ord)
-            .filter(|&d| d > 0);
-
-        // Fill latency: time to last Execution Report
-        let fill_latency_us = if indices.len() > 1 {
-            indices.iter()
-                .rev()
-                .map(|&i| &messages[i])
-                .find(|m| m.msg_type_raw == "8")
-                .and_then(|m| parse_fix_time_us(&m.time))
-                .zip(first_us)
-                .map(|(er, ord)| er - ord)
-                .filter(|&d| d > 0)
-        } else {
-            None
-        };
-
-        result.push(OrderLatency {
-            cl_ord_id: key.clone(),
-            symbol: first.symbol.to_string(),
-            side: first.side.to_string(),
-            first_time: first.time.to_string(),
-            ack_latency_us,
-            fill_latency_us,
-            msg_count: indices.len(),
-        });
-    }
-    result
+fn latency_health(us: i64) -> &'static str {
+    if us < 1_000     { "health-green"  }
+    else if us < 10_000  { "health-yellow" }
+    else if us < 100_000 { "health-orange" }
+    else                 { "health-red"    }
 }
 
-fn compute_stats(orders: &[OrderLatency]) -> Option<LatencyStats> {
-    let mut lats: Vec<i64> = orders.iter().filter_map(|o| o.ack_latency_us).collect();
+fn cmp_opt(a: Option<i64>, b: Option<i64>) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None)    => std::cmp::Ordering::Less,
+        (None, Some(_))    => std::cmp::Ordering::Greater,
+        (None, None)       => std::cmp::Ordering::Equal,
+    }
+}
+
+fn time_to_hms(s: &str) -> String {
+    if let Some(sp) = s.find(' ') { return s[sp + 1..].to_string(); }
+    if let Some(d) = s.find('-') { return s[d + 1..].to_string(); }
+    s.to_string()
+}
+
+// ─── Lifecycle chain data structures ─────────────────────────────────────────
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum FinalStatus {
+    Filled,
+    PartialFill,
+    Cancelled,
+    Rejected,
+    Expired,
+    Open,
+    Unknown,
+}
+
+impl FinalStatus {
+    fn label(&self) -> &'static str {
+        match self {
+            FinalStatus::Filled      => "Filled",
+            FinalStatus::PartialFill => "Partial",
+            FinalStatus::Cancelled   => "Cancelled",
+            FinalStatus::Rejected    => "Rejected",
+            FinalStatus::Expired     => "Expired",
+            FinalStatus::Open        => "Open",
+            FinalStatus::Unknown     => "Unknown",
+        }
+    }
+    fn css_class(&self) -> &'static str {
+        match self {
+            FinalStatus::Filled      => "status-filled",
+            FinalStatus::PartialFill => "status-partial",
+            FinalStatus::Cancelled   => "status-cancelled",
+            FinalStatus::Rejected    => "status-rejected",
+            FinalStatus::Expired     => "status-expired",
+            FinalStatus::Open        => "status-open",
+            FinalStatus::Unknown     => "status-unknown",
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct LifecycleChain {
+    pub chain_id: String,
+    pub quote_req_id: Option<String>,
+    pub quote_id: Option<String>,
+    pub primary_cl_ord_id: Option<String>,
+    pub all_cl_ord_ids: Vec<String>,
+    pub symbol: String,
+    pub side: String,
+    pub first_time_us: i64,
+    pub last_time_us: i64,
+    // Latency breakdown
+    pub rfq_to_quote_us: Option<i64>,
+    pub quote_to_nos_us: Option<i64>,
+    pub nos_to_ack_us: Option<i64>,
+    pub nos_to_fill_us: Option<i64>,
+    pub total_us: i64,
+    pub final_status: FinalStatus,
+    pub has_rfq: bool,
+    pub msg_count: usize,
+    pub msg_indices: Vec<usize>,
+}
+
+// ─── Chain reconstruction ─────────────────────────────────────────────────────
+
+/// Build a complete LifecycleChain from a set of message indices.
+fn make_chain(
+    messages:      &[FixMessage],
+    mut indices:   Vec<usize>,
+    qreq_id:       Option<String>,
+    quote_id:      Option<String>,
+    nos_cl_ord_ids: Vec<String>,
+) -> LifecycleChain {
+    // Sort by timestamp, stable-fallback to file order
+    indices.sort_by_key(|&i| parse_fix_time_us(&messages[i].time).unwrap_or(i as i64));
+    indices.dedup();
+
+    let msg_count = indices.len();
+    let first_time_us = indices.first()
+        .and_then(|&i| parse_fix_time_us(&messages[i].time)).unwrap_or(0);
+    let last_time_us  = indices.last()
+        .and_then(|&i| parse_fix_time_us(&messages[i].time)).unwrap_or(0);
+
+    // Derive display fields from first available message with symbol/side
+    let symbol = indices.iter()
+        .map(|&i| messages[i].symbol.as_str())
+        .find(|s| !s.is_empty())
+        .unwrap_or("").to_string();
+    let side = indices.iter()
+        .map(|&i| messages[i].side.as_str())
+        .find(|s| !s.is_empty())
+        .unwrap_or("").to_string();
+
+    // Key timestamps for latency calculation
+    let rfq_time = qreq_id.as_ref().and_then(|_|
+        indices.iter().map(|&i| &messages[i])
+            .find(|m| m.msg_type_raw == "R")
+            .and_then(|m| parse_fix_time_us(&m.time))
+    );
+    let nos_time = indices.iter().map(|&i| &messages[i])
+        .find(|m| m.msg_type_raw == "D")
+        .and_then(|m| parse_fix_time_us(&m.time));
+    let first_er_time = indices.iter().map(|&i| &messages[i])
+        .find(|m| m.msg_type_raw == "8")
+        .and_then(|m| parse_fix_time_us(&m.time));
+    let last_er_time = indices.iter().rev().map(|&i| &messages[i])
+        .find(|m| m.msg_type_raw == "8")
+        .and_then(|m| parse_fix_time_us(&m.time));
+
+    // Find the Quote (35=S) timestamp. First try messages already in this chain's indices.
+    // Fallback: if the Quote wasn't linked (e.g. it lacks tag 131), find it via the QuoteID
+    // (tag 117) carried by any NOS in the chain — covers non-standard Quote implementations.
+    let quote_msg_time = indices.iter().map(|&i| &messages[i])
+        .find(|m| m.msg_type_raw == "S")
+        .and_then(|m| parse_fix_time_us(&m.time))
+        .or_else(|| {
+            let nos_qid = indices.iter().map(|&i| &messages[i])
+                .find(|m| m.msg_type_raw == "D")
+                .map(|m| tag_val(m, 117))
+                .filter(|v| !v.is_empty())?;
+            messages.iter()
+                .find(|m| m.msg_type_raw == "S" && tag_val(m, 117) == nos_qid)
+                .and_then(|m| parse_fix_time_us(&m.time))
+        });
+
+    let rfq_to_quote_us = match (rfq_time, quote_msg_time) {
+        (Some(r), Some(q)) if q >= r => Some(q - r),
+        _ => None,
+    };
+    let quote_to_nos_us = match (quote_msg_time.or(rfq_time), nos_time) {
+        (Some(q), Some(n)) if n >= q => Some(n - q),
+        _ => None,
+    };
+    let nos_to_ack_us = match (nos_time, first_er_time) {
+        (Some(n), Some(e)) if e >= n => Some(e - n),
+        _ => None,
+    };
+    let nos_to_fill_us = match (nos_time, last_er_time) {
+        (Some(n), Some(e)) if e > n => Some(e - n),
+        _ => None,
+    };
+
+    // Determine final status from last ExecReport
+    let final_status = indices.iter().rev()
+        .map(|&i| &messages[i])
+        .find(|m| m.msg_type_raw == "8")
+        .map(|m| {
+            let ord_status = tag_val(m, 39);
+            let exec_type  = tag_val(m, 150);
+            let s = if !ord_status.is_empty() { ord_status } else { exec_type };
+            match s {
+                "2" | "F"       => FinalStatus::Filled,
+                "1"             => FinalStatus::PartialFill,
+                "4"             => FinalStatus::Cancelled,
+                "8"             => FinalStatus::Rejected,
+                "C" | "6"       => FinalStatus::Expired,
+                "0" | "E" | "A" => FinalStatus::Open,
+                _               => FinalStatus::Unknown,
+            }
+        })
+        .unwrap_or(FinalStatus::Open);
+
+    // chain_id: prefer primary ClOrdID, else QuoteReqID
+    let chain_id = nos_cl_ord_ids.first()
+        .cloned()
+        .or_else(|| qreq_id.clone())
+        .unwrap_or_else(|| format!("chain-{}", indices.first().copied().unwrap_or(0)));
+
+    let has_rfq = qreq_id.is_some();
+    let primary = nos_cl_ord_ids.first().cloned();
+
+    LifecycleChain {
+        chain_id,
+        quote_req_id: qreq_id,
+        quote_id,
+        primary_cl_ord_id: primary,
+        all_cl_ord_ids: nos_cl_ord_ids,
+        symbol,
+        side,
+        first_time_us,
+        last_time_us,
+        rfq_to_quote_us,
+        quote_to_nos_us,
+        nos_to_ack_us,
+        nos_to_fill_us,
+        total_us: (last_time_us - first_time_us).max(0),
+        final_status,
+        has_rfq,
+        msg_count,
+        msg_indices: indices,
+    }
+}
+
+/// Recursively collect all message indices belonging to a ClOrdID chain.
+/// Follows OrigClOrdID (tag 41) links to gather cancel-replace branches.
+fn collect_clord_tree(
+    root: &str,
+    messages: &[FixMessage],
+    clord_idx: &HashMap<&str, Vec<usize>>,
+    orig_idx:  &HashMap<&str, Vec<usize>>,
+    assigned:  &mut Vec<bool>,
+) -> (Vec<usize>, Vec<String>) {
+    let mut all_indices = Vec::new();
+    let mut all_cl_ids  = Vec::new();
+    let mut queue       = vec![root.to_string()];
+    let mut visited     = std::collections::HashSet::new();
+
+    while let Some(cl_id) = queue.pop() {
+        if !visited.insert(cl_id.clone()) { continue; }
+        all_cl_ids.push(cl_id.clone());
+
+        // All messages tagged with this ClOrdID
+        if let Some(idxs) = clord_idx.get(cl_id.as_str()) {
+            for &idx in idxs {
+                if !assigned[idx] {
+                    assigned[idx] = true;
+                    all_indices.push(idx);
+                }
+            }
+        }
+
+        // Follow cancel/replace: any message with OrigClOrdID == cl_id
+        if let Some(idxs) = orig_idx.get(cl_id.as_str()) {
+            for &idx in idxs {
+                if !assigned[idx] {
+                    assigned[idx] = true;
+                    all_indices.push(idx);
+                }
+                // New ClOrdID from the cancel/replace message
+                let new_cl = messages[idx].cl_ord_id.as_str();
+                if !new_cl.is_empty() { queue.push(new_cl.to_string()); }
+            }
+        }
+    }
+    (all_indices, all_cl_ids)
+}
+
+pub fn build_lifecycle_chains(messages: &[FixMessage]) -> Vec<LifecycleChain> {
+    if messages.is_empty() { return vec![]; }
+
+    // ── Build indexes (single pass) ────────────────────────────────────────
+    // tag 131 = QuoteReqID  (in 35=R and 35=S)
+    // tag 117 = QuoteID     (in 35=S and 35=D when accepting a quote)
+    // tag  11 = ClOrdID
+    // tag  41 = OrigClOrdID (in 35=F cancel and some 35=8)
+
+    let mut qreq_idx:  HashMap<&str, Vec<usize>> = HashMap::new(); // QuoteReqID → indices
+    let mut quote_idx: HashMap<&str, Vec<usize>> = HashMap::new(); // QuoteID    → indices (35=S only)
+    let mut nos_qid:   HashMap<&str, Vec<usize>> = HashMap::new(); // QuoteID    → NOS indices (35=D with tag 117)
+    let mut clord_idx: HashMap<&str, Vec<usize>> = HashMap::new(); // ClOrdID    → indices
+    let mut orig_idx:  HashMap<&str, Vec<usize>> = HashMap::new(); // OrigClOrdID→ indices
+
+    for (i, msg) in messages.iter().enumerate() {
+        let mtype = msg.msg_type_raw.as_str();
+
+        // ClOrdID (tag 11)
+        if !msg.cl_ord_id.is_empty() {
+            clord_idx.entry(msg.cl_ord_id.as_str()).or_default().push(i);
+        }
+        // OrigClOrdID (tag 41)
+        let orig = tag_val(msg, 41);
+        if !orig.is_empty() {
+            orig_idx.entry(orig).or_default().push(i);
+        }
+        // QuoteReqID (tag 131) — present on 35=R and 35=S
+        let qrid = tag_val(msg, 131);
+        if !qrid.is_empty() {
+            qreq_idx.entry(qrid).or_default().push(i);
+        }
+        // QuoteID (tag 117)
+        let qid = tag_val(msg, 117);
+        if !qid.is_empty() {
+            if mtype == "S" {
+                quote_idx.entry(qid).or_default().push(i);
+            } else if mtype == "D" {
+                nos_qid.entry(qid).or_default().push(i);
+            }
+        }
+    }
+
+    let mut assigned = vec![false; messages.len()];
+    let mut chains   = Vec::new();
+
+    // ── Pass 1: RFQ chains (starting from 35=R QuoteRequests) ────────────
+    for (i, msg) in messages.iter().enumerate() {
+        if msg.msg_type_raw != "R" || assigned[i] { continue; }
+
+        let qrid = tag_val(msg, 131);
+        if qrid.is_empty() { continue; }
+
+        let mut chain_indices = Vec::new();
+        assigned[i] = true;
+        chain_indices.push(i);
+
+        // Find all Quotes (35=S) with same QuoteReqID
+        let mut found_quote_id: Option<String> = None;
+        let mut nos_cl_ord_ids = Vec::new();
+
+        if let Some(q_idxs) = qreq_idx.get(qrid) {
+            for &qi in q_idxs {
+                if qi == i || assigned[qi] { continue; }
+                if messages[qi].msg_type_raw == "S" {
+                    assigned[qi] = true;
+                    chain_indices.push(qi);
+                    let qid = tag_val(&messages[qi], 117);
+                    if !qid.is_empty() && found_quote_id.is_none() {
+                        found_quote_id = Some(qid.to_string());
+                    }
+                }
+            }
+        }
+
+        // Fallback: if no 35=S was found via tag 131 (some implementations omit it),
+        // do sequential pairing — find the nearest unassigned 35=S after this 35=R
+        // that has an associated NOS (via tag 117 QuoteID). Stop at the next 35=R.
+        if found_quote_id.is_none() {
+            'seq_search: for j in (i + 1)..messages.len() {
+                if assigned[j] { continue; }
+                if messages[j].msg_type_raw == "R" { break 'seq_search; } // belongs to later RFQ
+                if messages[j].msg_type_raw != "S" { continue; }
+                let qid = tag_val(&messages[j], 117);
+                if qid.is_empty() { continue; }
+                if nos_qid.contains_key(qid) {
+                    assigned[j] = true;
+                    chain_indices.push(j);
+                    found_quote_id = Some(qid.to_string());
+                    break 'seq_search;
+                }
+            }
+        }
+
+        // Find NOS(s) that reference this QuoteID
+        if let Some(ref qid) = found_quote_id {
+            if let Some(nos_idxs) = nos_qid.get(qid.as_str()) {
+                for &ni in nos_idxs {
+                    if assigned[ni] { continue; }
+                    if messages[ni].msg_type_raw == "D" {
+                        let cl = messages[ni].cl_ord_id.as_str();
+                        if cl.is_empty() { continue; }
+                        let (extra, cl_ids) = collect_clord_tree(
+                            cl, messages, &clord_idx, &orig_idx, &mut assigned,
+                        );
+                        chain_indices.extend(extra);
+                        nos_cl_ord_ids.extend(cl_ids);
+                    }
+                }
+            }
+        }
+
+        chains.push(make_chain(
+            messages, chain_indices,
+            Some(qrid.to_string()), found_quote_id, nos_cl_ord_ids,
+        ));
+    }
+
+    // ── Pass 2: Standalone NOS chains (no RFQ) ────────────────────────────
+    for (i, msg) in messages.iter().enumerate() {
+        if msg.msg_type_raw != "D" || assigned[i] { continue; }
+
+        let cl = msg.cl_ord_id.as_str();
+        if cl.is_empty() { continue; }
+
+        let (indices, cl_ids) = collect_clord_tree(
+            cl, messages, &clord_idx, &orig_idx, &mut assigned,
+        );
+        if !indices.is_empty() {
+            chains.push(make_chain(messages, indices, None, None, cl_ids));
+        }
+    }
+
+    // ── Pass 3: Orphan ExecReports (no NOS found) ─────────────────────────
+    {
+        let mut orphan_groups: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, msg) in messages.iter().enumerate() {
+            if assigned[i] || msg.msg_type_raw != "8" { continue; }
+            if msg.cl_ord_id.is_empty() { continue; }
+            orphan_groups.entry(msg.cl_ord_id.as_str()).or_default().push(i);
+        }
+        for (cl_id, idxs) in orphan_groups {
+            for &idx in &idxs { assigned[idx] = true; }
+            chains.push(make_chain(
+                messages, idxs, None, None, vec![cl_id.to_string()],
+            ));
+        }
+    }
+
+    // Sort chains chronologically
+    chains.sort_by_key(|c| c.first_time_us);
+    chains
+}
+
+// ─── Latency stats (existing, for histogram/scatter) ─────────────────────────
+
+#[derive(Clone, PartialEq)]
+struct OrderLatency {
+    cl_ord_id: String,
+    symbol: String,
+    side: String,
+    first_time: String,
+    ack_latency_us: Option<i64>,
+    fill_latency_us: Option<i64>,
+    msg_count: usize,
+}
+
+#[derive(Clone, PartialEq)]
+struct PhaseStats {
+    count:   usize,
+    min_us:  i64,
+    mean_us: f64,
+    p50_us:  i64,
+    p95_us:  i64,
+    p99_us:  i64,
+    max_us:  i64,
+}
+
+#[derive(Clone, PartialEq)]
+struct SymbolStats {
+    symbol: String,
+    total: usize,
+    with_ack: usize,
+    mean_us: f64,
+    p95_us: i64,
+    min_us: i64,
+    max_us: i64,
+}
+
+fn build_latency_data(chains: &[LifecycleChain]) -> Vec<OrderLatency> {
+    chains.iter().filter_map(|c| {
+        let cl = c.primary_cl_ord_id.as_deref().unwrap_or(c.chain_id.as_str());
+        Some(OrderLatency {
+            cl_ord_id:       cl.to_string(),
+            symbol:          c.symbol.clone(),
+            side:            c.side.clone(),
+            first_time:      fmt_us(c.first_time_us),
+            ack_latency_us:  c.nos_to_ack_us,
+            fill_latency_us: c.nos_to_fill_us,
+            msg_count:       c.msg_count,
+        })
+    }).collect()
+}
+
+fn compute_phase_stats(lats: &[i64]) -> Option<PhaseStats> {
     if lats.is_empty() { return None; }
-    lats.sort_unstable();
-    let n = lats.len();
-    let sum: i64 = lats.iter().sum();
-    let pct = |p: f64| lats[((p / 100.0) * (n - 1) as f64).round() as usize];
-    Some(LatencyStats {
-        total_orders: orders.len(),
-        orders_with_ack: n,
+    let mut s = lats.to_vec();
+    s.sort_unstable();
+    let n = s.len();
+    let sum: i64 = s.iter().sum();
+    let pct = |p: f64| s[((p / 100.0) * (n - 1) as f64).round() as usize];
+    Some(PhaseStats {
+        count:   n,
+        min_us:  s[0],
+        max_us:  s[n - 1],
         mean_us: sum as f64 / n as f64,
-        min_us: lats[0],
-        max_us: lats[n - 1],
-        p50_us: pct(50.0),
-        p95_us: pct(95.0),
-        p99_us: pct(99.0),
+        p50_us:  pct(50.0),
+        p95_us:  pct(95.0),
+        p99_us:  pct(99.0),
     })
 }
 
 fn compute_symbol_stats(orders: &[OrderLatency]) -> Vec<SymbolStats> {
-    let mut map: HashMap<String, Vec<i64>> = HashMap::new();
-    let mut totals: HashMap<String, usize> = HashMap::new();
-    let mut sym_order: Vec<String> = Vec::new();
-
+    let mut map:      HashMap<String, Vec<i64>> = HashMap::new();
+    let mut totals:   HashMap<String, usize>    = HashMap::new();
+    let mut sym_order: Vec<String>              = Vec::new();
     for o in orders {
         let sym = if o.symbol.is_empty() { "—".to_string() } else { o.symbol.clone() };
         *totals.entry(sym.clone()).or_insert(0) += 1;
-        let entry = map.entry(sym.clone()).or_insert_with(|| {
-            sym_order.push(sym.clone());
-            Vec::new()
-        });
+        let entry = map.entry(sym.clone()).or_insert_with(|| { sym_order.push(sym.clone()); Vec::new() });
         if let Some(l) = o.ack_latency_us { entry.push(l); }
     }
-
     let mut result: Vec<SymbolStats> = sym_order.iter().filter_map(|sym| {
         let lats = map.get(sym)?;
-        let mut s = lats.clone();
-        s.sort_unstable();
-        let n = s.len();
-        if n == 0 { return None; }
+        let mut s = lats.clone(); s.sort_unstable();
+        let n = s.len(); if n == 0 { return None; }
         let sum: i64 = s.iter().sum();
         Some(SymbolStats {
             symbol: sym.clone(),
-            total: *totals.get(sym).unwrap_or(&0),
-            with_ack: n,
+            total: *totals.get(sym).unwrap_or(&0), with_ack: n,
             mean_us: sum as f64 / n as f64,
             p95_us: s[((0.95 * (n - 1) as f64).round() as usize).min(n - 1)],
-            min_us: s[0],
-            max_us: s[n - 1],
+            min_us: s[0], max_us: s[n - 1],
         })
     }).collect();
-
     result.sort_by(|a, b| b.total.cmp(&a.total));
     result.truncate(12);
     result
 }
 
-// ─── SVG chart generators ─────────────────────────────────────────────────────
+// ─── SVG charts ───────────────────────────────────────────────────────────────
 
 const CHART_FONT: &str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
-fn render_histogram(orders: &[OrderLatency]) -> String {
-    // Bucket: (label, lo_us, hi_us, colour)
+fn render_histogram(lats: &[i64]) -> String {
     let buckets: &[(&str, i64, i64, &str)] = &[
-        ("<0.1ms",  0,        100,       "#8be9fd"),
-        ("0.1–1ms", 100,      1_000,     "#50fa7b"),
-        ("1–5ms",   1_000,    5_000,     "#50fa7b"),
-        ("5–10ms",  5_000,    10_000,    "#f1fa8c"),
-        ("10–50ms", 10_000,   50_000,    "#ffb86c"),
-        ("50–100ms",50_000,   100_000,   "#ff79c6"),
-        (">100ms",  100_000,  i64::MAX,  "#ff5555"),
+        ("<0.1ms",   0,       100,      "#4a7fa8"),
+        ("0.1–1ms",  100,     1_000,    "#3d8a62"),
+        ("1–5ms",    1_000,   5_000,    "#3d8a62"),
+        ("5–10ms",   5_000,   10_000,   "#8a8030"),
+        ("10–50ms",  10_000,  50_000,   "#a06030"),
+        ("50–100ms", 50_000,  100_000,  "#904040"),
+        (">100ms",   100_000, i64::MAX, "#782828"),
     ];
-
     let mut counts = vec![0usize; buckets.len()];
-    for o in orders {
-        if let Some(l) = o.ack_latency_us {
-            for (i, (_, lo, hi, _)) in buckets.iter().enumerate() {
-                if l >= *lo && l < *hi { counts[i] += 1; break; }
-            }
+    for &l in lats {
+        for (i, (_, lo, hi, _)) in buckets.iter().enumerate() {
+            if l >= *lo && l < *hi { counts[i] += 1; break; }
         }
     }
-
     let max_c = counts.iter().copied().max().unwrap_or(1).max(1);
-    const VW: f64 = 480.0;
-    const VH: f64 = 150.0;
-    const PL: f64 = 46.0; const PR: f64 = 10.0;
-    const PT: f64 = 10.0; const PB: f64 = 34.0;
-    let pw = VW - PL - PR;
-    let ph = VH - PT - PB;
-    let nb = buckets.len() as f64;
-    let bw = pw / nb - 5.0;
-
-    let mut s = format!(
-        r##"<svg viewBox="0 0 {VW} {VH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT};fill:#6272a4}}</style>"##
-    );
+    const VW: f64 = 480.0; const VH: f64 = 150.0;
+    const PL: f64 = 46.0;  const PR: f64 = 10.0;
+    const PT: f64 = 10.0;  const PB: f64 = 34.0;
+    let pw = VW - PL - PR; let ph = VH - PT - PB;
+    let nb = buckets.len() as f64; let bw = pw / nb - 5.0;
+    let mut s = format!(r##"<svg viewBox="0 0 {VW} {VH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT};fill:#6272a4}}</style>"##);
     s += &format!(r##"<rect x="{PL}" y="{PT}" width="{pw}" height="{ph}" fill="#1e1f29" rx="4"/>"##);
-
-    // Grid lines + Y labels
     for i in 1..=4 {
         let y = PT + ph * (1.0 - i as f64 / 4.0);
         let v = max_c as f64 * i as f64 / 4.0;
@@ -253,137 +602,97 @@ fn render_histogram(orders: &[OrderLatency]) -> String {
         s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="end">{lbl}</text>"##, PL - 4.0, y + 3.5);
     }
     s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="end">0</text>"##, PL - 4.0, PT + ph + 3.5);
-
-    // Bars
     for (i, ((label, _, _, color), &count)) in buckets.iter().zip(counts.iter()).enumerate() {
         let bh = (count as f64 / max_c as f64) * ph;
         let bx = PL + i as f64 * (pw / nb) + 2.5;
         let by = PT + ph - bh;
-
         if bh > 0.5 {
             s += &format!(r##"<rect x="{bx:.1}" y="{by:.1}" width="{bw:.1}" height="{bh:.1}" fill="{color}" rx="3"/>"##);
-            if bh > 18.0 {
-                s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="#282a36" font-weight="700">{count}</text>"##,
-                    bx + bw / 2.0, by + 13.0);
-            }
+            if bh > 18.0 { s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="#282a36" font-weight="700">{count}</text>"##, bx + bw / 2.0, by + 13.0); }
         } else {
             s += &format!(r##"<rect x="{bx:.1}" y="{:.1}" width="{bw:.1}" height="2" fill="{color}" rx="1" opacity="0.3"/>"##, PT + ph - 2.0);
         }
-        s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle">{label}</text>"##,
-            bx + bw / 2.0, PT + ph + 17.0);
+        s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle">{label}</text>"##, bx + bw / 2.0, PT + ph + 17.0);
     }
-
-    // Axes
     s += &format!(r##"<line x1="{PL}" y1="{PT}" x2="{PL}" y2="{:.1}" stroke="#6272a4" stroke-width="1"/>"##, PT + ph);
     s += &format!(r##"<line x1="{PL}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#6272a4" stroke-width="1"/>"##, PT + ph, PL + pw, PT + ph);
-    s += "</svg>";
-    s
+    s += "</svg>"; s
 }
 
-fn render_scatter(orders: &[OrderLatency]) -> String {
-    let points: Vec<(usize, i64)> = orders.iter().enumerate()
-        .filter_map(|(i, o)| o.ack_latency_us.map(|l| (i, l)))
-        .collect();
-
-    if points.is_empty() {
-        return format!(r##"<svg viewBox="0 0 480 150" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT}}}</style><text x="240" y="75" fill="#6272a4" font-size="12" text-anchor="middle">No ACK latency data — ensure messages have ClOrdID (tag 11) and timestamps</text></svg>"##);
+fn render_scatter(lats: &[i64]) -> String {
+    if lats.is_empty() {
+        return format!(r##"<svg viewBox="0 0 480 150" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT}}}</style><text x="240" y="75" fill="#6272a4" font-size="12" text-anchor="middle">No latency data</text></svg>"##);
     }
-
-    // Subsample to max 500 points for rendering performance
+    let points: Vec<(usize, i64)> = lats.iter().enumerate().map(|(i, &l)| (i, l)).collect();
     const MAX_PTS: usize = 500;
     let step = (points.len() / MAX_PTS).max(1);
     let sampled: Vec<(usize, i64)> = points.iter().step_by(step).cloned().collect();
     let n = sampled.len();
-
-    // Y axis capped at P99 so extreme outliers don't compress the chart
-    let mut all_lats: Vec<i64> = points.iter().map(|(_, l)| *l).collect();
+    let mut all_lats: Vec<i64> = lats.to_vec();
     all_lats.sort_unstable();
     let al = all_lats.len();
     let p50 = all_lats[(0.50 * (al - 1) as f64) as usize];
     let p95 = all_lats[((0.95 * (al - 1) as f64) as usize).min(al - 1)];
-    let p99 = all_lats[((0.99 * (al - 1) as f64) as usize).min(al - 1)];
-    let y_max = p99.max(1);
-
-    const VW: f64 = 480.0;
-    const VH: f64 = 150.0;
+    let y_max = all_lats[((0.99 * (al - 1) as f64) as usize).min(al - 1)].max(1);
+    const VW: f64 = 480.0; const VH: f64 = 150.0;
     const PL: f64 = 50.0; const PR: f64 = 30.0;
     const PT: f64 = 12.0; const PB: f64 = 22.0;
-    let pw = VW - PL - PR;
-    let ph = VH - PT - PB;
-
-    let mut s = format!(
-        r##"<svg viewBox="0 0 {VW} {VH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT};fill:#6272a4}}</style>"##
-    );
+    let pw = VW - PL - PR; let ph = VH - PT - PB;
+    let mut s = format!(r##"<svg viewBox="0 0 {VW} {VH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT};fill:#6272a4}}</style>"##);
     s += &format!(r##"<rect x="{PL}" y="{PT}" width="{pw}" height="{ph}" fill="#1e1f29" rx="4"/>"##);
-
-    // Grid + Y labels
     for i in 0..=4 {
         let frac = i as f64 / 4.0;
         let y = PT + ph * (1.0 - frac);
-        let lv = (y_max as f64 * frac) as i64;
-        let lbl = fmt_us_short(lv);
-        if i > 0 {
-            s += &format!(r##"<line x1="{PL}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#343746" stroke-width="1"/>"##, PL + pw);
-        }
+        let lbl = fmt_us_short((y_max as f64 * frac) as i64);
+        if i > 0 { s += &format!(r##"<line x1="{PL}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#343746" stroke-width="1"/>"##, PL + pw); }
         s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="end">{lbl}</text>"##, PL - 4.0, y + 3.5);
     }
-
-    // P50 reference line
-    let p50c = (p50.min(y_max) as f64 / y_max as f64).min(1.0);
-    let p50y = PT + ph * (1.0 - p50c);
+    let p50y = PT + ph * (1.0 - (p50.min(y_max) as f64 / y_max as f64).min(1.0));
     s += &format!(r##"<line x1="{PL}" y1="{p50y:.1}" x2="{:.1}" y2="{p50y:.1}" stroke="#50fa7b" stroke-width="1" stroke-dasharray="4,3" opacity="0.55"/>"##, PL + pw);
     s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="8" fill="#50fa7b" opacity="0.8">P50 {}</text>"##, PL + pw + 2.0, p50y + 3.5, fmt_us_short(p50));
-
-    // P95 reference line
-    let p95c = (p95.min(y_max) as f64 / y_max as f64).min(1.0);
-    let p95y = PT + ph * (1.0 - p95c);
+    let p95y = PT + ph * (1.0 - (p95.min(y_max) as f64 / y_max as f64).min(1.0));
     s += &format!(r##"<line x1="{PL}" y1="{p95y:.1}" x2="{:.1}" y2="{p95y:.1}" stroke="#ffb86c" stroke-width="1" stroke-dasharray="4,3" opacity="0.55"/>"##, PL + pw);
     s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="8" fill="#ffb86c" opacity="0.8">P95 {}</text>"##, PL + pw + 2.0, p95y + 3.5, fmt_us_short(p95));
-
-    // Scatter points
     for (idx, (_, lat)) in sampled.iter().enumerate() {
         let cx = PL + (idx as f64 / (n - 1).max(1) as f64) * pw;
         let clamped = (*lat).min(y_max);
-        let cy = PT + ph * (1.0 - clamped as f64 / y_max as f64);
         let pct = clamped as f64 / y_max as f64;
+        let cy = PT + ph * (1.0 - pct);
         let color = if pct < 0.30 { "#50fa7b" }
             else if pct < 0.60 { "#8be9fd" }
-            else if pct < 0.85 { "#f1fa8c" }
-            else { "#ff5555" };
-        // Outliers above P99 shown faded at top
+            else if pct < 0.85 { "#f1fa8c" } else { "#ff5555" };
         let (cy_r, extra) = if *lat > y_max { (PT + 3.0, r##" opacity="0.3""##) } else { (cy, "") };
         s += &format!(r##"<circle cx="{cx:.1}" cy="{cy_r:.1}" r="2" fill="{color}"{extra}/>"##);
     }
-
-    // Axes
     s += &format!(r##"<line x1="{PL}" y1="{PT}" x2="{PL}" y2="{:.1}" stroke="#6272a4" stroke-width="1"/>"##, PT + ph);
     s += &format!(r##"<line x1="{PL}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#6272a4" stroke-width="1"/>"##, PT + ph, PL + pw, PT + ph);
     s += &format!(r##"<text x="{:.1}" y="{VH}" font-size="9" text-anchor="middle">← order sequence →</text>"##, PL + pw / 2.0);
-
-    s += "</svg>";
-    s
+    s += "</svg>"; s
 }
 
-// ─── Order flow chart ─────────────────────────────────────────────────────────
+// ─── Flow node types ──────────────────────────────────────────────────────────
 
 #[derive(Clone, PartialEq)]
 struct FlowNode {
-    label: String,       // e.g. "ER: Partial\n500@150.38"
-    sublabel: String,    // quantity@price or exec detail
-    time_str: String,    // HH:MM:SS.fff
-    time_us: i64,
-    delta_us: i64,       // micros since previous node (0 for first)
-    kind: FlowKind,
+    label:     String,
+    sublabel:  String,
+    time_str:  String,
+    time_us:   i64,
+    delta_us:  i64,
+    kind:      FlowKind,
 }
 
 #[derive(Clone, PartialEq)]
 enum FlowKind {
+    RfqRequest,
+    RfqQuote,
     NewOrder,
     ExecNew,
     ExecPartial,
     ExecFilled,
     ExecCanceled,
     ExecRejected,
+    ExecExpired,
     CancelReq,
     Other,
 }
@@ -391,12 +700,15 @@ enum FlowKind {
 impl FlowKind {
     fn color(&self) -> &'static str {
         match self {
+            FlowKind::RfqRequest   => "#bd93f9",
+            FlowKind::RfqQuote     => "#8be9fd",
             FlowKind::NewOrder     => "#bd93f9",
             FlowKind::ExecNew      => "#8be9fd",
             FlowKind::ExecPartial  => "#f1fa8c",
             FlowKind::ExecFilled   => "#50fa7b",
             FlowKind::ExecCanceled => "#ffb86c",
             FlowKind::ExecRejected => "#ff5555",
+            FlowKind::ExecExpired  => "#6272a4",
             FlowKind::CancelReq    => "#ff79c6",
             FlowKind::Other        => "#6272a4",
         }
@@ -406,90 +718,81 @@ impl FlowKind {
             FlowKind::ExecFilled   => "#50fa7b",
             FlowKind::ExecRejected => "#ff5555",
             FlowKind::ExecCanceled => "#ffb86c",
+            FlowKind::RfqRequest   => "#bd93f9",
+            FlowKind::RfqQuote     => "#8be9fd",
             _                      => "#44475a",
         }
     }
 }
 
-fn tag_val<'a>(msg: &'a FixMessage, tag: u16) -> &'a str {
-    msg.fields.iter().find(|f| f.tag == tag).map(|f| f.value.as_str()).unwrap_or("")
-}
+// ─── Chain flow builder ───────────────────────────────────────────────────────
 
-fn build_order_flow(messages: &[FixMessage], cl_ord_id: &str) -> Vec<FlowNode> {
-    // Collect all messages for this ClOrdID, sorted by timestamp
-    let mut msgs: Vec<&FixMessage> = messages.iter()
-        .filter(|m| m.cl_ord_id.as_str() == cl_ord_id)
+pub fn build_chain_flow(messages: &[FixMessage], chain: &LifecycleChain) -> Vec<FlowNode> {
+    let mut msgs: Vec<(usize, &FixMessage)> = chain.msg_indices.iter()
+        .map(|&i| (i, &messages[i]))
         .collect();
-    if msgs.is_empty() { return vec![]; }
-
-    // Sort by parsed time, preserving original order for ties
-    msgs.sort_by_key(|m| parse_fix_time_us(&m.time).unwrap_or(i64::MAX));
+    msgs.sort_by_key(|(_, m)| parse_fix_time_us(&m.time).unwrap_or(i64::MAX));
 
     let mut nodes = Vec::with_capacity(msgs.len());
     let mut prev_us: Option<i64> = None;
 
-    for msg in msgs {
-        let t = parse_fix_time_us(&msg.time).unwrap_or(0);
-        let delta = prev_us.map(|p| t - p).unwrap_or(0).max(0);
-        prev_us = Some(t);
-
-        // Time display: take HH:MM:SS.fff from stored "YYYY-MM-DD HH:MM:SS[.fff]"
-        let time_str = msg.time.find(' ')
-            .map(|i| &msg.time[i+1..])
-            .unwrap_or(msg.time.as_str())
-            .to_string();
+    for (_, msg) in msgs {
+        let t     = parse_fix_time_us(&msg.time).unwrap_or(0);
+        let delta = prev_us.map(|p| (t - p).max(0)).unwrap_or(0);
+        prev_us   = Some(t);
+        let time_str = time_to_hms(&msg.time);
 
         let (label, sublabel, kind) = match msg.msg_type_raw.as_str() {
-            "D" => ("NewOrder".into(), {
+            "R" => {
                 let sym = msg.symbol.as_str();
+                let qty = tag_val(msg, 38);
+                let sub = if !sym.is_empty() { format!("{} {}", sym, qty) } else { String::new() };
+                ("RFQ".into(), sub, FlowKind::RfqRequest)
+            }
+            "S" => {
+                let bid = tag_val(msg, 132);
+                let off = tag_val(msg, 133);
+                let sub = if !bid.is_empty() { format!("{}/{}", bid, off) } else { String::new() };
+                ("Quote".into(), sub, FlowKind::RfqQuote)
+            }
+            "D" => {
+                let sym  = msg.symbol.as_str();
                 let side = msg.side.as_str();
                 let qty  = tag_val(msg, 38);
-                let price = tag_val(msg, 44);
-                if !sym.is_empty() { format!("{} {} {}@{}", side, sym, qty, price) }
-                else { String::new() }
-            }, FlowKind::NewOrder),
-
+                let px   = tag_val(msg, 44);
+                let ord_type = match tag_val(msg, 40) {
+                    "1" | "1" => "Mkt",
+                    "2"       => "Lmt",
+                    "D"       => "Qtd",
+                    _         => "Ord",
+                };
+                let sub = if !sym.is_empty() { format!("{} {} {}@{}", side, sym, qty, px) } else { String::new() };
+                (format!("NOS:{}", ord_type), sub, FlowKind::NewOrder)
+            }
             "8" => {
                 let ord_status = tag_val(msg, 39);
                 let exec_type  = tag_val(msg, 150);
                 let last_qty   = tag_val(msg, 32);
                 let last_px    = tag_val(msg, 31);
                 let cum_qty    = tag_val(msg, 14);
-                let leaves_qty = tag_val(msg, 151);
-
-                let sublbl = if !last_qty.is_empty() && !last_px.is_empty() {
+                let sublbl = if !last_qty.is_empty() && last_qty != "0" && !last_px.is_empty() {
                     format!("{}@{}", last_qty, last_px)
-                } else if !cum_qty.is_empty() {
-                    format!("cum {}", cum_qty)
+                } else if !cum_qty.is_empty() && cum_qty != "0" {
+                    format!("cum:{}", cum_qty)
                 } else { String::new() };
-
-                let _ = leaves_qty; // available if needed
-
-                let (lbl, k) = match ord_status {
-                    "0" => ("ER: New",      FlowKind::ExecNew),
-                    "1" => ("ER: Partial",  FlowKind::ExecPartial),
-                    "2" => ("ER: Filled",   FlowKind::ExecFilled),
-                    "4" => ("ER: Canceled", FlowKind::ExecCanceled),
-                    "8" => ("ER: Rejected", FlowKind::ExecRejected),
-                    _   => {
-                        // Fall back to ExecType
-                        match exec_type {
-                            "0" => ("ER: New",      FlowKind::ExecNew),
-                            "1" => ("ER: Partial",  FlowKind::ExecPartial),
-                            "2" => ("ER: Filled",   FlowKind::ExecFilled),
-                            "4" => ("ER: Canceled", FlowKind::ExecCanceled),
-                            "8" => ("ER: Rejected", FlowKind::ExecRejected),
-                            _   => ("ExecReport",   FlowKind::Other),
-                        }
-                    }
+                let s = if !ord_status.is_empty() { ord_status } else { exec_type };
+                let (lbl, k) = match s {
+                    "0"       => ("ER:New",      FlowKind::ExecNew),
+                    "1"       => ("ER:Partial",  FlowKind::ExecPartial),
+                    "2" | "F" => ("ER:Filled",   FlowKind::ExecFilled),
+                    "4"       => ("ER:Cancelled",FlowKind::ExecCanceled),
+                    "8"       => ("ER:Rejected", FlowKind::ExecRejected),
+                    "C" | "6" => ("ER:Expired",  FlowKind::ExecExpired),
+                    _         => ("ExecRpt",     FlowKind::Other),
                 };
                 (lbl.into(), sublbl, k)
             }
-
-            "F" | "9" => {
-                ("CancelReq".into(), String::new(), FlowKind::CancelReq)
-            }
-
+            "F" | "9" => ("CancelReq".into(), String::new(), FlowKind::CancelReq),
             t => (format!("35={}", t), String::new(), FlowKind::Other),
         };
 
@@ -498,21 +801,95 @@ fn build_order_flow(messages: &[FixMessage], cl_ord_id: &str) -> Vec<FlowNode> {
     nodes
 }
 
+// ─── Inline chain timeline ────────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct TLSeg {
+    delta_us:  i64,
+    label:     String,
+    sublabel:  String,
+    color:     &'static str,
+    first:     bool,   // no arrow prefix
+    is_cancel: bool,   // show └─ prefix
+}
+
+#[derive(Clone)]
+struct TLLine {
+    indent: usize,   // "node+arrow" segments to skip at start
+    segs:   Vec<TLSeg>,
+}
+
+fn build_timeline_lines(nodes: &[FlowNode]) -> Vec<TLLine> {
+    let mut preamble: Vec<&FlowNode> = Vec::new();
+    let mut er_nodes: Vec<&FlowNode> = Vec::new();
+    let mut cancel:   Vec<&FlowNode> = Vec::new();
+    let mut in_cancel = false;
+
+    for n in nodes {
+        match &n.kind {
+            FlowKind::RfqRequest | FlowKind::RfqQuote | FlowKind::NewOrder | FlowKind::Other => {
+                preamble.push(n);
+            }
+            FlowKind::CancelReq => { in_cancel = true; cancel.push(n); }
+            _ => { if in_cancel { cancel.push(n); } else { er_nodes.push(n); } }
+        }
+    }
+
+    let pre = preamble.len();
+    let mut lines: Vec<TLLine> = Vec::new();
+
+    // Line 0: preamble nodes + first ER
+    {
+        let mut segs: Vec<TLSeg> = Vec::new();
+        for (i, n) in preamble.iter().enumerate() {
+            segs.push(TLSeg { delta_us: n.delta_us, label: n.label.clone(),
+                sublabel: n.sublabel.clone(), color: n.kind.color(),
+                first: i == 0, is_cancel: false });
+        }
+        if let Some(er0) = er_nodes.first() {
+            segs.push(TLSeg { delta_us: er0.delta_us, label: er0.label.clone(),
+                sublabel: er0.sublabel.clone(), color: er0.kind.color(),
+                first: segs.is_empty(), is_cancel: false });
+        }
+        if !segs.is_empty() { lines.push(TLLine { indent: 0, segs }); }
+    }
+
+    // Additional ER lines branch from after preamble
+    for er in er_nodes.iter().skip(1) {
+        lines.push(TLLine {
+            indent: pre,
+            segs: vec![TLSeg { delta_us: er.delta_us, label: er.label.clone(),
+                sublabel: er.sublabel.clone(), color: er.kind.color(),
+                first: false, is_cancel: false }],
+        });
+    }
+
+    // Cancel chain branches from preamble + 1 ER column
+    if !cancel.is_empty() {
+        let segs = cancel.iter().enumerate().map(|(i, n)|
+            TLSeg { delta_us: n.delta_us, label: n.label.clone(),
+                sublabel: n.sublabel.clone(), color: n.kind.color(),
+                first: i == 0, is_cancel: i == 0 }
+        ).collect();
+        lines.push(TLLine { indent: pre + 1, segs });
+    }
+
+    lines
+}
+
 // ─── Flow SVG renderer ────────────────────────────────────────────────────────
 
 fn render_flow_svg(nodes: &[FlowNode]) -> String {
     if nodes.is_empty() { return String::new(); }
 
-    const NODE_W: f64 = 110.0;
-    const NODE_H: f64 = 54.0;
-    const GAP:    f64 = 70.0;   // horizontal gap between nodes
-    const ROW_H:  f64 = 90.0;   // vertical spacing between swimlanes
+    const NODE_W: f64 = 115.0;
+    const NODE_H: f64 = 56.0;
+    const GAP:    f64 = 68.0;
+    const ROW_H:  f64 = 94.0;
     const PAD_X:  f64 = 16.0;
-    const PAD_Y:  f64 = 20.0;
-    const ARROW_Y: f64 = PAD_Y + NODE_H / 2.0;
+    const PAD_Y:  f64 = 22.0;
 
-    // Assign rows: primary flow on row 0, cancel-branch on row 1
-    // A cancel branch starts after a CancelReq node
+    // Row assignment: CancelReq and its ER go on row 1
     let mut row_idx = vec![0usize; nodes.len()];
     let mut in_cancel = false;
     for (i, n) in nodes.iter().enumerate() {
@@ -520,418 +897,674 @@ fn render_flow_svg(nodes: &[FlowNode]) -> String {
         if in_cancel { row_idx[i] = 1; }
     }
 
-    let max_col = nodes.len();
-    let total_w = PAD_X * 2.0 + max_col as f64 * (NODE_W + GAP) - GAP;
+    let max_col   = nodes.len();
+    let total_w   = PAD_X * 2.0 + max_col as f64 * (NODE_W + GAP) - GAP;
     let rows_used = if in_cancel { 2 } else { 1 };
-    let total_h = PAD_Y * 2.0 + rows_used as f64 * ROW_H + NODE_H;
+    let total_h   = PAD_Y * 2.0 + rows_used as f64 * ROW_H + NODE_H;
 
     let mut s = format!(
         r##"<svg id="flow-svg" viewBox="0 0 {total_w:.0} {total_h:.0}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;overflow:visible"><style>text{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;fill:#f8f8f2}}.flow-sub{{fill:#6272a4}}</style>"##
     );
-
-    // Background
     s += &format!(r##"<rect width="{total_w:.0}" height="{total_h:.0}" fill="#1a1b26" rx="8"/>"##);
 
-    // Draw arrows + latency labels first (so nodes render on top)
-    let mut prev_col: Option<(usize, usize)> = None; // (col, row)
+    // Arrow marker defs
+    s += r##"<defs><marker id="ah" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#6272a4"/></marker></defs>"##;
+
+    // Arrows (behind nodes)
+    let mut prev: Option<(usize, usize)> = None;
     for (i, node) in nodes.iter().enumerate() {
         let row = row_idx[i];
         let nx = PAD_X + i as f64 * (NODE_W + GAP);
         let ny = PAD_Y + row as f64 * ROW_H;
-        let node_mid_x = nx + NODE_W / 2.0;
-        let node_mid_y = ny + NODE_H / 2.0;
+        let mid_x = nx + NODE_W / 2.0;
+        let mid_y = ny + NODE_H / 2.0;
 
-        if let Some((pi, pr)) = prev_col {
-            let px = PAD_X + pi as f64 * (NODE_W + GAP);
-            let prev_mid_x = px + NODE_W / 2.0;
-            let prev_mid_y = PAD_Y + pr as f64 * ROW_H + NODE_H / 2.0;
+        if let Some((pi, pr)) = prev {
+            let px   = PAD_X + pi as f64 * (NODE_W + GAP);
+            let pmid_y = PAD_Y + pr as f64 * ROW_H + NODE_H / 2.0;
 
-            // Arrow from right edge of prev node to left edge of this node
             let ax1 = px + NODE_W;
-            let ay1 = prev_mid_y;
             let ax2 = nx;
-            let ay2 = node_mid_y;
 
-            let delta_lbl = if node.delta_us > 0 {
-                fmt_us(node.delta_us)
-            } else { String::new() };
-
+            let delta_lbl = if node.delta_us > 0 { fmt_us(node.delta_us) } else { String::new() };
             let arrow_color = if node.delta_us > 100_000 { "#ff5555" }
-                else if node.delta_us > 10_000 { "#ffb86c" }
-                else if node.delta_us > 1_000  { "#f1fa8c" }
+                else if node.delta_us > 10_000  { "#ffb86c" }
+                else if node.delta_us > 1_000   { "#f1fa8c" }
                 else { "#50fa7b" };
 
             if pr == row {
-                // Same row: straight horizontal arrow
-                let mid_x = (ax1 + ax2) / 2.0;
-                s += &format!(
-                    r##"<line x1="{ax1:.1}" y1="{ay1:.1}" x2="{ax2:.1}" y2="{ay2:.1}" stroke="{arrow_color}" stroke-width="1.5" marker-end="url(#ah)"/>"##
-                );
+                // Straight arrow
+                let lbl_mid_x = (ax1 + ax2) / 2.0;
+                s += &format!(r##"<line x1="{ax1:.1}" y1="{pmid_y:.1}" x2="{ax2:.1}" y2="{mid_y:.1}" stroke="{arrow_color}" stroke-width="1.5" marker-end="url(#ah)"/>"##);
                 if !delta_lbl.is_empty() {
-                    s += &format!(
-                        r##"<text x="{mid_x:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="{arrow_color}">{delta_lbl}</text>"##,
-                        ay1 - 5.0
-                    );
+                    s += &format!(r##"<text x="{lbl_mid_x:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="{arrow_color}">{delta_lbl}</text>"##, pmid_y - 5.0);
                 }
             } else {
-                // Different row: elbow arrow
-                let elbow_x = prev_mid_x + (NODE_W / 2.0 + GAP / 2.0);
-                s += &format!(
-                    r##"<polyline points="{ax1:.1},{ay1:.1} {elbow_x:.1},{ay1:.1} {elbow_x:.1},{ay2:.1} {ax2:.1},{ay2:.1}" fill="none" stroke="{arrow_color}" stroke-width="1.5" marker-end="url(#ah)"/>"##
-                );
+                // Elbow arrow (row change)
+                let pmid_x = px + NODE_W / 2.0;
+                let elbow_x = pmid_x + (NODE_W / 2.0 + GAP / 2.0);
+                s += &format!(r##"<polyline points="{ax1:.1},{pmid_y:.1} {elbow_x:.1},{pmid_y:.1} {elbow_x:.1},{mid_y:.1} {ax2:.1},{mid_y:.1}" fill="none" stroke="{arrow_color}" stroke-width="1.5" marker-end="url(#ah)"/>"##);
                 if !delta_lbl.is_empty() {
-                    s += &format!(
-                        r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="{arrow_color}">{delta_lbl}</text>"##,
-                        (elbow_x + ax2) / 2.0, ay2 - 5.0
-                    );
+                    s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="{arrow_color}">{delta_lbl}</text>"##, (elbow_x + ax2) / 2.0, mid_y - 5.0);
                 }
             }
-            let _ = (node_mid_x, node_mid_y, prev_mid_x); // suppress warnings
+            let _ = mid_x;
         }
-        prev_col = Some((i, row));
+        prev = Some((i, row));
     }
 
-    // Arrow-head marker definition
-    s += r##"<defs><marker id="ah" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#6272a4"/></marker></defs>"##;
-
-    // Draw nodes
+    // Nodes
     for (i, node) in nodes.iter().enumerate() {
-        let row = row_idx[i];
-        let nx = PAD_X + i as f64 * (NODE_W + GAP);
-        let ny = PAD_Y + row as f64 * ROW_H;
-        let color = node.kind.color();
+        let row    = row_idx[i];
+        let nx     = PAD_X + i as f64 * (NODE_W + GAP);
+        let ny     = PAD_Y + row as f64 * ROW_H;
+        let color  = node.kind.color();
         let border = node.kind.border_color();
+        let lx     = nx + NODE_W / 2.0;
 
-        // Node box
-        s += &format!(
-            r##"<rect x="{nx:.1}" y="{ny:.1}" width="{NODE_W}" height="{NODE_H}" fill="#282a36" stroke="{border}" stroke-width="1.5" rx="6"/>"##
-        );
-        // Colored top bar
-        s += &format!(
-            r##"<rect x="{nx:.1}" y="{ny:.1}" width="{NODE_W}" height="4" fill="{color}" rx="3"/>"##
-        );
+        s += &format!(r##"<rect x="{nx:.1}" y="{ny:.1}" width="{NODE_W}" height="{NODE_H}" fill="#282a36" stroke="{border}" stroke-width="1.5" rx="6"/>"##);
+        s += &format!(r##"<rect x="{nx:.1}" y="{ny:.1}" width="{NODE_W}" height="4" fill="{color}" rx="3"/>"##);
 
-        // Label text (centered, possibly two lines)
-        let lx = nx + NODE_W / 2.0;
         if node.sublabel.is_empty() {
-            s += &format!(
-                r##"<text x="{lx:.1}" y="{:.1}" font-size="11" font-weight="600" text-anchor="middle" fill="{color}">{}</text>"##,
-                ny + 26.0, node.label
-            );
+            s += &format!(r##"<text x="{lx:.1}" y="{:.1}" font-size="11" font-weight="600" text-anchor="middle" fill="{color}">{}</text>"##, ny + 28.0, node.label);
         } else {
-            s += &format!(
-                r##"<text x="{lx:.1}" y="{:.1}" font-size="11" font-weight="600" text-anchor="middle" fill="{color}">{}</text>"##,
-                ny + 21.0, node.label
-            );
-            s += &format!(
-                r##"<text x="{lx:.1}" y="{:.1}" font-size="9" text-anchor="middle" class="flow-sub">{}</text>"##,
-                ny + 33.0, node.sublabel
-            );
+            s += &format!(r##"<text x="{lx:.1}" y="{:.1}" font-size="11" font-weight="600" text-anchor="middle" fill="{color}">{}</text>"##, ny + 22.0, node.label);
+            s += &format!(r##"<text x="{lx:.1}" y="{:.1}" font-size="9" text-anchor="middle" class="flow-sub">{}</text>"##, ny + 34.0, node.sublabel);
         }
-        // Time stamp at bottom of node
-        s += &format!(
-            r##"<text x="{lx:.1}" y="{:.1}" font-size="8" text-anchor="middle" class="flow-sub">{}</text>"##,
-            ny + NODE_H - 7.0, node.time_str
-        );
+        s += &format!(r##"<text x="{lx:.1}" y="{:.1}" font-size="8" text-anchor="middle" class="flow-sub">{}</text>"##, ny + NODE_H - 6.0, node.time_str);
     }
 
-    s += "</svg>";
-    s
+    s += "</svg>"; s
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
+
+const PAGE_SIZE: usize = 100;
+
+#[derive(Clone, Copy, PartialEq)]
+enum SortCol { Time, RfqQuote, QuoteNos, NosEr, NosErFill, Duration }
 
 #[component]
 pub fn lifecycle_panel(
     messages: Signal<Vec<FixMessage>>,
     selected_idx: Signal<Option<usize>>,
 ) -> Element {
-    let mut selected_flow_id: Signal<Option<String>> = use_signal(|| None);
+    // ── Signals ──
+    let mut filter_sym:    Signal<String> = use_signal(String::new);
+    let mut filter_status: Signal<String> = use_signal(|| "All".to_string());
+    let selected_chain: Signal<Option<String>> = use_signal(|| None);
+    let mut sort_col: Signal<SortCol> = use_signal(|| SortCol::Time);
+    let mut sort_asc: Signal<bool>    = use_signal(|| true);
+    let expanded_phase: Signal<Option<u8>>                        = use_signal(|| None);
+    let drill_band:     Signal<Option<(SortCol, i64, i64)>>       = use_signal(|| None);
 
-    let data    = use_memo(move || build_latency_data(&messages.read()));
-    let stats   = use_memo(move || compute_stats(&data.read()));
-    let syms    = use_memo(move || compute_symbol_stats(&data.read()));
-    let hist    = use_memo(move || render_histogram(&data.read()));
-    let scatter = use_memo(move || render_scatter(&data.read()));
+    // ── Memos ──
+    let chains  = use_memo(move || build_lifecycle_chains(&messages.read()));
 
-    // Build flow SVG only when an order is selected
-    let flow_svg = use_memo(move || {
-        if let Some(id) = selected_flow_id.read().as_deref() {
-            let nodes = build_order_flow(&messages.read(), id);
-            render_flow_svg(&nodes)
+    // Per-phase latency extractions
+    let rfq_quote_lats  = use_memo(move || chains.read().iter().filter_map(|c| c.rfq_to_quote_us).collect::<Vec<_>>());
+    let quote_nos_lats  = use_memo(move || chains.read().iter().filter_map(|c| c.quote_to_nos_us).collect::<Vec<_>>());
+    let nos_er_lats     = use_memo(move || chains.read().iter().filter_map(|c| c.nos_to_ack_us).collect::<Vec<_>>());
+    let er_fill_lats    = use_memo(move || chains.read().iter().filter_map(|c| c.nos_to_fill_us).collect::<Vec<_>>());
+
+    // Per-phase stats + charts
+    let rfq_quote_stats = use_memo(move || compute_phase_stats(&rfq_quote_lats.read()));
+    let quote_nos_stats = use_memo(move || compute_phase_stats(&quote_nos_lats.read()));
+    let nos_er_stats    = use_memo(move || compute_phase_stats(&nos_er_lats.read()));
+    let er_fill_stats   = use_memo(move || compute_phase_stats(&er_fill_lats.read()));
+    let rfq_quote_hist  = use_memo(move || render_histogram(&rfq_quote_lats.read()));
+    let quote_nos_hist  = use_memo(move || render_histogram(&quote_nos_lats.read()));
+    let nos_er_hist     = use_memo(move || render_histogram(&nos_er_lats.read()));
+    let er_fill_hist    = use_memo(move || render_histogram(&er_fill_lats.read()));
+
+    // Filtered + sorted chain list (capped at PAGE_SIZE for rendering)
+    let filtered = use_memo(move || {
+        let c     = chains.read();
+        let sym_f = filter_sym.read().to_lowercase();
+        let st_f  = filter_status.read().clone();
+        let col   = *sort_col.read();
+        let asc   = *sort_asc.read();
+        let drill = *drill_band.read();
+        let mut v: Vec<LifecycleChain> = c.iter().filter(|ch| {
+            if !sym_f.is_empty() && !ch.symbol.to_lowercase().contains(sym_f.as_str()) { return false; }
+            match st_f.as_str() {
+                "Filled"    => matches!(ch.final_status, FinalStatus::Filled),
+                "Partial"   => matches!(ch.final_status, FinalStatus::PartialFill),
+                "Cancelled" => matches!(ch.final_status, FinalStatus::Cancelled),
+                "Rejected"  => matches!(ch.final_status, FinalStatus::Rejected),
+                "Open"      => matches!(ch.final_status, FinalStatus::Open),
+                _           => true,
+            }
+        }).cloned().collect();
+        let get_lat = |ch: &LifecycleChain, dc: SortCol| match dc {
+            SortCol::RfqQuote  => ch.rfq_to_quote_us,
+            SortCol::QuoteNos  => ch.quote_to_nos_us,
+            SortCol::NosEr     => ch.nos_to_ack_us,
+            SortCol::NosErFill => ch.nos_to_fill_us,
+            _                  => None,
+        };
+        if let Some((dc, lo, hi)) = drill {
+            // Drill-band: filter to the percentile window and sort worst-first
+            v.retain(|ch| get_lat(ch, dc).map(|l| l >= lo && l <= hi).unwrap_or(false));
+            v.sort_by(|a, b| get_lat(b, dc).unwrap_or(0).cmp(&get_lat(a, dc).unwrap_or(0)));
         } else {
-            String::new()
+            v.sort_by(|a, b| {
+                let ord = match col {
+                    SortCol::Time      => a.first_time_us.cmp(&b.first_time_us),
+                    SortCol::RfqQuote  => cmp_opt(a.rfq_to_quote_us, b.rfq_to_quote_us),
+                    SortCol::QuoteNos  => cmp_opt(a.quote_to_nos_us, b.quote_to_nos_us),
+                    SortCol::NosEr     => cmp_opt(a.nos_to_ack_us,   b.nos_to_ack_us),
+                    SortCol::NosErFill => cmp_opt(a.nos_to_fill_us,  b.nos_to_fill_us),
+                    SortCol::Duration  => a.total_us.cmp(&b.total_us),
+                };
+                if asc { ord } else { ord.reverse() }
+            });
         }
+        v
     });
 
-    // Install zoom/pan on flow chart whenever flow_svg changes
-    use_effect(move || {
-        let svg = flow_svg.read().clone();
-        if !svg.is_empty() {
-            use dioxus::document::eval;
-            eval(r##"
-                (function() {
-                    var wrap = document.getElementById('flow-wrap');
-                    if (!wrap) return;
-                    var scale = 1, tx = 0, ty = 0, dragging = false, startX = 0, startY = 0;
-                    function apply() {
-                        wrap.style.transform = 'translate('+tx+'px,'+ty+'px) scale('+scale+')';
-                        wrap.style.transformOrigin = '0 0';
-                    }
-                    wrap.onwheel = function(e) {
-                        e.preventDefault();
-                        var rect = wrap.parentElement.getBoundingClientRect();
-                        var mx = e.clientX - rect.left, my = e.clientY - rect.top;
-                        var factor = e.deltaY < 0 ? 1.12 : 0.89;
-                        tx = mx - (mx - tx) * factor;
-                        ty = my - (my - ty) * factor;
-                        scale = Math.min(Math.max(scale * factor, 0.25), 4);
-                        apply();
-                    };
-                    wrap.onmousedown = function(e) {
-                        dragging = true; startX = e.clientX - tx; startY = e.clientY - ty;
-                    };
-                    window.addEventListener('mousemove', function(e) {
-                        if (!dragging) return;
-                        tx = e.clientX - startX; ty = e.clientY - startY; apply();
-                    });
-                    window.addEventListener('mouseup', function() { dragging = false; });
-                })();
-            "##);
+    // Inline timeline for selected chain
+    let timeline_nodes: Memo<Vec<FlowNode>> = use_memo(move || {
+        let sel = selected_chain.read();
+        if let Some(ref id) = *sel {
+            let c = chains.read();
+            if let Some(ch) = c.iter().find(|c| &c.chain_id == id) {
+                return build_chain_flow(&messages.read(), ch);
+            }
         }
+        Vec::new()
     });
 
-    let orders    = data.read();
-    let st        = stats.read();
-    let sym_list  = syms.read();
-    let hist_svg  = hist.read().clone();
-    let scat_svg  = scatter.read().clone();
-    let flow_svg_snap = flow_svg.read().clone();
+    // ── Snapshot reads for RSX ──
+    let chains_snap        = chains.read();
+    let filtered_snap      = filtered.read();
+    let timeline_snap      = timeline_nodes.read().clone();
+    let sel_id             = selected_chain.read().clone();
+    let filter_sym_val     = filter_sym.read().clone();
+    let filter_st_val      = filter_status.read().clone();
+    let sort_col_val       = *sort_col.read();
+    let sort_asc_val       = *sort_asc.read();
 
-    let stats_snap: Option<LatencyStats> = (*st).clone();
+    let rq_stats  = rfq_quote_stats.read().clone();
+    let qn_stats  = quote_nos_stats.read().clone();
+    let ne_stats  = nos_er_stats.read().clone();
+    let ef_stats  = er_fill_stats.read().clone();
+    let rq_hist   = rfq_quote_hist.read().clone();
+    let qn_hist   = quote_nos_hist.read().clone();
+    let ne_hist   = nos_er_hist.read().clone();
+    let ef_hist   = er_fill_hist.read().clone();
+    let expanded_phase_val = *expanded_phase.read();
+    let drill_band_val     = *drill_band.read();
 
-    let header_meta = match &stats_snap {
-        Some(s) => format!(
-            "{} orders  ·  {} with ACK  ·  {:.1}% coverage",
-            s.total_orders,
-            s.orders_with_ack,
-            s.orders_with_ack as f64 / s.total_orders.max(1) as f64 * 100.0,
-        ),
-        None => format!("{} order groups — no timestamp data found", orders.len()),
+    let total_chains   = chains_snap.len();
+    let rfq_chains     = chains_snap.iter().filter(|c| c.has_rfq).count();
+    let filtered_count = filtered_snap.len();
+    let shown          = filtered_snap.len().min(PAGE_SIZE);
+
+    let header_meta = format!(
+        "{} chains · {} RFQ ({:.0}%) · {} NOS→ER · {} ER→Fill",
+        total_chains, rfq_chains,
+        rfq_chains as f64 / total_chains.max(1) as f64 * 100.0,
+        rq_stats.as_ref().map(|s| s.count).unwrap_or(0),
+        ef_stats.as_ref().map(|s| s.count).unwrap_or(0),
+    );
+
+    // ── Active phase detail (precomputed for RSX) ────────────────────────
+    let active_hist_html: String = match expanded_phase_val {
+        Some(0) => rq_hist.clone(),
+        Some(1) => qn_hist.clone(),
+        Some(2) => ne_hist.clone(),
+        Some(3) => ef_hist.clone(),
+        _       => String::new(),
     };
-    let sym_count = sym_list.len();
-
-    let mut top_slow: Vec<OrderLatency> = orders.iter()
-        .filter(|o| o.ack_latency_us.is_some())
-        .cloned()
-        .collect();
-    top_slow.sort_by(|a, b| b.ack_latency_us.cmp(&a.ack_latency_us));
-    top_slow.truncate(20);
-    let top_slow_len = top_slow.len();
-
-    let selected_id_snap: Option<String> = (*selected_flow_id.read()).clone();
+    let active_stats: Option<PhaseStats> = match expanded_phase_val {
+        Some(0) => rq_stats.clone(),
+        Some(1) => qn_stats.clone(),
+        Some(2) => ne_stats.clone(),
+        Some(3) => ef_stats.clone(),
+        _       => None,
+    };
+    let active_drill_col: SortCol = match expanded_phase_val {
+        Some(1) => SortCol::QuoteNos,
+        Some(2) => SortCol::NosEr,
+        Some(3) => SortCol::NosErFill,
+        _       => SortCol::RfqQuote,
+    };
+    let (dp50, dp95, dp99) = active_stats.as_ref()
+        .map(|s| (s.p50_us, s.p95_us, s.p99_us))
+        .unwrap_or((0, 0, 0));
+    let adc = active_drill_col;
+    let active_min_str  = active_stats.as_ref().map(|s| fmt_us(s.min_us)).unwrap_or_else(|| "—".into());
+    let active_mean_str = active_stats.as_ref().map(|s| fmt_us(s.mean_us as i64)).unwrap_or_else(|| "—".into());
+    let active_p50_str  = active_stats.as_ref().map(|s| fmt_us(s.p50_us)).unwrap_or_else(|| "—".into());
+    let active_p95_str  = active_stats.as_ref().map(|s| fmt_us(s.p95_us)).unwrap_or_else(|| "—".into());
+    let active_p99_str  = active_stats.as_ref().map(|s| fmt_us(s.p99_us)).unwrap_or_else(|| "—".into());
+    let active_max_str  = active_stats.as_ref().map(|s| fmt_us(s.max_us)).unwrap_or_else(|| "—".into());
+    let active_count    = active_stats.as_ref().map(|s| s.count).unwrap_or(0);
+    let drill_desc: Option<String> = drill_band_val.map(|(col, lo, hi)| {
+        let phase = match col {
+            SortCol::RfqQuote  => "RFQ→Quote",
+            SortCol::QuoteNos  => "Quote→NOS",
+            SortCol::NosEr     => "NOS→ER",
+            SortCol::NosErFill => "ER→Fill",
+            _                  => "latency",
+        };
+        if hi >= i64::MAX / 2 {
+            format!("Outliers ≥P99  (≥{})  ·  {}  ·  {} chains", fmt_us(lo), phase, filtered_count)
+        } else {
+            format!("{} – {}  ·  {}  ·  {} chains", fmt_us(lo), fmt_us(hi), phase, filtered_count)
+        }
+    });
 
     rsx! {
         div { class: "latency-panel",
 
-            // ── Header ──
+            // ── Header ──────────────────────────────────────────────────────
             div { class: "latency-header",
                 div { class: "latency-header-left",
-                    h2 { class: "latency-title", "Trade Latency Analysis" }
+                    h2 { class: "latency-title", "Trade Lifecycle Reconstructor" }
                     span { class: "latency-header-meta", "{header_meta}" }
                 }
             }
 
-            if let Some(s) = &stats_snap {
+            // ── Phase Overview: 4 cards + expandable detail ─────────────────
+            div { class: "latency-section phase-overview-wrap",
 
-                // ── Summary stat cards ──
-                div { class: "latency-section",
-                    div { class: "latency-section-title", "SUMMARY STATISTICS" }
-                    div { class: "latency-stat-row",
-                        div { class: "latency-stat-item latency-stat-green",
-                            div { class: "latency-stat-val", "{fmt_us(s.min_us)}" }
-                            div { class: "latency-stat-lbl", "Min" }
-                        }
-                        div { class: "latency-stat-item latency-stat-cyan",
-                            div { class: "latency-stat-val", "{fmt_us(s.mean_us as i64)}" }
-                            div { class: "latency-stat-lbl", "Mean" }
-                        }
-                        div { class: "latency-stat-item latency-stat-cyan",
-                            div { class: "latency-stat-val", "{fmt_us(s.p50_us)}" }
-                            div { class: "latency-stat-lbl", "P50" }
-                        }
-                        div { class: "latency-stat-item latency-stat-yellow",
-                            div { class: "latency-stat-val", "{fmt_us(s.p95_us)}" }
-                            div { class: "latency-stat-lbl", "P95" }
-                        }
-                        div { class: "latency-stat-item latency-stat-orange",
-                            div { class: "latency-stat-val", "{fmt_us(s.p99_us)}" }
-                            div { class: "latency-stat-lbl", "P99" }
-                        }
-                        div { class: "latency-stat-item latency-stat-red",
-                            div { class: "latency-stat-val", "{fmt_us(s.max_us)}" }
-                            div { class: "latency-stat-lbl", "Max" }
-                        }
-                    }
-                }
-
-                // ── Histogram ──
-                div { class: "latency-section",
-                    div { class: "latency-section-title", "ACK LATENCY DISTRIBUTION" }
-                    div { class: "latency-chart-sub",
-                        "Count of orders per latency bucket — NewOrder → first Execution Report"
-                    }
-                    div { class: "latency-chart-wrap",
-                        dangerous_inner_html: "{hist_svg}",
-                    }
-                }
-
-                // ── Scatter plot ──
-                div { class: "latency-section",
-                    div { class: "latency-section-title", "LATENCY SCATTER PLOT" }
-                    div { class: "latency-chart-sub",
-                        "Each point = one order · Y = ACK latency · capped at P99 · outliers faded"
-                    }
-                    div { class: "latency-chart-wrap",
-                        dangerous_inner_html: "{scat_svg}",
-                    }
-                }
-
-                // ── Per-symbol breakdown ──
-                if !sym_list.is_empty() {
-                    div { class: "latency-section",
-                        div { class: "latency-section-title",
-                            "PER-SYMBOL BREAKDOWN"
-                            span { class: "latency-section-sub", " (top {sym_count} by order count)" }
-                        }
-                        div { class: "table-wrap",
-                            div { class: "tbl-header",
-                                div { class: "tbl-sym-row",
-                                    span { "Symbol" }
-                                    span { "Orders" }
-                                    span { "ACK %" }
-                                    span { "Mean" }
-                                    span { "P95" }
-                                    span { "Min" }
-                                    span { "Max" }
-                                }
+                // Row of 4 clickable phase cards
+                div { class: "phase-cards-row",
+                    // RFQ → QUOTE
+                    {
+                        let active = expanded_phase_val == Some(0);
+                        let cls    = if active { "phase-card phase-card-active" } else { "phase-card" };
+                        let health = rq_stats.as_ref().map(|s| latency_health(s.p50_us)).unwrap_or("health-none");
+                        let p50_s  = rq_stats.as_ref().map(|s| fmt_us(s.p50_us)).unwrap_or_else(|| "—".into());
+                        let cnt_s  = rq_stats.as_ref().map(|s| format!("{}", s.count)).unwrap_or_else(|| "—".into());
+                        rsx! {
+                            div { class: "{cls}",
+                                onclick: move |_| {
+                                    let mut ep = expanded_phase;
+                                    ep.set(if *ep.read() == Some(0) { None } else { Some(0) });
+                                    let mut db = drill_band; db.set(None);
+                                },
+                                div { class: "phase-card-label", "RFQ → QUOTE" }
+                                div { class: "phase-card-p50 {health}", "{p50_s}" }
+                                div { class: "phase-card-sub", "P50  ·  {cnt_s} obs" }
+                                span { class: "phase-card-caret", if active { "▲" } else { "▼" } }
                             }
-                            div { class: "tbl-body latency-tbl-body",
-                                {sym_list.iter().map(|sym| {
-                                    let ack_pct = format!("{:.0}%", sym.with_ack as f64 / sym.total.max(1) as f64 * 100.0);
-                                    rsx! {
-                                        div { class: "tbl-row tbl-sym-row",
-                                            span { class: "lc-symbol", "{sym.symbol}" }
-                                            span { class: "lc-qty", "{sym.total}" }
-                                            span { class: "lc-count", "{ack_pct}" }
-                                            span { class: "latency-cell-mean", "{fmt_us(sym.mean_us as i64)}" }
-                                            span { class: "latency-cell-p95", "{fmt_us(sym.p95_us)}" }
-                                            span { class: "latency-cell-min", "{fmt_us(sym.min_us)}" }
-                                            span { class: "latency-cell-max", "{fmt_us(sym.max_us)}" }
-                                        }
+                        }
+                    }
+                    // QUOTE → NOS
+                    {
+                        let active = expanded_phase_val == Some(1);
+                        let cls    = if active { "phase-card phase-card-active" } else { "phase-card" };
+                        let health = qn_stats.as_ref().map(|s| latency_health(s.p50_us)).unwrap_or("health-none");
+                        let p50_s  = qn_stats.as_ref().map(|s| fmt_us(s.p50_us)).unwrap_or_else(|| "—".into());
+                        let cnt_s  = qn_stats.as_ref().map(|s| format!("{}", s.count)).unwrap_or_else(|| "—".into());
+                        rsx! {
+                            div { class: "{cls}",
+                                onclick: move |_| {
+                                    let mut ep = expanded_phase;
+                                    ep.set(if *ep.read() == Some(1) { None } else { Some(1) });
+                                    let mut db = drill_band; db.set(None);
+                                },
+                                div { class: "phase-card-label", "QUOTE → NOS" }
+                                div { class: "phase-card-p50 {health}", "{p50_s}" }
+                                div { class: "phase-card-sub", "P50  ·  {cnt_s} obs" }
+                                span { class: "phase-card-caret", if active { "▲" } else { "▼" } }
+                            }
+                        }
+                    }
+                    // NOS → ER
+                    {
+                        let active = expanded_phase_val == Some(2);
+                        let cls    = if active { "phase-card phase-card-active" } else { "phase-card" };
+                        let health = ne_stats.as_ref().map(|s| latency_health(s.p50_us)).unwrap_or("health-none");
+                        let p50_s  = ne_stats.as_ref().map(|s| fmt_us(s.p50_us)).unwrap_or_else(|| "—".into());
+                        let cnt_s  = ne_stats.as_ref().map(|s| format!("{}", s.count)).unwrap_or_else(|| "—".into());
+                        rsx! {
+                            div { class: "{cls}",
+                                onclick: move |_| {
+                                    let mut ep = expanded_phase;
+                                    ep.set(if *ep.read() == Some(2) { None } else { Some(2) });
+                                    let mut db = drill_band; db.set(None);
+                                },
+                                div { class: "phase-card-label", "NOS → ER" }
+                                div { class: "phase-card-p50 {health}", "{p50_s}" }
+                                div { class: "phase-card-sub", "P50  ·  {cnt_s} obs" }
+                                span { class: "phase-card-caret", if active { "▲" } else { "▼" } }
+                            }
+                        }
+                    }
+                    // ER → FILL
+                    {
+                        let active = expanded_phase_val == Some(3);
+                        let cls    = if active { "phase-card phase-card-active" } else { "phase-card" };
+                        let health = ef_stats.as_ref().map(|s| latency_health(s.p50_us)).unwrap_or("health-none");
+                        let p50_s  = ef_stats.as_ref().map(|s| fmt_us(s.p50_us)).unwrap_or_else(|| "—".into());
+                        let cnt_s  = ef_stats.as_ref().map(|s| format!("{}", s.count)).unwrap_or_else(|| "—".into());
+                        rsx! {
+                            div { class: "{cls}",
+                                onclick: move |_| {
+                                    let mut ep = expanded_phase;
+                                    ep.set(if *ep.read() == Some(3) { None } else { Some(3) });
+                                    let mut db = drill_band; db.set(None);
+                                },
+                                div { class: "phase-card-label", "ER → FILL" }
+                                div { class: "phase-card-p50 {health}", "{p50_s}" }
+                                div { class: "phase-card-sub", "P50  ·  {cnt_s} obs" }
+                                span { class: "phase-card-caret", if active { "▲" } else { "▼" } }
+                            }
+                        }
+                    }
+                }
+
+                // Expanded detail panel
+                if expanded_phase_val.is_some() && active_stats.is_some() {
+                    div { class: "phase-detail",
+                        div { class: "phase-detail-meta",
+                            span { class: "phase-detail-count", "{active_count} observations" }
+                            span { class: "phase-detail-hint", "● click P50 · P95 · P99 to filter the chain table" }
+                        }
+                        div { class: "latency-chart-wrap phase-hist-full",
+                            dangerous_inner_html: "{active_hist_html}"
+                        }
+                        div { class: "phase-stats-table",
+                            // Min (not clickable — it's a single extreme value)
+                            div { class: "phase-stat-cell phase-stat-green",
+                                div { class: "phase-stat-val", "{active_min_str}" }
+                                div { class: "phase-stat-lbl", "Min" }
+                            }
+                            // Mean (not clickable)
+                            div { class: "phase-stat-cell phase-stat-cyan",
+                                div { class: "phase-stat-val", "{active_mean_str}" }
+                                div { class: "phase-stat-lbl", "Mean" }
+                            }
+                            // P50 → shows orders in [P50, P95)
+                            {
+                                let is_active = drill_band_val.map(|(c,lo,_)| c == adc && lo == dp50).unwrap_or(false);
+                                let cls = if is_active { "phase-stat-cell phase-stat-cyan phase-stat-drill phase-stat-drilling" }
+                                          else { "phase-stat-cell phase-stat-cyan phase-stat-drill" };
+                                rsx! {
+                                    div { class: "{cls}", title: "Show typical orders (P50 – P95)",
+                                        onclick: move |_| { let mut db = drill_band; db.set(Some((adc, dp50, dp95))); },
+                                        div { class: "phase-stat-val", "{active_p50_str}" }
+                                        div { class: "phase-stat-lbl", "P50  ●" }
                                     }
-                                })}
+                                }
+                            }
+                            // P95 → shows orders in [P95, P99)
+                            {
+                                let is_active = drill_band_val.map(|(c,lo,_)| c == adc && lo == dp95).unwrap_or(false);
+                                let cls = if is_active { "phase-stat-cell phase-stat-yellow phase-stat-drill phase-stat-drilling" }
+                                          else { "phase-stat-cell phase-stat-yellow phase-stat-drill" };
+                                rsx! {
+                                    div { class: "{cls}", title: "Show slow orders (P95 – P99)",
+                                        onclick: move |_| { let mut db = drill_band; db.set(Some((adc, dp95, dp99))); },
+                                        div { class: "phase-stat-val", "{active_p95_str}" }
+                                        div { class: "phase-stat-lbl", "P95  ●" }
+                                    }
+                                }
+                            }
+                            // P99 → shows outliers (≥ P99)
+                            {
+                                let is_active = drill_band_val.map(|(c,lo,_)| c == adc && lo == dp99).unwrap_or(false);
+                                let cls = if is_active { "phase-stat-cell phase-stat-orange phase-stat-drill phase-stat-drilling" }
+                                          else { "phase-stat-cell phase-stat-orange phase-stat-drill" };
+                                rsx! {
+                                    div { class: "{cls}", title: "Show outlier orders (≥ P99)",
+                                        onclick: move |_| { let mut db = drill_band; db.set(Some((adc, dp99, i64::MAX))); },
+                                        div { class: "phase-stat-val", "{active_p99_str}" }
+                                        div { class: "phase-stat-lbl", "P99  ●" }
+                                    }
+                                }
+                            }
+                            // Max (not clickable)
+                            div { class: "phase-stat-cell phase-stat-red",
+                                div { class: "phase-stat-val", "{active_max_str}" }
+                                div { class: "phase-stat-lbl", "Max" }
                             }
                         }
                     }
                 }
+            }
 
-                // ── Top slowest orders ──
-                if !top_slow.is_empty() {
-                    div { class: "latency-section",
-                        div { class: "latency-section-title",
-                            "TOP {top_slow_len} SLOWEST ORDERS"
-                            span { class: "latency-section-sub", " — click a row to view its lifecycle flow" }
+            // ── Lifecycle Reconstructor ──────────────────────────────────────
+            div { class: "latency-section",
+                div { class: "latency-section-title",
+                    "LIFECYCLE RECONSTRUCTOR"
+                    span { class: "latency-section-sub",
+                        " — {filtered_count} chains · showing {shown} · click a row to view timeline"
+                    }
+                }
+
+                // Drill-down banner (shown when a percentile cell is active)
+                if let Some(ref desc) = drill_desc {
+                    div { class: "drill-banner",
+                        span { "{desc}" }
+                        span {
+                            class: "drill-banner-clear",
+                            title: "Clear filter",
+                            onclick: move |_| { let mut db = drill_band; db.set(None); },
+                            "×"
                         }
-                        div { class: "table-wrap",
-                            div { class: "tbl-header",
-                                div { class: "tbl-slow-row",
-                                    span { "ClOrdID" }
-                                    span { "Symbol" }
-                                    span { "Side" }
-                                    span { "ACK" }
-                                    span { "Fill" }
-                                    span { "Msgs" }
-                                    span { "Time" }
+                    }
+                }
+
+                // Filter bar
+                div { class: "recon-filter-bar",
+                    input {
+                        class: "recon-filter-input",
+                        r#type: "text",
+                        placeholder: "Filter by symbol…",
+                        value: "{filter_sym_val}",
+                        oninput: move |e| filter_sym.set(e.value()),
+                    }
+                    {
+                        const STATUSES: &[&str] = &["All", "Filled", "Partial", "Cancelled", "Rejected", "Open"];
+                        STATUSES.iter().map(|&st| {
+                            let active = filter_st_val == st;
+                            let cls = if active { "recon-filter-btn recon-filter-btn-active" } else { "recon-filter-btn" };
+                            let st_s = st.to_string();
+                            rsx! {
+                                button {
+                                    class: "{cls}",
+                                    onclick: move |_| filter_status.set(st_s.clone()),
+                                    "{st}"
                                 }
                             }
-                            div { class: "tbl-body latency-tbl-body",
-                                {top_slow.iter().map(|o| {
-                                    let ack = o.ack_latency_us.map(fmt_us).unwrap_or_else(|| "—".into());
-                                    let fill = o.fill_latency_us.map(fmt_us).unwrap_or_else(|| "—".into());
-                                    let ack_class = match o.ack_latency_us {
-                                        Some(l) if l < 1_000   => "latency-cell-min",
-                                        Some(l) if l < 10_000  => "latency-cell-mean",
-                                        Some(l) if l < 100_000 => "latency-cell-p95",
-                                        _                       => "latency-cell-max",
+                        })
+                    }
+                }
+
+                // Chain table
+                if filtered_snap.is_empty() {
+                    div { class: "latency-empty",
+                        div { class: "latency-empty-icon", "🔍" }
+                        p { class: "latency-empty-title", "No matching chains" }
+                    }
+                } else {
+                    div { class: "table-wrap",
+                        div { class: "tbl-header",
+                            div { class: "tbl-chain-row",
+                                span { "Chain ID" }
+                                span { "Symbol" }
+                                span { "Side" }
+                                span { "Type" }
+                                span { "Status" }
+                                {
+                                    let mk_hdr = |col: SortCol, label: &'static str| {
+                                        let active = sort_col_val == col;
+                                        let cls = if active { "lc-sort-hdr lc-sort-hdr-active" } else { "lc-sort-hdr" };
+                                        let arrow = if active { if sort_asc_val { " ▲" } else { " ▼" } } else { "" };
+                                        rsx! {
+                                            span {
+                                                class: "{cls}",
+                                                onclick: move |_| {
+                                                    if *sort_col.read() == col {
+                                                        let cur = *sort_asc.read();
+                                                        sort_asc.set(!cur);
+                                                    } else {
+                                                        sort_col.set(col);
+                                                        sort_asc.set(true);
+                                                    }
+                                                },
+                                                "{label}{arrow}"
+                                            }
+                                        }
                                     };
-                                    let is_sel = selected_id_snap.as_deref() == Some(o.cl_ord_id.as_str());
-                                    let row_class = if is_sel { "tbl-row tbl-slow-row flow-row-selected" } else { "tbl-row tbl-slow-row flow-row-clickable" };
-                                    let id = o.cl_ord_id.clone();
                                     rsx! {
-                                        div {
-                                            class: "{row_class}",
-                                            onclick: move |_| {
-                                                let mut sf = selected_flow_id;
-                                                if sf.read().as_deref() == Some(id.as_str()) {
-                                                    sf.set(None);
+                                        {mk_hdr(SortCol::RfqQuote,  "RFQ→Quote")}
+                                        {mk_hdr(SortCol::QuoteNos,  "Quote→NOS")}
+                                        {mk_hdr(SortCol::NosEr,     "NOS→ER")}
+                                        {mk_hdr(SortCol::NosErFill, "ER→ER Filled")}
+                                        {mk_hdr(SortCol::Duration,  "Duration")}
+                                    }
+                                }
+                                span { "Msgs" }
+                            }
+                        }
+                        div { class: "tbl-body latency-tbl-body",
+                            {filtered_snap.iter().take(PAGE_SIZE).map(|ch| {
+                                let is_sel   = sel_id.as_deref() == Some(ch.chain_id.as_str());
+                                let row_cls  = if is_sel { "tbl-row tbl-chain-row flow-row-selected" } else { "tbl-row tbl-chain-row flow-row-clickable" };
+                                let type_lbl = if ch.has_rfq { "RFQ" } else { "Direct" };
+                                let type_cls = if ch.has_rfq { "chain-type-rfq" } else { "chain-type-direct" };
+                                let st_lbl   = ch.final_status.label();
+                                let st_cls   = ch.final_status.css_class();
+                                let rfq_q    = ch.rfq_to_quote_us.map(fmt_us).unwrap_or_else(|| "—".into());
+                                let qte_nos  = ch.quote_to_nos_us.map(fmt_us).unwrap_or_else(|| "—".into());
+                                let nos_ack  = ch.nos_to_ack_us.map(fmt_us).unwrap_or_else(|| "—".into());
+                                let nos_fill = ch.nos_to_fill_us.map(fmt_us).unwrap_or_else(|| "—".into());
+                                let dur      = if ch.total_us > 0 { fmt_us(ch.total_us) } else { "—".into() };
+                                let ack_cls  = match ch.nos_to_ack_us {
+                                    Some(l) if l < 1_000   => "latency-cell-min",
+                                    Some(l) if l < 10_000  => "latency-cell-mean",
+                                    Some(l) if l < 100_000 => "latency-cell-p95",
+                                    Some(_)                => "latency-cell-max",
+                                    None                   => "lc-time",
+                                };
+                                let chain_id = ch.chain_id.clone();
+                                let id_short = if ch.chain_id.len() > 14 { &ch.chain_id[..14] } else { ch.chain_id.as_str() };
+                                let tl_lines = if is_sel { build_timeline_lines(&timeline_snap) } else { Vec::new() };
+                                rsx! {
+                                    div {
+                                        class: "{row_cls}",
+                                        onclick: move |_| {
+                                            let mut sc = selected_chain;
+                                            if sc.read().as_deref() == Some(chain_id.as_str()) {
+                                                sc.set(None);
+                                            } else {
+                                                sc.set(Some(chain_id.clone()));
+                                            }
+                                        },
+                                        span { class: "lc-clordid",    title: "{ch.chain_id}", "{id_short}" }
+                                        span { class: "lc-symbol",     "{ch.symbol}" }
+                                        span { class: "lc-side",       "{ch.side}" }
+                                        span { class: "{type_cls}",    "{type_lbl}" }
+                                        span { class: "{st_cls}",      "{st_lbl}" }
+                                        span { class: "lc-time",       "{rfq_q}" }
+                                        span { class: "lc-time",       "{qte_nos}" }
+                                        span { class: "{ack_cls}",     "{nos_ack}" }
+                                        span { class: "latency-cell-mean", "{nos_fill}" }
+                                        span { class: "lc-time",       "{dur}" }
+                                        span { class: "lc-count",      "{ch.msg_count}" }
+                                    }
+                                    if is_sel && !tl_lines.is_empty() {
+                                        div { class: "chain-inline-expand",
+                                            {tl_lines.into_iter().map(|line| {
+                                                let indent_px = line.indent as u32 * 152;
+                                                let indent_style = if indent_px > 0 {
+                                                    format!("padding-left: {}px", indent_px)
                                                 } else {
-                                                    sf.set(Some(id.clone()));
+                                                    String::new()
+                                                };
+                                                rsx! {
+                                                    div { class: "cit-line", style: "{indent_style}",
+                                                        {line.segs.into_iter().map(|seg| {
+                                                            let arrow = if !seg.first {
+                                                                format!(" ──{}──► ", fmt_us_short(seg.delta_us))
+                                                            } else {
+                                                                String::new()
+                                                            };
+                                                            let cancel_pfx = if seg.is_cancel { "└─ " } else { "" };
+                                                            let sub = if !seg.sublabel.is_empty() {
+                                                                format!(" {}", seg.sublabel)
+                                                            } else {
+                                                                String::new()
+                                                            };
+                                                            let color = seg.color;
+                                                            rsx! {
+                                                                if !arrow.is_empty() {
+                                                                    span { class: "cit-arrow", "{cancel_pfx}{arrow}" }
+                                                                }
+                                                                span {
+                                                                    class: "cit-node",
+                                                                    style: "color: {color}; border-color: {color}",
+                                                                    "[{seg.label}{sub}]"
+                                                                }
+                                                            }
+                                                        })}
+                                                    }
                                                 }
-                                            },
-                                            span { class: "lc-clordid", "{o.cl_ord_id}" }
-                                            span { class: "lc-symbol",  "{o.symbol}" }
-                                            span { class: "lc-side",    "{o.side}" }
-                                            span { class: "{ack_class}", "{ack}" }
-                                            span { class: "latency-cell-mean", "{fill}" }
-                                            span { class: "lc-count",  "{o.msg_count}" }
-                                            span { class: "lc-time",   "{o.first_time}" }
+                                            })}
                                         }
                                     }
-                                })}
-                            }
+                                }
+                            })}
+                        }
+                    }
+
+                    if filtered_count > PAGE_SIZE {
+                        div { class: "recon-more",
+                            "Showing {shown} of {filtered_count} chains. Refine the symbol or status filter to narrow results."
                         }
                     }
                 }
+            }
 
-                // ── Order lifecycle flow chart ──
-                if !flow_svg_snap.is_empty() {
-                    div { class: "latency-section",
-                        div { class: "latency-section-title",
-                            "ORDER LIFECYCLE FLOW"
-                            span { class: "latency-section-sub", " — scroll to zoom · drag to pan" }
-                        }
-                        div { class: "latency-chart-sub",
-                            "Arrow color: "
-                            span { style: "color:#50fa7b", "green <1ms " }
-                            span { style: "color:#f1fa8c", "yellow <10ms " }
-                            span { style: "color:#ffb86c", "orange <100ms " }
-                            span { style: "color:#ff5555", "red ≥100ms" }
-                        }
-                        div { class: "flow-chart-viewport",
-                            div { id: "flow-wrap",
-                                dangerous_inner_html: "{flow_svg_snap}",
-                            }
-                        }
-                    }
-                }
-
-            } else {
-                // ── No data state ──
+            // ── Empty state ──────────────────────────────────────────────────
+            if total_chains == 0 {
                 div { class: "latency-empty",
                     div { class: "latency-empty-icon", "📊" }
-                    p { class: "latency-empty-title", "No latency data available" }
+                    p { class: "latency-empty-title", "No lifecycle data available" }
                     p { class: "latency-empty-hint", "Messages need:" }
                     ul { class: "latency-empty-list",
-                        li { "ClOrdID (tag 11) to group orders" }
-                        li { "Timestamps (tag 52 SendingTime or tag 60 TransactTime)" }
-                        li { "At least one Execution Report (35=8) per order" }
-                    }
-                    if orders.is_empty() {
-                        p { class: "latency-empty-hint", "Load a FIX log with order flow data." }
+                        li { "ClOrdID (tag 11) on orders and execution reports" }
+                        li { "QuoteReqID (tag 131) on RFQ flows" }
+                        li { "Timestamps (tag 52 SendingTime)" }
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::parse_all;
+
+    #[test]
+    fn test_rfq_chain_latencies() {
+        let input = "8=FIX.4.4|9=118|35=R|34=2|49=CITIFX|52=20240315-07:00:01.012000|56=FXECN|131=QR00000001|146=1|55=NZD/USD|38=11500000|54=1|64=20240319|10=020|\
+8=FIX.4.4|9=160|35=S|34=2|49=FXECN|52=20240315-07:00:01.012404|56=CITIFX|117=QT00000001|131=QR00000001|55=NZD/USD|132=0.60242|133=0.60254|134=11500000|135=11500000|64=20240319|10=026|\
+8=FIX.4.4|9=193|35=D|34=3|49=CITIFX|52=20240315-07:00:01.604695|56=FXECN|11=CO00000001|1=CITI-HF-01|55=NZD/USD|54=1|38=11500000|40=D|44=0.60254|117=QT00000001|59=4|64=20240319|60=20240315-07:00:01.604695|21=1|10=158|\
+8=FIX.4.4|9=188|35=8|34=3|49=FXECN|52=20240315-07:00:01.623833|56=CITIFX|37=OR00000001|11=CO00000001|17=EX00000001|150=0|39=0|55=NZD/USD|54=1|38=11500000|14=0|151=11500000|6=0|60=20240315-07:00:01.623833|10=019|\
+8=FIX.4.4|9=216|35=8|34=5|49=FXECN|52=20240315-07:00:01.649611|56=CITIFX|37=OR00000001|11=CO00000001|17=EX00000003|150=F|39=2|55=NZD/USD|54=1|38=11500000|14=11500000|151=0|31=0.60254|32=5750000|6=0.60254|60=20240315-07:00:01.649611|10=085|";
+        let msgs = parse_all(input);
+        eprintln!("Parsed {} messages", msgs.len());
+        for (i, m) in msgs.iter().enumerate() {
+            eprintln!("  [{}] type={} time={}", i, m.msg_type_raw, m.time);
+        }
+        let chains = build_lifecycle_chains(&msgs);
+        eprintln!("Built {} chains", chains.len());
+        for ch in &chains {
+            eprintln!("  chain_id={} has_rfq={} rfq_to_quote={:?} quote_to_nos={:?} nos_to_ack={:?}",
+                ch.chain_id, ch.has_rfq, ch.rfq_to_quote_us, ch.quote_to_nos_us, ch.nos_to_ack_us);
+        }
+        let rfq_chain = chains.iter().find(|c| c.has_rfq).expect("should have RFQ chain");
+        assert!(rfq_chain.rfq_to_quote_us.is_some(), "rfq_to_quote_us should be Some");
+        assert!(rfq_chain.quote_to_nos_us.is_some(), "quote_to_nos_us should be Some");
+        assert!(rfq_chain.nos_to_ack_us.is_some(), "nos_to_ack_us should be Some");
     }
 }
