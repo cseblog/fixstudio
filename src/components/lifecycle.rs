@@ -470,18 +470,7 @@ pub fn build_lifecycle_chains(messages: &[FixMessage]) -> Vec<LifecycleChain> {
     chains
 }
 
-// ─── Latency stats (existing, for histogram/scatter) ─────────────────────────
-
-#[derive(Clone, PartialEq)]
-struct OrderLatency {
-    cl_ord_id: String,
-    symbol: String,
-    side: String,
-    first_time: String,
-    ack_latency_us: Option<i64>,
-    fill_latency_us: Option<i64>,
-    msg_count: usize,
-}
+// ─── Phase latency stats ──────────────────────────────────────────────────────
 
 #[derive(Clone, PartialEq)]
 struct PhaseStats {
@@ -492,32 +481,6 @@ struct PhaseStats {
     p95_us:  i64,
     p99_us:  i64,
     max_us:  i64,
-}
-
-#[derive(Clone, PartialEq)]
-struct SymbolStats {
-    symbol: String,
-    total: usize,
-    with_ack: usize,
-    mean_us: f64,
-    p95_us: i64,
-    min_us: i64,
-    max_us: i64,
-}
-
-fn build_latency_data(chains: &[LifecycleChain]) -> Vec<OrderLatency> {
-    chains.iter().filter_map(|c| {
-        let cl = c.primary_cl_ord_id.as_deref().unwrap_or(c.chain_id.as_str());
-        Some(OrderLatency {
-            cl_ord_id:       cl.to_string(),
-            symbol:          c.symbol.clone(),
-            side:            c.side.clone(),
-            first_time:      fmt_us(c.first_time_us),
-            ack_latency_us:  c.nos_to_ack_us,
-            fill_latency_us: c.nos_to_fill_us,
-            msg_count:       c.msg_count,
-        })
-    }).collect()
 }
 
 fn compute_phase_stats(lats: &[i64]) -> Option<PhaseStats> {
@@ -536,34 +499,6 @@ fn compute_phase_stats(lats: &[i64]) -> Option<PhaseStats> {
         p95_us:  pct(95.0),
         p99_us:  pct(99.0),
     })
-}
-
-fn compute_symbol_stats(orders: &[OrderLatency]) -> Vec<SymbolStats> {
-    let mut map:      HashMap<String, Vec<i64>> = HashMap::new();
-    let mut totals:   HashMap<String, usize>    = HashMap::new();
-    let mut sym_order: Vec<String>              = Vec::new();
-    for o in orders {
-        let sym = if o.symbol.is_empty() { "—".to_string() } else { o.symbol.clone() };
-        *totals.entry(sym.clone()).or_insert(0) += 1;
-        let entry = map.entry(sym.clone()).or_insert_with(|| { sym_order.push(sym.clone()); Vec::new() });
-        if let Some(l) = o.ack_latency_us { entry.push(l); }
-    }
-    let mut result: Vec<SymbolStats> = sym_order.iter().filter_map(|sym| {
-        let lats = map.get(sym)?;
-        let mut s = lats.clone(); s.sort_unstable();
-        let n = s.len(); if n == 0 { return None; }
-        let sum: i64 = s.iter().sum();
-        Some(SymbolStats {
-            symbol: sym.clone(),
-            total: *totals.get(sym).unwrap_or(&0), with_ack: n,
-            mean_us: sum as f64 / n as f64,
-            p95_us: s[((0.95 * (n - 1) as f64).round() as usize).min(n - 1)],
-            min_us: s[0], max_us: s[n - 1],
-        })
-    }).collect();
-    result.sort_by(|a, b| b.total.cmp(&a.total));
-    result.truncate(12);
-    result
 }
 
 // ─── SVG charts ───────────────────────────────────────────────────────────────
@@ -638,57 +573,6 @@ fn render_histogram(lats: &[i64]) -> String {
     s
 }
 
-fn render_scatter(lats: &[i64]) -> String {
-    if lats.is_empty() {
-        return format!(r##"<svg viewBox="0 0 480 150" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT}}}</style><text x="240" y="75" fill="#6272a4" font-size="12" text-anchor="middle">No latency data</text></svg>"##);
-    }
-    let points: Vec<(usize, i64)> = lats.iter().enumerate().map(|(i, &l)| (i, l)).collect();
-    const MAX_PTS: usize = 500;
-    let step = (points.len() / MAX_PTS).max(1);
-    let sampled: Vec<(usize, i64)> = points.iter().step_by(step).cloned().collect();
-    let n = sampled.len();
-    let mut all_lats: Vec<i64> = lats.to_vec();
-    all_lats.sort_unstable();
-    let al = all_lats.len();
-    let p50 = all_lats[(0.50 * (al - 1) as f64) as usize];
-    let p95 = all_lats[((0.95 * (al - 1) as f64) as usize).min(al - 1)];
-    let y_max = all_lats[((0.99 * (al - 1) as f64) as usize).min(al - 1)].max(1);
-    const VW: f64 = 480.0; const VH: f64 = 150.0;
-    const PL: f64 = 50.0; const PR: f64 = 30.0;
-    const PT: f64 = 12.0; const PB: f64 = 22.0;
-    let pw = VW - PL - PR; let ph = VH - PT - PB;
-    let mut s = format!(r##"<svg viewBox="0 0 {VW} {VH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT};fill:#6272a4}}</style>"##);
-    s += &format!(r##"<rect x="{PL}" y="{PT}" width="{pw}" height="{ph}" fill="#1e1f29" rx="4"/>"##);
-    for i in 0..=4 {
-        let frac = i as f64 / 4.0;
-        let y = PT + ph * (1.0 - frac);
-        let lbl = fmt_us_short((y_max as f64 * frac) as i64);
-        if i > 0 { s += &format!(r##"<line x1="{PL}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#343746" stroke-width="1"/>"##, PL + pw); }
-        s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="end">{lbl}</text>"##, PL - 4.0, y + 3.5);
-    }
-    let p50y = PT + ph * (1.0 - (p50.min(y_max) as f64 / y_max as f64).min(1.0));
-    s += &format!(r##"<line x1="{PL}" y1="{p50y:.1}" x2="{:.1}" y2="{p50y:.1}" stroke="#50fa7b" stroke-width="1" stroke-dasharray="4,3" opacity="0.55"/>"##, PL + pw);
-    s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="8" fill="#50fa7b" opacity="0.8">P50 {}</text>"##, PL + pw + 2.0, p50y + 3.5, fmt_us_short(p50));
-    let p95y = PT + ph * (1.0 - (p95.min(y_max) as f64 / y_max as f64).min(1.0));
-    s += &format!(r##"<line x1="{PL}" y1="{p95y:.1}" x2="{:.1}" y2="{p95y:.1}" stroke="#ffb86c" stroke-width="1" stroke-dasharray="4,3" opacity="0.55"/>"##, PL + pw);
-    s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="8" fill="#ffb86c" opacity="0.8">P95 {}</text>"##, PL + pw + 2.0, p95y + 3.5, fmt_us_short(p95));
-    for (idx, (_, lat)) in sampled.iter().enumerate() {
-        let cx = PL + (idx as f64 / (n - 1).max(1) as f64) * pw;
-        let clamped = (*lat).min(y_max);
-        let pct = clamped as f64 / y_max as f64;
-        let cy = PT + ph * (1.0 - pct);
-        let color = if pct < 0.30 { "#50fa7b" }
-            else if pct < 0.60 { "#8be9fd" }
-            else if pct < 0.85 { "#f1fa8c" } else { "#ff5555" };
-        let (cy_r, extra) = if *lat > y_max { (PT + 3.0, r##" opacity="0.3""##) } else { (cy, "") };
-        s += &format!(r##"<circle cx="{cx:.1}" cy="{cy_r:.1}" r="2" fill="{color}"{extra}/>"##);
-    }
-    s += &format!(r##"<line x1="{PL}" y1="{PT}" x2="{PL}" y2="{:.1}" stroke="#6272a4" stroke-width="1"/>"##, PT + ph);
-    s += &format!(r##"<line x1="{PL}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#6272a4" stroke-width="1"/>"##, PT + ph, PL + pw, PT + ph);
-    s += &format!(r##"<text x="{:.1}" y="{VH}" font-size="9" text-anchor="middle">← order sequence →</text>"##, PL + pw / 2.0);
-    s += "</svg>"; s
-}
-
 // ─── Flow node types ──────────────────────────────────────────────────────────
 
 #[derive(Clone, PartialEq)]
@@ -732,21 +616,11 @@ impl FlowKind {
             FlowKind::Other        => "#6272a4",
         }
     }
-    fn border_color(&self) -> &'static str {
-        match self {
-            FlowKind::ExecFilled   => "#50fa7b",
-            FlowKind::ExecRejected => "#ff5555",
-            FlowKind::ExecCanceled => "#ffb86c",
-            FlowKind::RfqRequest   => "#bd93f9",
-            FlowKind::RfqQuote     => "#8be9fd",
-            _                      => "#44475a",
-        }
-    }
 }
 
 // ─── Chain flow builder ───────────────────────────────────────────────────────
 
-pub fn build_chain_flow(messages: &[FixMessage], chain: &LifecycleChain) -> Vec<FlowNode> {
+fn build_chain_flow(messages: &[FixMessage], chain: &LifecycleChain) -> Vec<FlowNode> {
     let mut msgs: Vec<(usize, &FixMessage)> = chain.msg_indices.iter()
         .map(|&i| (i, &messages[i]))
         .collect();
@@ -780,7 +654,7 @@ pub fn build_chain_flow(messages: &[FixMessage], chain: &LifecycleChain) -> Vec<
                 let qty  = tag_val(msg, 38);
                 let px   = tag_val(msg, 44);
                 let ord_type = match tag_val(msg, 40) {
-                    "1" | "1" => "Mkt",
+                    "1" => "Mkt",
                     "2"       => "Lmt",
                     "D"       => "Qtd",
                     _         => "Ord",
@@ -894,106 +768,6 @@ fn build_timeline_lines(nodes: &[FlowNode]) -> Vec<TLLine> {
     }
 
     lines
-}
-
-// ─── Flow SVG renderer ────────────────────────────────────────────────────────
-
-fn render_flow_svg(nodes: &[FlowNode]) -> String {
-    if nodes.is_empty() { return String::new(); }
-
-    const NODE_W: f64 = 115.0;
-    const NODE_H: f64 = 56.0;
-    const GAP:    f64 = 68.0;
-    const ROW_H:  f64 = 94.0;
-    const PAD_X:  f64 = 16.0;
-    const PAD_Y:  f64 = 22.0;
-
-    // Row assignment: CancelReq and its ER go on row 1
-    let mut row_idx = vec![0usize; nodes.len()];
-    let mut in_cancel = false;
-    for (i, n) in nodes.iter().enumerate() {
-        if matches!(n.kind, FlowKind::CancelReq) { in_cancel = true; }
-        if in_cancel { row_idx[i] = 1; }
-    }
-
-    let max_col   = nodes.len();
-    let total_w   = PAD_X * 2.0 + max_col as f64 * (NODE_W + GAP) - GAP;
-    let rows_used = if in_cancel { 2 } else { 1 };
-    let total_h   = PAD_Y * 2.0 + rows_used as f64 * ROW_H + NODE_H;
-
-    let mut s = format!(
-        r##"<svg id="flow-svg" viewBox="0 0 {total_w:.0} {total_h:.0}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;overflow:visible"><style>text{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;fill:#f8f8f2}}.flow-sub{{fill:#6272a4}}</style>"##
-    );
-    s += &format!(r##"<rect width="{total_w:.0}" height="{total_h:.0}" fill="#1a1b26" rx="8"/>"##);
-
-    // Arrow marker defs
-    s += r##"<defs><marker id="ah" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#6272a4"/></marker></defs>"##;
-
-    // Arrows (behind nodes)
-    let mut prev: Option<(usize, usize)> = None;
-    for (i, node) in nodes.iter().enumerate() {
-        let row = row_idx[i];
-        let nx = PAD_X + i as f64 * (NODE_W + GAP);
-        let ny = PAD_Y + row as f64 * ROW_H;
-        let mid_x = nx + NODE_W / 2.0;
-        let mid_y = ny + NODE_H / 2.0;
-
-        if let Some((pi, pr)) = prev {
-            let px   = PAD_X + pi as f64 * (NODE_W + GAP);
-            let pmid_y = PAD_Y + pr as f64 * ROW_H + NODE_H / 2.0;
-
-            let ax1 = px + NODE_W;
-            let ax2 = nx;
-
-            let delta_lbl = if node.delta_us > 0 { fmt_us(node.delta_us) } else { String::new() };
-            let arrow_color = if node.delta_us > 100_000 { "#ff5555" }
-                else if node.delta_us > 10_000  { "#ffb86c" }
-                else if node.delta_us > 1_000   { "#f1fa8c" }
-                else { "#50fa7b" };
-
-            if pr == row {
-                // Straight arrow
-                let lbl_mid_x = (ax1 + ax2) / 2.0;
-                s += &format!(r##"<line x1="{ax1:.1}" y1="{pmid_y:.1}" x2="{ax2:.1}" y2="{mid_y:.1}" stroke="{arrow_color}" stroke-width="1.5" marker-end="url(#ah)"/>"##);
-                if !delta_lbl.is_empty() {
-                    s += &format!(r##"<text x="{lbl_mid_x:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="{arrow_color}">{delta_lbl}</text>"##, pmid_y - 5.0);
-                }
-            } else {
-                // Elbow arrow (row change)
-                let pmid_x = px + NODE_W / 2.0;
-                let elbow_x = pmid_x + (NODE_W / 2.0 + GAP / 2.0);
-                s += &format!(r##"<polyline points="{ax1:.1},{pmid_y:.1} {elbow_x:.1},{pmid_y:.1} {elbow_x:.1},{mid_y:.1} {ax2:.1},{mid_y:.1}" fill="none" stroke="{arrow_color}" stroke-width="1.5" marker-end="url(#ah)"/>"##);
-                if !delta_lbl.is_empty() {
-                    s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="{arrow_color}">{delta_lbl}</text>"##, (elbow_x + ax2) / 2.0, mid_y - 5.0);
-                }
-            }
-            let _ = mid_x;
-        }
-        prev = Some((i, row));
-    }
-
-    // Nodes
-    for (i, node) in nodes.iter().enumerate() {
-        let row    = row_idx[i];
-        let nx     = PAD_X + i as f64 * (NODE_W + GAP);
-        let ny     = PAD_Y + row as f64 * ROW_H;
-        let color  = node.kind.color();
-        let border = node.kind.border_color();
-        let lx     = nx + NODE_W / 2.0;
-
-        s += &format!(r##"<rect x="{nx:.1}" y="{ny:.1}" width="{NODE_W}" height="{NODE_H}" fill="#282a36" stroke="{border}" stroke-width="1.5" rx="6"/>"##);
-        s += &format!(r##"<rect x="{nx:.1}" y="{ny:.1}" width="{NODE_W}" height="4" fill="{color}" rx="3"/>"##);
-
-        if node.sublabel.is_empty() {
-            s += &format!(r##"<text x="{lx:.1}" y="{:.1}" font-size="11" font-weight="600" text-anchor="middle" fill="{color}">{}</text>"##, ny + 28.0, node.label);
-        } else {
-            s += &format!(r##"<text x="{lx:.1}" y="{:.1}" font-size="11" font-weight="600" text-anchor="middle" fill="{color}">{}</text>"##, ny + 22.0, node.label);
-            s += &format!(r##"<text x="{lx:.1}" y="{:.1}" font-size="9" text-anchor="middle" class="flow-sub">{}</text>"##, ny + 34.0, node.sublabel);
-        }
-        s += &format!(r##"<text x="{lx:.1}" y="{:.1}" font-size="8" text-anchor="middle" class="flow-sub">{}</text>"##, ny + NODE_H - 6.0, node.time_str);
-    }
-
-    s += "</svg>"; s
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

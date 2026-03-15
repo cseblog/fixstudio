@@ -6,7 +6,6 @@ mod license;
 mod model;
 mod parser;
 mod sample;
-mod simd;
 mod style;
 
 use dioxus_desktop::{launch::launch, Config, WindowBuilder};

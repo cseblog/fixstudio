@@ -88,7 +88,7 @@ pub fn app() -> Element {
     // ── Panel layout state ──
     // right_panel_width controls premium-panel; app-main is flex:1 filling the rest
     let right_panel_width: Signal<f64> = use_signal(|| 300.0_f64);
-    let mut left_panel_collapsed  = use_signal(|| false);
+    let left_panel_collapsed  = use_signal(|| false);
     let mut right_panel_collapsed = use_signal(|| false);
 
     // Initialise right panel to half the window width via JS
