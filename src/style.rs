@@ -96,6 +96,35 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 .fix-file-icon { font-size: 18px; }
 .fix-file-name { font-weight: 700; }
 .fix-file-hint { color: #6272a4; font-size: 12px; }
+.fix-file-toggle {
+    background: rgba(255,184,108,0.12);
+    border: 1px solid rgba(255,184,108,0.3);
+    border-radius: 4px;
+    color: #ffb86c;
+    font-size: 11px;
+    padding: 2px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.fix-file-toggle:hover { background: rgba(255,184,108,0.22); }
+.fix-file-list {
+    width: 100%;
+    background: #1e1f28;
+    border: 1px solid #44475a;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 6px 0;
+}
+.fix-file-list-item {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: #8892b0;
+    padding: 3px 14px;
+    border-bottom: 1px solid #2a2b3a;
+}
+.fix-file-list-item:last-child { border-bottom: none; }
 
 .fix-input {
     width: 100%;
@@ -1039,6 +1068,10 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     font-size: 12px;
 }
 .lc-clordid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #7060a8; }
+.id-clordid  { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #7060a8; display: block; }
+.id-quoteid  { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #5a8aa0; font-size: 11px; }
+.id-quotereqid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #4a7a8a; font-size: 11px; }
+.id-label    { color: #6272a4; font-size: 10px; margin-right: 2px; margin-left: 4px; }
 .lc-symbol  { color: #c8cad8; font-weight: 600; }
 .lc-side    { color: #c8cad8; font-weight: 600; }
 .lc-qty     { color: #f8f8f2; font-variant-numeric: tabular-nums; }
@@ -1141,7 +1174,61 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
     cursor: pointer;
 }
 
-/* ── Lifecycle Reconstructor ─────────────────────────────── */
+/* ── Phase overview — deep indigo zone (Dracula-native) ──── */
+.phase-light {
+    background: #252840;
+    border-radius: 8px;
+    padding: 14px 16px;
+    border: 1px solid #363860;
+}
+/* Cards */
+.phase-light .phase-card {
+    background: #2d3050;
+    border-color: #3d4070;
+}
+.phase-light .phase-card:hover { background: #333660; border-color: #5050a0; }
+.phase-light .phase-card-active {
+    background: #38356a !important;
+    border-color: #7868c0 !important;
+    border-bottom-color: transparent !important;
+}
+.phase-light .phase-card-label { color: #6068a0; }
+.phase-light .phase-card-p50   { color: #d0d4f0; }
+.phase-light .phase-card-sub   { color: #505880; }
+.phase-light .phase-card-caret { color: #505880; }
+/* Health colors — full brightness readable on dark */
+.phase-light .health-green  { color: #d0d4f0; }
+.phase-light .health-yellow { color: #c8a840; }
+.phase-light .health-orange { color: #c07030; }
+.phase-light .health-red    { color: #b03030; }
+.phase-light .health-none   { color: #505880; }
+/* Detail panel */
+.phase-light .phase-detail {
+    background: #2d3050;
+    border-color: #7868c0;
+    border-top: none;
+}
+.phase-light .phase-detail-count { color: #c8cce8; }
+.phase-light .phase-detail-hint  { color: #505880; }
+/* Histogram */
+.phase-light .latency-chart-wrap { background: #252840; }
+/* Stat cells */
+.phase-light .phase-stat-cell { background: #252840; border-color: #363860; }
+.phase-light .phase-stat-val  { color: #d0d4f0; }
+.phase-light .phase-stat-lbl  { color: #505880; }
+.phase-light .phase-stat-green  { border-color: #363860; } .phase-light .phase-stat-green  .phase-stat-val { color: #d0d4f0; }
+.phase-light .phase-stat-cyan   { border-color: #363860; } .phase-light .phase-stat-cyan   .phase-stat-val { color: #d0d4f0; }
+.phase-light .phase-stat-yellow { border-color: #c8a840; } .phase-light .phase-stat-yellow .phase-stat-val { color: #c8a840; }
+.phase-light .phase-stat-orange { border-color: #c07030; } .phase-light .phase-stat-orange .phase-stat-val { color: #c07030; }
+.phase-light .phase-stat-red    { border-color: #b03030; } .phase-light .phase-stat-red    .phase-stat-val { color: #b03030; }
+/* Drill active */
+.phase-light .phase-stat-drilling {
+    box-shadow: inset 0 0 0 1px #7868c0, 0 4px 12px rgba(0,0,0,0.5);
+}
+/* No-data */
+.phase-light .phase-no-data { color: #505880; }
+
+/* ── Lifecycle Reconstructor table layout ────────────────── */
 .tbl-chain-row {
     display: grid;
     grid-template-columns: 9rem 6rem 3.5rem 4rem 6rem 6rem 6rem 6rem 6rem 6rem 3.5rem;

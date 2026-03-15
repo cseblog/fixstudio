@@ -74,6 +74,8 @@ pub fn app() -> Element {
     let mut parse_stats: Signal<Option<(usize, u64)>> = use_signal(|| None);
     let loading = use_signal(|| false);
     let mut file_name: Signal<Option<String>> = use_signal(|| None);
+    let mut loaded_files: Signal<Vec<String>> = use_signal(Vec::new);
+    let mut show_file_list = use_signal(|| false);
     let mut update_status: Signal<UpdateStatus> = use_signal(|| UpdateStatus::Idle);
 
     // ── Premium / license state ──
@@ -197,6 +199,8 @@ pub fn app() -> Element {
         selected_idx.set(None);
         parse_stats.set(None);
         file_name.set(None);
+        loaded_files.set(Vec::new());
+        show_file_list.set(false);
     };
 
     let mut load_sample = move |spec: &str| {
@@ -264,6 +268,78 @@ pub fn app() -> Element {
                 eval(&format!(
                     "window.gtag && window.gtag('event', 'file_parsed', \
                      {{ message_count: {count}, parse_us: {ms}, delimiter: '{delimiter}' }});"
+                ));
+            }
+            loading.set(false);
+        });
+    };
+
+    let load_folder = move || {
+        let mut messages     = messages.clone();
+        let mut selected_idx = selected_idx.clone();
+        let mut parse_stats  = parse_stats.clone();
+        let mut loading      = loading.clone();
+        let mut file_name    = file_name.clone();
+        let mut loaded_files = loaded_files.clone();
+        spawn(async move {
+            loading.set(true);
+            if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
+                let root = folder.path().to_owned();
+                let t = Instant::now();
+                let fix_exts = ["txt", "log", "fix"];
+                let mut all_msgs: Vec<crate::model::FixMessage> = Vec::new();
+                let mut file_names: Vec<String> = Vec::new();
+                let mut stack = vec![root.clone()];
+                while let Some(dir) = stack.pop() {
+                    if let Ok(rd) = std::fs::read_dir(&dir) {
+                        for entry in rd.flatten() {
+                            let p = entry.path();
+                            if p.is_dir() {
+                                stack.push(p);
+                            } else if p.extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| fix_exts.contains(&e))
+                                .unwrap_or(false)
+                            {
+                                let msgs = match std::fs::File::open(&p)
+                                    .and_then(|f| unsafe { memmap2::Mmap::map(&f) })
+                                {
+                                    Ok(mmap) => {
+                                        let soh = mmap.iter().take(4096).any(|&b| b == 0x01);
+                                        if soh { parse_all_simd_bytes(&mmap) }
+                                        else {
+                                            let s = String::from_utf8_lossy(&mmap);
+                                            parse_all(&s)
+                                        }
+                                    }
+                                    Err(_) => continue,
+                                };
+                                // Store path relative to root for display
+                                let rel = p.strip_prefix(&root)
+                                    .unwrap_or(&p)
+                                    .to_string_lossy()
+                                    .into_owned();
+                                file_names.push(format!("{} ({} msgs)", rel, msgs.len()));
+                                all_msgs.extend(msgs);
+                            }
+                        }
+                    }
+                }
+                file_names.sort();
+                let ms = t.elapsed().as_micros() as u64;
+                let count = all_msgs.len();
+                parse_stats.set(Some((count, ms)));
+                offload_replace(&mut messages, all_msgs);
+                selected_idx.set(None);
+                let folder_name = root.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("folder")
+                    .to_string();
+                file_name.set(Some(folder_name));
+                loaded_files.set(file_names);
+                eval(&format!(
+                    "window.gtag && window.gtag('event', 'folder_parsed', \
+                     {{ message_count: {count}, parse_us: {ms} }});"
                 ));
             }
             loading.set(false);
@@ -520,6 +596,7 @@ pub fn app() -> Element {
                 }
                 button { class: "btn btn-clear", onclick: move |_| clear(), "Clear" }
                 button { class: "btn btn-load", onclick: move |_| load_file(), "Load file" }
+                button { class: "btn btn-load", onclick: move |_| load_folder(), "Load folder" }
 
                 // CSV export (pro only, visible when messages are loaded)
                 if has_messages && pro {
@@ -670,10 +747,38 @@ pub fn app() -> Element {
                         if *loading.read() {
                             div { class: "fix-loading", "Loading file and parsing messages…" }
                         } else if let Some(ref name) = *file_name.read() {
-                            div { class: "fix-file-banner",
-                                span { class: "fix-file-icon", "📂" }
-                                span { class: "fix-file-name", "{name}" }
-                                span { class: "fix-file-hint", "— click Clear to reset" }
+                            {
+                                let files = loaded_files.read();
+                                let file_count = files.len();
+                                let expanded = *show_file_list.read();
+                                rsx! {
+                                    div { class: "fix-file-banner",
+                                        span { class: "fix-file-icon", "📂" }
+                                        span { class: "fix-file-name", "{name}" }
+                                        if file_count > 0 {
+                                            button {
+                                                class: "fix-file-toggle",
+                                                onclick: move |_| {
+                                                    let cur = *show_file_list.read();
+                                                    show_file_list.set(!cur);
+                                                },
+                                                if expanded {
+                                                    "▾ {file_count} files"
+                                                } else {
+                                                    "▸ {file_count} files"
+                                                }
+                                            }
+                                        }
+                                        span { class: "fix-file-hint", "— click Clear to reset" }
+                                    }
+                                    if expanded && file_count > 0 {
+                                        div { class: "fix-file-list",
+                                            for f in files.iter() {
+                                                div { class: "fix-file-list-item", "{f}" }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         } else {
                             textarea {

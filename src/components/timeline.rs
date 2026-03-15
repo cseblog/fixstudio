@@ -153,7 +153,7 @@ pub fn timeline_panel(
                     && col_match(&m.sender, &fs)
                     && col_match(&m.target, &fta)
                     && col_match(m.msg_type_label, &fm)
-                    && col_match(&m.cl_ord_id, &fc)
+                    && (fc.is_empty() || col_match(&m.cl_ord_id, &fc) || col_match(&m.quote_id, &fc) || col_match(&m.quote_req_id, &fc))
                     && (fd.is_empty() || col_match(&build_detail_text(m), &fd))
             })
             .map(|(i, _)| i)
@@ -280,7 +280,19 @@ pub fn timeline_panel(
                             span { "{msgs[idx].sender}" }
                             span { "{msgs[idx].target}" }
                             span { span { class: "badge {badge_class(&msgs[idx].msg_type_raw)}", "{msgs[idx].msg_type_label}" } }
-                            span { "{msgs[idx].cl_ord_id}" }
+                            span {
+                                if !msgs[idx].cl_ord_id.is_empty() {
+                                    span { class: "id-clordid", "{msgs[idx].cl_ord_id}" }
+                                }
+                                if !msgs[idx].quote_id.is_empty() {
+                                    span { class: "id-label", "Q:" }
+                                    span { class: "id-quoteid", "{msgs[idx].quote_id}" }
+                                }
+                                if !msgs[idx].quote_req_id.is_empty() {
+                                    span { class: "id-label", "QR:" }
+                                    span { class: "id-quotereqid", "{msgs[idx].quote_req_id}" }
+                                }
+                            }
                             span { class: "cell-detail", "{build_detail_text(&msgs[idx])}" }
                         }
                     }

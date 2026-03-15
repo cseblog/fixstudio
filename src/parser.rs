@@ -359,6 +359,8 @@ fn apply_token(raw: &[u8], start: usize, end: usize, msg: &mut FixMessage) {
             msg.msg_type_label = msg_type_label(value);
         }
         11  => msg.cl_ord_id   = CompactString::from(value),
+        117 => msg.quote_id    = CompactString::from(value),
+        131 => msg.quote_req_id = CompactString::from(value),
         54  => msg.side        = CompactString::from(side_label(value)),
         38  => msg.order_qty   = CompactString::from(value),
         55  => msg.symbol      = CompactString::from(value),
@@ -430,8 +432,10 @@ fn parse_single(raw: &str) -> FixMessage {
                 msg.msg_type_raw   = CompactString::from(value);
                 msg.msg_type_label = msg_type_label(value);
             }
-            "11"  => msg.cl_ord_id   = CompactString::from(value),
-            "54"  => msg.side        = CompactString::from(side_label(value)),
+            "11"  => msg.cl_ord_id    = CompactString::from(value),
+            "117" => msg.quote_id     = CompactString::from(value),
+            "131" => msg.quote_req_id = CompactString::from(value),
+            "54"  => msg.side         = CompactString::from(side_label(value)),
             "38"  => msg.order_qty   = CompactString::from(value),
             "55"  => msg.symbol      = CompactString::from(value),
             "58"  => msg.text        = CompactString::from(value),

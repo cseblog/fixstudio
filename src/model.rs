@@ -10,6 +10,8 @@ pub struct FixMessage {
     pub msg_type_raw: CompactString,
     pub msg_type_label: &'static str,
     pub cl_ord_id: CompactString,
+    pub quote_id: CompactString,
+    pub quote_req_id: CompactString,
     pub side: CompactString,
     pub order_qty: CompactString,
     pub symbol: CompactString,

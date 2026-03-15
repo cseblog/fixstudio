@@ -572,13 +572,20 @@ const CHART_FONT: &str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
 
 fn render_histogram(lats: &[i64]) -> String {
     let buckets: &[(&str, i64, i64, &str)] = &[
-        ("<0.1ms",   0,       100,      "#4a7fa8"),
-        ("0.1–1ms",  100,     1_000,    "#3d8a62"),
-        ("1–5ms",    1_000,   5_000,    "#3d8a62"),
-        ("5–10ms",   5_000,   10_000,   "#8a8030"),
-        ("10–50ms",  10_000,  50_000,   "#a06030"),
-        ("50–100ms", 50_000,  100_000,  "#904040"),
-        (">100ms",   100_000, i64::MAX, "#782828"),
+        ("<10µs",    0,           10,         "#4a7fa8"),
+        ("10–50µs",  10,          50,         "#4a7fa8"),
+        ("50–100µs", 50,          100,        "#4a8a70"),
+        ("0.1–0.5ms",100,         500,        "#3d8a62"),
+        ("0.5–1ms",  500,         1_000,      "#3d8a62"),
+        ("1–2ms",    1_000,       2_000,      "#4a8a40"),
+        ("2–5ms",    2_000,       5_000,      "#6a8a30"),
+        ("5–10ms",   5_000,       10_000,     "#8a8030"),
+        ("10–20ms",  10_000,      20_000,     "#9a7028"),
+        ("20–50ms",  20_000,      50_000,     "#a06030"),
+        ("50–100ms", 50_000,      100_000,    "#904040"),
+        ("100–200ms",100_000,     200_000,    "#803030"),
+        ("200–500ms",200_000,     500_000,    "#782828"),
+        (">500ms",   500_000,     i64::MAX,   "#601818"),
     ];
     let mut counts = vec![0usize; buckets.len()];
     for &l in lats {
@@ -587,18 +594,19 @@ fn render_histogram(lats: &[i64]) -> String {
         }
     }
     let max_c = counts.iter().copied().max().unwrap_or(1).max(1);
-    const VW: f64 = 480.0; const VH: f64 = 150.0;
+    const VW: f64 = 480.0; const VH: f64 = 170.0;
     const PL: f64 = 46.0;  const PR: f64 = 10.0;
-    const PT: f64 = 10.0;  const PB: f64 = 34.0;
+    const PT: f64 = 10.0;  const PB: f64 = 54.0;
     let pw = VW - PL - PR; let ph = VH - PT - PB;
     let nb = buckets.len() as f64; let bw = pw / nb - 5.0;
-    let mut s = format!(r##"<svg viewBox="0 0 {VW} {VH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT};fill:#6272a4}}</style>"##);
-    s += &format!(r##"<rect x="{PL}" y="{PT}" width="{pw}" height="{ph}" fill="#1e1f29" rx="4"/>"##);
+    let mut s = format!(r##"<svg viewBox="0 0 {VW} {VH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT};fill:#8082a0}}</style>"##);
+    s += &format!(r##"<rect x="0" y="0" width="{VW}" height="{VH}" fill="#252840"/>"##);
+    s += &format!(r##"<rect x="{PL}" y="{PT}" width="{pw}" height="{ph}" fill="#2d3050" rx="4"/>"##);
     for i in 1..=4 {
         let y = PT + ph * (1.0 - i as f64 / 4.0);
         let v = max_c as f64 * i as f64 / 4.0;
         let lbl = if v >= 1000.0 { format!("{:.0}k", v / 1000.0) } else { format!("{:.0}", v) };
-        s += &format!(r##"<line x1="{PL}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#343746" stroke-width="1"/>"##, PL + pw);
+        s += &format!(r##"<line x1="{PL}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#e4e6f0" stroke-width="1"/>"##, PL + pw);
         s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="end">{lbl}</text>"##, PL - 4.0, y + 3.5);
     }
     s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="end">0</text>"##, PL - 4.0, PT + ph + 3.5);
@@ -608,14 +616,15 @@ fn render_histogram(lats: &[i64]) -> String {
         let by = PT + ph - bh;
         if bh > 0.5 {
             s += &format!(r##"<rect x="{bx:.1}" y="{by:.1}" width="{bw:.1}" height="{bh:.1}" fill="{color}" rx="3"/>"##);
-            if bh > 18.0 { s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="#282a36" font-weight="700">{count}</text>"##, bx + bw / 2.0, by + 13.0); }
+            if bh > 18.0 { s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="#ffffff" font-weight="700">{count}</text>"##, bx + bw / 2.0, by + 13.0); }
         } else {
-            s += &format!(r##"<rect x="{bx:.1}" y="{:.1}" width="{bw:.1}" height="2" fill="{color}" rx="1" opacity="0.3"/>"##, PT + ph - 2.0);
+            s += &format!(r##"<rect x="{bx:.1}" y="{:.1}" width="{bw:.1}" height="2" fill="{color}" rx="1" opacity="0.4"/>"##, PT + ph - 2.0);
         }
-        s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle">{label}</text>"##, bx + bw / 2.0, PT + ph + 17.0);
+        let lx = bx + bw / 2.0; let ly = PT + ph + 8.0;
+        s += &format!(r##"<text x="{lx:.1}" y="{ly:.1}" font-size="8" text-anchor="end" transform="rotate(-45,{lx:.1},{ly:.1})">{label}</text>"##);
     }
-    s += &format!(r##"<line x1="{PL}" y1="{PT}" x2="{PL}" y2="{:.1}" stroke="#6272a4" stroke-width="1"/>"##, PT + ph);
-    s += &format!(r##"<line x1="{PL}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#6272a4" stroke-width="1"/>"##, PT + ph, PL + pw, PT + ph);
+    s += &format!(r##"<line x1="{PL}" y1="{PT}" x2="{PL}" y2="{:.1}" stroke="#c8cae0" stroke-width="1"/>"##, PT + ph);
+    s += &format!(r##"<line x1="{PL}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#c8cae0" stroke-width="1"/>"##, PT + ph, PL + pw, PT + ph);
     s += "</svg>"; s
 }
 
@@ -1168,7 +1177,7 @@ pub fn lifecycle_panel(
             }
 
             // ── Phase Overview: 4 cards + expandable detail ─────────────────
-            div { class: "latency-section phase-overview-wrap",
+            div { class: "latency-section phase-overview-wrap phase-light",
 
                 // Row of 4 clickable phase cards
                 div { class: "phase-cards-row",
