@@ -286,16 +286,22 @@ pub fn app() -> Element {
             if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
                 let root = folder.path().to_owned();
                 let t = Instant::now();
+                // Guard against pathological trees (e.g. symlink cycles).
+                const MAX_DIRS: usize = 4_096;
                 let fix_exts = ["txt", "log", "fix"];
-                let mut all_msgs: Vec<crate::model::FixMessage> = Vec::new();
-                let mut file_names: Vec<String> = Vec::new();
-                let mut stack = vec![root.clone()];
-                while let Some(dir) = stack.pop() {
+                let mut all_msgs: Vec<FixMessage> = Vec::new();
+                let mut file_names: Vec<String>   = Vec::new();
+                let mut dir_stack  = vec![root.clone()];
+                let mut dirs_seen  = 0_usize;
+                while let Some(dir) = dir_stack.pop() {
+                    assert!(dirs_seen <= MAX_DIRS);
+                    dirs_seen += 1;
+                    if dirs_seen > MAX_DIRS { break; }
                     if let Ok(rd) = std::fs::read_dir(&dir) {
                         for entry in rd.flatten() {
                             let p = entry.path();
                             if p.is_dir() {
-                                stack.push(p);
+                                dir_stack.push(p);
                             } else if p.extension()
                                 .and_then(|e| e.to_str())
                                 .map(|e| fix_exts.contains(&e))
@@ -314,12 +320,12 @@ pub fn app() -> Element {
                                     }
                                     Err(_) => continue,
                                 };
-                                // Store path relative to root for display
+                                // Relative path makes the list readable regardless of mount point.
                                 let rel = p.strip_prefix(&root)
                                     .unwrap_or(&p)
                                     .to_string_lossy()
                                     .into_owned();
-                                file_names.push(format!("{} ({} msgs)", rel, msgs.len()));
+                                file_names.push(format!("{rel} ({} msgs)", msgs.len()));
                                 all_msgs.extend(msgs);
                             }
                         }
