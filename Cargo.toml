@@ -6,7 +6,7 @@ description = "AI FIX Parser – Parse and analyze FIX protocol messages with AI
 license = "aifixparser.com"
 
 [[bin]]
-name = "AIFixParser"
+name = "AiFIXParser"
 path = "src/main.rs"
 
 [[bin]]

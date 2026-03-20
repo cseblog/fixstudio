@@ -9,6 +9,7 @@
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
+use crate::export::{csv_escape, now_tag};
 use crate::model::FixMessage;
 
 // ─── Helper: tag value lookup ─────────────────────────────────────────────────
@@ -774,6 +775,32 @@ fn build_timeline_lines(nodes: &[FlowNode]) -> Vec<TLLine> {
 
 const PAGE_SIZE: usize = 100;
 
+fn chains_to_csv(chains: &[LifecycleChain]) -> String {
+    let opt = |v: Option<i64>| v.map(|n| n.to_string()).unwrap_or_default();
+    let mut out = String::with_capacity(chains.len() * 120);
+    out.push_str(
+        "ChainID,Symbol,Side,Status,FirstTime_us,\
+         RFQ_Quote_us,Quote_NOS_us,NOS_ER_us,ER_Fill_us,Duration_us,MsgCount\n"
+    );
+    for c in chains {
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
+            csv_escape(&c.chain_id),
+            csv_escape(&c.symbol),
+            csv_escape(&c.side),
+            c.final_status.label(),
+            c.first_time_us,
+            opt(c.rfq_to_quote_us),
+            opt(c.quote_to_nos_us),
+            opt(c.nos_to_ack_us),
+            opt(c.nos_to_fill_us),
+            c.total_us,
+            c.msg_count,
+        ));
+    }
+    out
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum SortCol { Time, RfqQuote, QuoteNos, NosEr, NosErFill, Duration }
 
@@ -781,6 +808,7 @@ enum SortCol { Time, RfqQuote, QuoteNos, NosEr, NosErFill, Duration }
 pub fn lifecycle_panel(
     messages: Signal<Vec<FixMessage>>,
     selected_idx: Signal<Option<usize>>,
+    pro: bool,
 ) -> Element {
     // ── Signals ──
     let mut filter_sym:    Signal<String> = use_signal(String::new);
@@ -957,6 +985,27 @@ pub fn lifecycle_panel(
                 div { class: "latency-header-left",
                     h2 { class: "latency-title", "Trade Lifecycle Reconstructor" }
                     span { class: "latency-header-meta", "{header_meta}" }
+                }
+                if pro && total_chains > 0 {
+                    button {
+                        class: "btn-export-csv",
+                        onclick: move |_| {
+                            let chains_snap = filtered.read().clone();
+                            spawn(async move {
+                                let tag = now_tag();
+                                if let Some(file) = rfd::AsyncFileDialog::new()
+                                    .set_file_name(&format!("lifecycle_{tag}.csv"))
+                                    .add_filter("CSV", &["csv"])
+                                    .save_file()
+                                    .await
+                                {
+                                    let csv = chains_to_csv(&chains_snap);
+                                    let _ = std::fs::write(file.path(), csv.as_bytes());
+                                }
+                            });
+                        },
+                        "Export CSV"
+                    }
                 }
             }
 

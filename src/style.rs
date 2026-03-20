@@ -610,15 +610,19 @@ html, body { height: 100%; overflow: hidden; background: #282a36; }
 }
 .pro-badge:hover { opacity: 0.85; }
 
-/* Export CSV button */
-.btn-export {
-    background: #50fa7b;
-    color: #282a36;
-    padding: 5px 14px;
-    font-size: 12px;
-    font-weight: 700;
+/* Export CSV button (in table headers) */
+.btn-export-csv {
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid #50fa7b;
+    background: rgba(80,250,123,0.08);
+    color: #50fa7b;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
 }
-.btn-export:hover { background: #69ff94; }
+.btn-export-csv:hover { background: rgba(80,250,123,0.18); }
 
 /* Panel view tabs (Timeline / Lifecycle) */
 .panel-tabs {

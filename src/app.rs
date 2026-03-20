@@ -7,7 +7,6 @@ use dioxus::document::eval;
 use crate::components::detail::detail_panel;
 use crate::components::lifecycle::lifecycle_panel;
 use crate::components::timeline::timeline_panel;
-use crate::export::messages_to_csv;
 use crate::license::{clear_license, instance_name, load_license, save_license, StoredLicense};
 use crate::model::FixMessage;
 use crate::parser::{parse_all, parse_all_simd, parse_all_simd_bytes};
@@ -311,6 +310,12 @@ pub fn app() -> Element {
                                     .and_then(|f| unsafe { memmap2::Mmap::map(&f) })
                                 {
                                     Ok(mmap) => {
+                                        // Only process files that contain the FIX BeginString tag.
+                                        // This filters out logs, configs, and other text files that
+                                        // happen to have a matching extension.
+                                        let has_fix = mmap.windows(5)
+                                            .any(|w| w == b"8=FIX");
+                                        if !has_fix { continue; }
                                         let soh = mmap.iter().take(4096).any(|&b| b == 0x01);
                                         if soh { parse_all_simd_bytes(&mmap) }
                                         else {
@@ -320,6 +325,7 @@ pub fn app() -> Element {
                                     }
                                     Err(_) => continue,
                                 };
+                                if msgs.is_empty() { continue; }
                                 // Relative path makes the list readable regardless of mount point.
                                 let rel = p.strip_prefix(&root)
                                     .unwrap_or(&p)
@@ -349,22 +355,6 @@ pub fn app() -> Element {
                 ));
             }
             loading.set(false);
-        });
-    };
-
-    // Export CSV (premium feature)
-    let export_csv = move || {
-        let msgs = messages.read().clone();
-        spawn(async move {
-            if let Some(file) = rfd::AsyncFileDialog::new()
-                .set_file_name("fix_messages.csv")
-                .add_filter("CSV", &["csv"])
-                .save_file()
-                .await
-            {
-                let csv = messages_to_csv(&msgs);
-                let _ = std::fs::write(file.path(), csv.as_bytes());
-            }
         });
     };
 
@@ -604,11 +594,6 @@ pub fn app() -> Element {
                 button { class: "btn btn-load", onclick: move |_| load_file(), "Load file" }
                 button { class: "btn btn-load", onclick: move |_| load_folder(), "Load folder" }
 
-                // CSV export (pro only, visible when messages are loaded)
-                if has_messages && pro {
-                    button { class: "btn btn-export", onclick: move |_| export_csv(), "Export CSV" }
-                }
-
                 span { class: "sample-label", "Sample: " }
                 {FIX_SPECS.iter().enumerate().map(|(i, spec)| {
                     let sep = if i > 0 { rsx! { span { class: "sample-sep", " | " } } } else { rsx! { } };
@@ -800,6 +785,7 @@ pub fn app() -> Element {
                             lifecycle_panel {
                                 messages: messages,
                                 selected_idx: selected_idx,
+                                pro: pro,
                             }
                         } else {
                             div { class: "panels",
@@ -808,6 +794,7 @@ pub fn app() -> Element {
                                     selected_idx: selected_idx,
                                     skip_heartbeats: skip_heartbeats,
                                     parse_stats: parse_stats,
+                                    pro: pro,
                                 }
                                 detail_panel {
                                     detail_msg: detail_msg,
@@ -951,25 +938,6 @@ pub fn app() -> Element {
                                     } else {
                                         span { class: "feature-card-hint", "Load data to use" }
                                     }
-                                }
-                            }
-
-                            // Export CSV
-                            div {
-                                class: if pro { "feature-card" } else { "feature-card feature-card-locked" },
-                                div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Export CSV" }
-                                    if pro {
-                                        span { class: "badge badge-green feature-badge", "Active" }
-                                    } else {
-                                        span { class: "badge badge-gray feature-badge", "Pro" }
-                                    }
-                                }
-                                p { class: "feature-card-desc",
-                                    "Export all parsed messages to CSV for spreadsheet analysis."
-                                }
-                                if pro {
-                                    span { class: "feature-card-hint", "Use Export CSV button in toolbar" }
                                 }
                             }
 

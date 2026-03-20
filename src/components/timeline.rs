@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus::document::eval;
 
 use crate::dictionary::badge_class;
+use crate::export::{messages_to_csv, now_tag};
 use crate::model::FixMessage;
 
 const INITIAL_DISPLAY: usize = 1000;
@@ -54,6 +55,7 @@ pub fn timeline_panel(
     selected_idx: Signal<Option<usize>>,
     skip_heartbeats: Signal<bool>,
     parse_stats: Signal<Option<(usize, u64)>>,
+    pro: bool,
 ) -> Element {
     let mut f_time    = use_signal(String::new);
     let mut f_time_op = use_signal(|| String::from("="));  // "=" | ">=" | "<="
@@ -204,6 +206,30 @@ pub fn timeline_panel(
                     }
                 }
                 div { class: "header-actions",
+                    if pro && total_count > 0 {
+                        button {
+                            class: "btn-export-csv",
+                            onclick: move |_| {
+                                let msgs_snap: Vec<FixMessage> = {
+                                    let msgs = messages.read();
+                                    timeline_indices.read().iter().map(|&i| msgs[i].clone()).collect()
+                                };
+                                spawn(async move {
+                                    let tag = now_tag();
+                                    if let Some(file) = rfd::AsyncFileDialog::new()
+                                        .set_file_name(&format!("timeline_{tag}.csv"))
+                                        .add_filter("CSV", &["csv"])
+                                        .save_file()
+                                        .await
+                                    {
+                                        let csv = messages_to_csv(&msgs_snap);
+                                        let _ = std::fs::write(file.path(), csv.as_bytes());
+                                    }
+                                });
+                            },
+                            "Export CSV"
+                        }
+                    }
                     if has_filter {
                         button {
                             class: "btn-clear-filter",
