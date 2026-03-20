@@ -18,9 +18,9 @@ use std::io::{BufWriter, Write};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TARGET: usize = 1_000_000;
-const OUTPUT:  &str = "fix_test_1m.log";
-const DATE:    &str = "20240315"; // Friday 15-Mar-2024
+const DEFAULT_TARGET: usize = 1_000_000;
+const DEFAULT_OUTPUT: &str  = "fix_test_1m.log";
+const DATE: &str = "20240315"; // Friday 15-Mar-2024
 
 /// (client_comp_id, server_comp_id)
 const SESSIONS: &[(&str, &str)] = &[
@@ -89,6 +89,24 @@ impl Rng {
     }
     fn choice<T: Copy>(&mut self, slice: &[T]) -> T {
         slice[self.next() as usize % slice.len()]
+    }
+}
+
+// ── Lot size picker (spreads orders across all 5 treemap size buckets) ────────
+
+/// Pick a notional size distributed across FX size buckets:
+///   10 %  →   < 1M   (retail / small hedge-fund tickets)
+///   30 %  →  1M–5M   (standard institutional tickets)
+///   30 %  →  5M–10M  (mid-size institutional)
+///   20 %  → 10M–50M  (large institutional)
+///   10 %  →  > 50M   (block / prime brokerage)
+fn pick_lots(rng: &mut Rng) -> u64 {
+    match rng.next() % 10 {
+        0     => rng.urange(1, 10)   * 100_000,     //  100k – 900k
+        1..=3 => rng.urange(1,  5)   * 1_000_000,   //   1M  –   4M
+        4..=6 => rng.urange(5, 10)   * 1_000_000,   //   5M  –   9M
+        7..=8 => rng.urange(10, 50)  * 1_000_000,   //  10M  –  49M
+        _     => rng.urange(50, 201) * 1_000_000,   //  50M  – 200M
     }
 }
 
@@ -249,9 +267,9 @@ fn workflow_rfq_fill(
     w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
-    let (sym, mid, spread, lot_min, lot_step) = SYMBOLS[sym_idx];
+    let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
     let side       = if rng.next() & 1 == 0 { 1u8 } else { 2u8 };
-    let lots       = rng.urange(1, 30) * lot_step + lot_min;
+    let lots       = pick_lots(rng);
     let account    = rng.choice(s.accounts);
 
     let mid_var = mid + (rng.f64_01() - 0.5) * spread * 4.0;
@@ -333,10 +351,10 @@ fn workflow_rfq_partial(
     w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
-    let (sym, mid, spread, lot_min, lot_step) = SYMBOLS[sym_idx];
+    let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
     let side    = if rng.next() & 1 == 0 { 1u8 } else { 2u8 };
-    let lots    = rng.urange(2, 30) * lot_step + lot_min;
-    let partial = (lots / 2).max(lot_min);
+    let lots    = pick_lots(rng).max(200_000);
+    let partial = (lots / 2).max(100_000);
     let remain  = lots - partial;
     let account = rng.choice(s.accounts);
 
@@ -414,9 +432,9 @@ fn workflow_market_fill(
     w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
-    let (sym, mid, spread, lot_min, lot_step) = SYMBOLS[sym_idx];
+    let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
     let side    = if rng.next() & 1 == 0 { 1u8 } else { 2u8 };
-    let lots    = rng.urange(1, 20) * lot_step + lot_min;
+    let lots    = pick_lots(rng);
     let account = rng.choice(s.accounts);
     let fill_px = mid + if side == 1 { spread / 2.0 } else { -spread / 2.0 };
 
@@ -456,9 +474,9 @@ fn workflow_limit_order(
     w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
-    let (sym, mid, spread, lot_min, lot_step) = SYMBOLS[sym_idx];
+    let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
     let side    = if rng.next() & 1 == 0 { 1u8 } else { 2u8 };
-    let lots    = rng.urange(1, 15) * lot_step + lot_min;
+    let lots    = pick_lots(rng);
     let account = rng.choice(s.accounts);
     // Limit price slightly away from market
     let limit_px = mid + if side == 1 {
@@ -510,9 +528,9 @@ fn workflow_cancel(
     w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
-    let (sym, _, spread, lot_min, lot_step) = SYMBOLS[sym_idx];
+    let (sym, _, spread, _, _) = SYMBOLS[sym_idx];
     let side    = if rng.next() & 1 == 0 { 1u8 } else { 2u8 };
-    let lots    = rng.urange(1, 25) * lot_step + lot_min;
+    let lots    = pick_lots(rng);
     let account = rng.choice(s.accounts);
     let mid     = SYMBOLS[sym_idx].1;
     let limit_px = mid - spread * 2.0 * rng.f64_01();
@@ -566,9 +584,9 @@ fn workflow_rfq_reject(
     w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
-    let (sym, mid, spread, lot_min, lot_step) = SYMBOLS[sym_idx];
+    let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
     let side    = if rng.next() & 1 == 0 { 1u8 } else { 2u8 };
-    let lots    = rng.urange(1, 50) * lot_step + lot_min;
+    let lots    = pick_lots(rng);
     let account = rng.choice(s.accounts);
     let mid_var = mid + (rng.f64_01() - 0.5) * spread * 4.0;
     let bid     = mid_var - spread / 2.0;
@@ -630,7 +648,13 @@ fn workflow_rfq_reject(
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let file = File::create(OUTPUT).expect("Cannot create output file");
+    // Optional positional args: <target_count> <output_file>
+    //   cargo run --release --bin gen_fix -- 100000 fix_test_100k.log
+    let args: Vec<String> = std::env::args().collect();
+    let target: usize = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(DEFAULT_TARGET);
+    let output: &str  = args.get(2).map(|s| s.as_str()).unwrap_or(DEFAULT_OUTPUT);
+
+    let file = File::create(output).expect("Cannot create output file");
     let mut w = BufWriter::with_capacity(4 * 1024 * 1024, file);
 
     let mut total = 0usize;
@@ -639,7 +663,7 @@ fn main() {
 
     // 8 sessions, each starts at 07:00 UTC with a small stagger
     let n_sessions  = SESSIONS.len();
-    let per_session = TARGET / n_sessions;
+    let per_session = target / n_sessions;
 
     for idx in 0..n_sessions {
         let stagger_us = (idx as u64) * 250_000; // 250 ms between session logons
@@ -648,9 +672,9 @@ fn main() {
         emit_logon(&mut w, &mut s, &mut total);
         emit_heartbeats(&mut w, &mut s, &mut total);
 
-        // Session-level target: stop a few messages short to hit exactly TARGET overall
+        // Session-level target: stop a few messages short to hit exactly target overall
         let session_target = if idx == n_sessions - 1 {
-            TARGET.saturating_sub(total).saturating_sub(2) // leave room for logout
+            target.saturating_sub(total).saturating_sub(2) // leave room for logout
         } else {
             per_session.saturating_sub(4) // -2 logon, -2 logout
         };
@@ -693,5 +717,5 @@ fn main() {
     }
 
     w.flush().unwrap();
-    eprintln!("\nDone. {} messages written to {}", total, OUTPUT);
+    eprintln!("\nDone. {} messages written to {}", total, output);
 }

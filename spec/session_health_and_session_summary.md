@@ -122,7 +122,7 @@ pub enum EventSeverity {
 
 ### 2.4 Display Format (Text)
 
-```
+```java
 SESSION SUMMARY — 2024-01-02
 ───────────────────────────────────────────────
 Session:        BANZAI → EXEC  (FIX 4.4)
@@ -162,7 +162,7 @@ Notable events:
 ### 3.2 Metrics (Exact Formulas)
 
 | Metric | Formula |
-|--------|---------|
+|--------|---------| 
 | Fill rate | `SUM(CumQty at final fill ER) / SUM(OrderQty from NOS)` per group |
 | Slippage (bps) | For limit orders: `(AvgPx - Price) / Price * 10000` for buys; `(Price - AvgPx) / Price * 10000` for sells. Average per fill. |
 | Partial fill rate | `COUNT(orders with >1 fill ER) / COUNT(orders)` |
@@ -312,7 +312,7 @@ pub enum HealthIssueKind {
 
 ## 7. UI Layout Suggestion
 
-```
+```rust
 ┌─────────────────────────────────────────────────────────────────┐
 │  Overview Session Report                                        │
 ├─────────────────────────────────────────────────────────────────┤

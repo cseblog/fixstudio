@@ -6,7 +6,8 @@
       "Bash(grep -v \"^warning: \\\\`\")",
       "Bash(curl -sL \"https://raw.githubusercontent.com/tigerbeetle/tigerbeetle/main/docs/TIGER_STYLE.md\" -o /Users/flokilab/projects/rust/fixstudio/TIGER_STYLE.md)",
       "Bash(dx serve:*)",
-      "Bash(dx --version)"
+      "Bash(dx --version)",
+      "Read(//Users/flokilab/.cargo/registry/src/**)"
     ]
   }
 }

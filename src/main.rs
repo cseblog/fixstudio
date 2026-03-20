@@ -2,10 +2,13 @@ mod app;
 mod components;
 mod dictionary;
 mod export;
+mod fill_quality;
 mod license;
 mod model;
 mod parser;
 mod sample;
+mod session_health;
+mod session_summary;
 mod style;
 
 use dioxus_desktop::{launch::launch, Config, WindowBuilder};
@@ -32,13 +35,18 @@ fn prewarm() {
 fn main() {
     prewarm();
 
-    let config = Config::default().with_window(
-        WindowBuilder::new()
-            .with_title("AI FIX Parser")
-            .with_maximized(true)
-            .with_inner_size(dioxus_desktop::LogicalSize::new(1280.0, 900.0))
-            .with_window_icon(load_icon()),
-    );
+    let config = Config::default()
+        .with_custom_head(
+            r#"<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>"#
+                .to_string(),
+        )
+        .with_window(
+            WindowBuilder::new()
+                .with_title("AI FIX Parser")
+                .with_maximized(true)
+                .with_inner_size(dioxus_desktop::LogicalSize::new(1280.0, 900.0))
+                .with_window_icon(load_icon()),
+        );
 
     launch(app::app, Vec::new(), vec![Box::new(config)]);
 }

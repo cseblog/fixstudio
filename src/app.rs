@@ -6,6 +6,7 @@ use dioxus::document::eval;
 
 use crate::components::detail::detail_panel;
 use crate::components::lifecycle::lifecycle_panel;
+use crate::components::overview::overview_panel;
 use crate::components::timeline::timeline_panel;
 use crate::license::{clear_license, instance_name, load_license, save_license, StoredLicense};
 use crate::model::FixMessage;
@@ -45,6 +46,7 @@ enum LicenseStatus {
 enum ViewMode {
     Timeline,
     Lifecycle,
+    Overview,
 }
 
 fn is_newer_version(latest: &str, current: &str) -> bool {
@@ -577,6 +579,7 @@ pub fn app() -> Element {
     let has_messages = !messages.read().is_empty();
     let pro = *is_pro.read();
     let in_lifecycle = *view_mode.read() == ViewMode::Lifecycle;
+    let in_overview  = *view_mode.read() == ViewMode::Overview;
     let left_collapsed  = *left_panel_collapsed.read();
     let right_collapsed = *right_panel_collapsed.read();
     let right_w = *right_panel_width.read() as u32;
@@ -659,11 +662,15 @@ pub fn app() -> Element {
                     class: "app-main",
                     style: if left_collapsed { "flex: none; width: 0; min-width: 0; overflow: hidden;" } else { "flex: 1; min-width: 0;" },
 
-                    // Panel view tabs (Timeline / Lifecycle)
+                    // Panel view tabs (Timeline / Lifecycle / Overview)
                     if has_messages {
                         div { class: "panel-tabs",
                             button {
-                                class: if !in_lifecycle { "panel-tab panel-tab-active" } else { "panel-tab" },
+                                class: if !in_lifecycle && !in_overview {
+                                    "panel-tab panel-tab-active"
+                                } else {
+                                    "panel-tab"
+                                },
                                 onclick: move |_| view_mode.set(ViewMode::Timeline),
                                 "Timeline"
                             }
@@ -680,7 +687,22 @@ pub fn app() -> Element {
                                         show_license_modal.set(true);
                                     }
                                 },
-                                if pro { "Trade Latency Analysis" } else { "✦ Trade Latency Analysis" }
+                                if pro { "Trade Latency" } else { "✦ Trade Latency" }
+                            }
+                            button {
+                                class: if in_overview {
+                                    "panel-tab panel-tab-pro panel-tab-active"
+                                } else {
+                                    "panel-tab panel-tab-pro"
+                                },
+                                onclick: move |_| {
+                                    if pro {
+                                        view_mode.set(ViewMode::Overview);
+                                    } else {
+                                        show_license_modal.set(true);
+                                    }
+                                },
+                                if pro { "Session Report" } else { "✦ Session Report" }
                             }
                         }
                     }
@@ -781,7 +803,12 @@ pub fn app() -> Element {
                         }
 
                         // ── Main panels ──
-                        if in_lifecycle {
+                        if in_overview {
+                            overview_panel {
+                                messages: messages,
+                                pro: pro,
+                            }
+                        } else if in_lifecycle {
                             lifecycle_panel {
                                 messages: messages,
                                 selected_idx: selected_idx,
@@ -941,36 +968,31 @@ pub fn app() -> Element {
                                 }
                             }
 
-                            // Fill Quality Scorecard (coming soon)
-                            div { class: "feature-card feature-card-soon",
+                            // Overview Session Report (Fill Quality + Health + Summary)
+                            div {
+                                class: if pro { "feature-card" } else { "feature-card feature-card-locked" },
                                 div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Fill Quality Score" }
-                                    span { class: "badge badge-orange feature-badge", "Soon" }
+                                    span { class: "feature-card-name", "Session Report" }
+                                    if pro {
+                                        span { class: "badge badge-green feature-badge", "Active" }
+                                    } else {
+                                        span { class: "badge badge-gray feature-badge", "Pro" }
+                                    }
                                 }
                                 p { class: "feature-card-desc",
-                                    "Per-counterparty fill rate, slippage (bps) & ack latency analytics."
+                                    "Fill quality scorecard, session health diagnostics, \
+                                    and an executive session summary."
                                 }
-                            }
-
-                            // Session Health (coming soon)
-                            div { class: "feature-card feature-card-soon",
-                                div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Session Health" }
-                                    span { class: "badge badge-orange feature-badge", "Soon" }
-                                }
-                                p { class: "feature-card-desc",
-                                    "Detect heartbeat gaps, sequence errors, reconnects & latency spikes."
-                                }
-                            }
-
-                            // Smart Session Summary (coming soon)
-                            div { class: "feature-card feature-card-soon",
-                                div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Session Summary" }
-                                    span { class: "badge badge-orange feature-badge", "Soon" }
-                                }
-                                p { class: "feature-card-desc",
-                                    "AI-generated one-page executive summary of your session."
+                                if pro {
+                                    if has_messages {
+                                        button {
+                                            class: "btn-feature",
+                                            onclick: move |_| view_mode.set(ViewMode::Overview),
+                                            if in_overview { "← Back to Timeline" } else { "View Report →" }
+                                        }
+                                    } else {
+                                        span { class: "feature-card-hint", "Load data to use" }
+                                    }
                                 }
                             }
 

@@ -7,6 +7,7 @@
 //! Also renders latency statistics (histogram, scatter, per-symbol breakdown).
 
 use dioxus::prelude::*;
+use dioxus::document::eval;
 use std::collections::HashMap;
 
 use crate::export::{csv_escape, now_tag};
@@ -502,78 +503,6 @@ fn compute_phase_stats(lats: &[i64]) -> Option<PhaseStats> {
     })
 }
 
-// ─── SVG charts ───────────────────────────────────────────────────────────────
-
-const CHART_FONT: &str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-
-fn render_histogram(lats: &[i64]) -> String {
-    let buckets: &[(&str, i64, i64, &str)] = &[
-        ("<10µs",      0,       10,       "#4a7fa8"),
-        ("10–50µs",    10,      50,       "#4a7fa8"),
-        ("50–100µs",   50,      100,      "#4a8a70"),
-        ("0.1–0.5ms",  100,     500,      "#3d8a62"),
-        ("0.5–1ms",    500,     1_000,    "#3d8a62"),
-        ("1–2ms",      1_000,   2_000,    "#4a8a40"),
-        ("2–5ms",      2_000,   5_000,    "#6a8a30"),
-        ("5–10ms",     5_000,   10_000,   "#8a8030"),
-        ("10–20ms",    10_000,  20_000,   "#9a7028"),
-        ("20–50ms",    20_000,  50_000,   "#a06030"),
-        ("50–100ms",   50_000,  100_000,  "#904040"),
-        ("100–200ms",  100_000, 200_000,  "#803030"),
-        ("200–500ms",  200_000, 500_000,  "#782828"),
-        (">500ms",     500_000, i64::MAX, "#601818"),
-    ];
-    let mut counts = vec![0usize; buckets.len()];
-    for &l in lats {
-        for (i, (_, lo, hi, _)) in buckets.iter().enumerate() {
-            if l >= *lo && l < *hi { counts[i] += 1; break; }
-        }
-    }
-    let max_c = counts.iter().copied().max().unwrap_or(1).max(1);
-    const VW: f64 = 480.0;
-    const VH: f64 = 170.0;
-    const PL: f64 = 46.0;
-    const PR: f64 = 10.0;
-    const PT: f64 = 10.0;
-    const PB: f64 = 54.0;
-    let plot_w = VW - PL - PR;
-    let plot_h = VH - PT - PB;
-    let bucket_count = buckets.len() as f64;
-    let bar_w = plot_w / bucket_count - 5.0;
-    let mut s = format!(r##"<svg viewBox="0 0 {VW} {VH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block"><style>text{{font-family:{CHART_FONT};fill:#8082a0}}</style>"##);
-    s += &format!(r##"<rect x="0" y="0" width="{VW}" height="{VH}" fill="#252840"/>"##);
-    s += &format!(r##"<rect x="{PL}" y="{PT}" width="{plot_w}" height="{plot_h}" fill="#2d3050" rx="4"/>"##);
-    const GRID_LINES: usize = 4;
-    for i in 1..=GRID_LINES {
-        let y   = PT + plot_h * (1.0 - i as f64 / GRID_LINES as f64);
-        let v   = max_c as f64 * i as f64 / GRID_LINES as f64;
-        let lbl = if v >= 1000.0 { format!("{:.0}k", v / 1000.0) } else { format!("{:.0}", v) };
-        s += &format!(r##"<line x1="{PL}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#e4e6f0" stroke-width="1"/>"##, PL + plot_w);
-        s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="end">{lbl}</text>"##, PL - 4.0, y + 3.5);
-    }
-    s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="end">0</text>"##, PL - 4.0, PT + plot_h + 3.5);
-    for (i, ((label, _, _, color), &count)) in buckets.iter().zip(counts.iter()).enumerate() {
-        let bar_height = (count as f64 / max_c as f64) * plot_h;
-        let bar_x      = PL + i as f64 * (plot_w / bucket_count) + 2.5;
-        let bar_y      = PT + plot_h - bar_height;
-        if bar_height > 0.5 {
-            s += &format!(r##"<rect x="{bar_x:.1}" y="{bar_y:.1}" width="{bar_w:.1}" height="{bar_height:.1}" fill="{color}" rx="3"/>"##);
-            if bar_height > 18.0 {
-                s += &format!(r##"<text x="{:.1}" y="{:.1}" font-size="9" text-anchor="middle" fill="#ffffff" font-weight="700">{count}</text>"##, bar_x + bar_w / 2.0, bar_y + 13.0);
-            }
-        } else {
-            s += &format!(r##"<rect x="{bar_x:.1}" y="{:.1}" width="{bar_w:.1}" height="2" fill="{color}" rx="1" opacity="0.4"/>"##, PT + plot_h - 2.0);
-        }
-        let label_x = bar_x + bar_w / 2.0;
-        let label_y = PT + plot_h + 8.0;
-        s += &format!(r##"<text x="{label_x:.1}" y="{label_y:.1}" font-size="8" text-anchor="end" transform="rotate(-45,{label_x:.1},{label_y:.1})">{label}</text>"##);
-    }
-    s += &format!(r##"<line x1="{PL}" y1="{PT}" x2="{PL}" y2="{:.1}" stroke="#c8cae0" stroke-width="1"/>"##, PT + plot_h);
-    s += &format!(r##"<line x1="{PL}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#c8cae0" stroke-width="1"/>"##, PT + plot_h, PL + plot_w, PT + plot_h);
-    s += "</svg>";
-    s
-}
-
 // ─── Flow node types ──────────────────────────────────────────────────────────
 
 #[derive(Clone, PartialEq)]
@@ -833,10 +762,20 @@ pub fn lifecycle_panel(
     let quote_nos_stats = use_memo(move || compute_phase_stats(&quote_nos_lats.read()));
     let nos_er_stats    = use_memo(move || compute_phase_stats(&nos_er_lats.read()));
     let er_fill_stats   = use_memo(move || compute_phase_stats(&er_fill_lats.read()));
-    let rfq_quote_hist  = use_memo(move || render_histogram(&rfq_quote_lats.read()));
-    let quote_nos_hist  = use_memo(move || render_histogram(&quote_nos_lats.read()));
-    let nos_er_hist     = use_memo(move || render_histogram(&nos_er_lats.read()));
-    let er_fill_hist    = use_memo(move || render_histogram(&er_fill_lats.read()));
+    // Draw the ECharts histogram whenever the expanded phase or latency data changes.
+    use_effect(move || {
+        let phase = *expanded_phase.read();
+        let Some(idx) = phase else { return };
+        let lats: Vec<i64> = match idx {
+            0 => rfq_quote_lats.read().clone(),
+            1 => quote_nos_lats.read().clone(),
+            2 => nos_er_lats.read().clone(),
+            3 => er_fill_lats.read().clone(),
+            _ => return,
+        };
+        let js = latency_hist_js(&lats);
+        spawn(async move { let _ = eval(&js).await; });
+    });
 
     // Filtered + sorted chain list (capped at PAGE_SIZE for rendering)
     let filtered = use_memo(move || {
@@ -910,10 +849,6 @@ pub fn lifecycle_panel(
     let qn_stats  = quote_nos_stats.read().clone();
     let ne_stats  = nos_er_stats.read().clone();
     let ef_stats  = er_fill_stats.read().clone();
-    let rq_hist   = rfq_quote_hist.read().clone();
-    let qn_hist   = quote_nos_hist.read().clone();
-    let ne_hist   = nos_er_hist.read().clone();
-    let ef_hist   = er_fill_hist.read().clone();
     let expanded_phase_val = *expanded_phase.read();
     let drill_band_val     = *drill_band.read();
 
@@ -931,13 +866,6 @@ pub fn lifecycle_panel(
     );
 
     // ── Active phase detail (precomputed for RSX) ────────────────────────
-    let active_hist_html: String = match expanded_phase_val {
-        Some(0) => rq_hist.clone(),
-        Some(1) => qn_hist.clone(),
-        Some(2) => ne_hist.clone(),
-        Some(3) => ef_hist.clone(),
-        _       => String::new(),
-    };
     let active_stats: Option<PhaseStats> = match expanded_phase_val {
         Some(0) => rq_stats.clone(),
         Some(1) => qn_stats.clone(),
@@ -1107,9 +1035,7 @@ pub fn lifecycle_panel(
                             span { class: "phase-detail-count", "{active_count} observations" }
                             span { class: "phase-detail-hint", "● click P50 · P95 · P99 to filter the chain table" }
                         }
-                        div { class: "latency-chart-wrap phase-hist-full",
-                            dangerous_inner_html: "{active_hist_html}"
-                        }
+                        div { id: "latency-hist", class: "latency-hist-echarts" }
                         div { class: "phase-stats-table",
                             // Min (not clickable — it's a single extreme value)
                             div { class: "phase-stat-cell phase-stat-green",
@@ -1379,6 +1305,85 @@ pub fn lifecycle_panel(
             }
         }
     }
+}
+
+// ── ECharts histogram builder ─────────────────────────────────────────────────
+
+fn latency_hist_js(lats: &[i64]) -> String {
+    const BUCKETS: &[(&str, i64, i64, &str)] = &[
+        ("<10µs",      0,            10,       "#4ade80"),
+        ("10–50µs",    10,           50,       "#86efac"),
+        ("50–100µs",   50,           100,      "#a3e635"),
+        ("0.1–0.5ms",  100,          500,      "#facc15"),
+        ("0.5–1ms",    500,          1_000,    "#fb923c"),
+        ("1–2ms",      1_000,        2_000,    "#f97316"),
+        ("2–5ms",      2_000,        5_000,    "#ef4444"),
+        ("5–10ms",     5_000,        10_000,   "#dc2626"),
+        ("10–20ms",    10_000,       20_000,   "#b91c1c"),
+        ("20–50ms",    20_000,       50_000,   "#991b1b"),
+        ("50–100ms",   50_000,       100_000,  "#7f1d1d"),
+        ("100–500ms",  100_000,      500_000,  "#6b21a8"),
+        (">500ms",     500_000,      i64::MAX, "#4c1d95"),
+    ];
+    let mut counts = vec![0u64; BUCKETS.len()];
+    for &l in lats {
+        for (i, &(_, lo, hi, _)) in BUCKETS.iter().enumerate() {
+            if l >= lo && l < hi { counts[i] += 1; break; }
+        }
+    }
+    let labels: Vec<&str> = BUCKETS.iter().map(|b| b.0).collect();
+    let colors: Vec<&str> = BUCKETS.iter().map(|b| b.3).collect();
+    let labels_json = serde_json::to_string(&labels).unwrap_or_default();
+    let counts_json = serde_json::to_string(&counts).unwrap_or_default();
+    let colors_json = serde_json::to_string(&colors).unwrap_or_default();
+
+    format!(r#"
+(function init() {{
+    if (typeof echarts === 'undefined') {{ setTimeout(init, 150); return; }}
+    var el = document.getElementById('latency-hist');
+    if (!el) {{ setTimeout(init, 150); return; }}
+    var chart = echarts.getInstanceByDom(el) || echarts.init(el, null, {{renderer:'canvas'}});
+    var labels = {labels};
+    var counts = {counts};
+    var colors = {colors};
+    chart.setOption({{
+        backgroundColor: 'transparent',
+        tooltip: {{
+            trigger: 'axis',
+            axisPointer: {{ type: 'shadow' }},
+            formatter: function(p) {{
+                return '<b>' + p[0].name + '</b><br/>Count: ' + p[0].value;
+            }}
+        }},
+        grid: {{ left: '4%', right: '2%', top: '10px', bottom: '72px', containLabel: true }},
+        xAxis: {{
+            type: 'category',
+            data: labels,
+            axisLabel: {{
+                color: '#6b7280', fontSize: 10, rotate: 40, interval: 0
+            }},
+            axisLine: {{ lineStyle: {{ color: '#374151' }} }},
+            axisTick: {{ show: false }}
+        }},
+        yAxis: {{
+            type: 'value',
+            axisLabel: {{ color: '#6b7280', fontSize: 10 }},
+            splitLine: {{ lineStyle: {{ color: '#1f2937' }} }}
+        }},
+        series: [{{
+            type: 'bar',
+            data: counts.map(function(v, i) {{
+                return {{ value: v, itemStyle: {{ color: colors[i], borderRadius: [3,3,0,0] }} }};
+            }}),
+            barMaxWidth: 36,
+            label: {{
+                show: true, position: 'top', color: '#9ca3af', fontSize: 9,
+                formatter: function(p) {{ return p.value > 0 ? p.value : ''; }}
+            }}
+        }}]
+    }}, true);
+}})();
+"#, labels = labels_json, counts = counts_json, colors = colors_json)
 }
 
 #[cfg(test)]
