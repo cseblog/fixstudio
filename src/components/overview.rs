@@ -101,7 +101,7 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
             // ── Header ───────────────────────────────────────────────────────
             div { class: "overview-header",
                 div { class: "overview-header-left",
-                    h2 { class: "overview-title", "Session Analysis" }
+                    // h2 { class: "overview-title", "Session Analysis" }
                     if let Some(ref d) = data_opt {
                         span { class: "overview-meta",
                             "{d.summary.sender} → {d.summary.target}  ·  \

@@ -645,12 +645,765 @@ fn workflow_rfq_reject(
     s.tick(rng.urange(10_000, 80_000));
 }
 
+// ── Validator test-fixture generator ─────────────────────────────────────────
+//
+// Produces two files:
+//   fix_validator_test.log       — one FIX message per line (pipe-delimited)
+//   fix_validator_test.manifest  — tab-separated: line | exp_errors | exp_warnings | category | description
+//
+// Each message is crafted to trigger exactly the documented violation (or none for VALID cases).
+// Usage:  cargo run --release --bin gen_fix -- --mode validator
+
+const VTEST_LOG:      &str = "fix_validator_test.log";
+const VTEST_MANIFEST: &str = "fix_validator_test.manifest";
+
+// Fixed header fields used in all test messages.
+const VT_TS: &str  = "20240315-12:00:00.000000";
+const VT_CLI: &str = "CITIFX";
+const VT_SRV: &str = "FXECN";
+const VT_SYM: &str = "EUR/USD";
+/// Build a complete FIX message but override `9` (BodyLength) with `bl_override`
+/// and `10` (CheckSum) with `cs_override`.  Pass `None` to compute the real values.
+fn build_with_overrides(body_fields: &str, bl_override: Option<u32>, cs_override: Option<u32>) -> String {
+    let body_len = bl_override.unwrap_or(body_fields.len() as u32);
+    let header   = format!("8=FIX.4.4|9={}|", body_len);
+    let checksum: u32 = if let Some(cs) = cs_override {
+        cs
+    } else {
+        header.bytes().chain(body_fields.bytes()).map(|b| b as u32).sum::<u32>() % 256
+    };
+    format!("{}{}10={:03}|", header, body_fields, checksum)
+}
+
+/// A single validator test case.
+struct VCase {
+    msg:          String,
+    exp_errors:   u32,
+    exp_warnings: u32,
+    category:     &'static str,
+    description:  String,
+}
+
+impl VCase {
+    fn new(msg: String, exp_errors: u32, exp_warnings: u32, category: &'static str, description: impl Into<String>) -> Self {
+        Self { msg, exp_errors, exp_warnings, category, description: description.into() }
+    }
+}
+
+fn gen_validator_test(log_path: &str, manifest_path: &str) {
+    let mut cases: Vec<VCase> = Vec::new();
+    let mut seq_id = 1u64;
+
+    macro_rules! vcase {
+        ($msg:expr, $errs:expr, $warns:expr, $cat:expr, $desc:expr) => {
+            cases.push(VCase::new($msg, $errs, $warns, $cat, $desc));
+        }
+    }
+
+    // Helper: body for a complete, valid NOS (Market order)
+    let valid_nos_market = |seq: u64| -> String {
+        build_with_overrides(
+            &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|60={}|",
+                seq, VT_CLI, VT_TS, VT_SRV, seq, VT_SYM, VT_TS),
+            None, None,
+        )
+    };
+    let valid_nos_limit = |seq: u64| -> String {
+        build_with_overrides(
+            &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=2|44=1.08500|54=1|55={}|60={}|",
+                seq, VT_CLI, VT_TS, VT_SRV, seq, VT_SYM, VT_TS),
+            None, None,
+        )
+    };
+    let valid_er_fill = |seq: u64, cl: u64| -> String {
+        build_with_overrides(
+            &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54=1|38=1000000|14=1000000|151=0|31=1.08500|32=1000000|6=1.08500|60={}|",
+                seq, VT_SRV, VT_TS, VT_CLI, seq, cl, seq, VT_SYM, VT_TS),
+            None, None,
+        )
+    };
+    let valid_logon = |seq: u64| -> String {
+        build_with_overrides(
+            &format!("35=A|34={}|49={}|52={}|56={}|98=0|108=30|", seq, VT_CLI, VT_TS, VT_SRV),
+            None, None,
+        )
+    };
+
+    // ── Section 1: VALID messages — must produce 0 errors, 0 warnings ──────────
+
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(valid_logon(s), 0, 0, "VALID", "Valid Logon (35=A)");
+    }
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=0|34={}|49={}|52={}|56={}|", s, VT_CLI, VT_TS, VT_SRV),
+                None, None,
+            ),
+            0, 0, "VALID", "Valid Heartbeat (35=0)"
+        );
+    }
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(valid_nos_market(s), 0, 0, "VALID", "Valid NOS Market order (35=D, OrdType=1)");
+    }
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(valid_nos_limit(s), 0, 0, "VALID", "Valid NOS Limit order (35=D, OrdType=2, Price present)");
+    }
+    {
+        let s = seq_id; seq_id += 1;
+        // NOS with OrdType=D (Previously Quoted) — must have QuoteID
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=D|44=1.08500|117=QT00000001|54=2|55={}|59=4|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            0, 0, "VALID", "Valid NOS PreviouslyQuoted RFQ fill (35=D, OrdType=D, QuoteID present)"
+        );
+    }
+    {
+        let s = seq_id; seq_id += 1;
+        let cl = s - 1;
+        vcase!(valid_er_fill(s, cl), 0, 0, "VALID", "Valid ExecutionReport Fill (35=8, ExecType=F)");
+    }
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=R|34={}|49={}|52={}|56={}|131=QR00000001|", s, VT_CLI, VT_TS, VT_SRV),
+                None, None,
+            ),
+            0, 0, "VALID", "Valid QuoteRequest (35=R)"
+        );
+    }
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=S|34={}|49={}|52={}|56={}|117=QT00000001|55={}|132=1.08475|133=1.08525|",
+                    s, VT_SRV, VT_TS, VT_CLI, VT_SYM),
+                None, None,
+            ),
+            0, 0, "VALID", "Valid Quote (35=S)"
+        );
+    }
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=5|34={}|49={}|52={}|56={}|58=End of session|", s, VT_CLI, VT_TS, VT_SRV),
+                None, None,
+            ),
+            0, 0, "VALID", "Valid Logout (35=5)"
+        );
+    }
+    // Valid ER New (not a fill — no LastPx/LastQty required)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=0|55={}|54=1|38=1000000|14=0|151=1000000|6=0|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            0, 0, "VALID", "Valid ExecutionReport New (35=8, ExecType=0)"
+        );
+    }
+    // Valid ER Canceled
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=4|39=4|55={}|54=1|38=1000000|14=0|151=0|6=0|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            0, 0, "VALID", "Valid ExecutionReport Canceled (35=8, ExecType=4, OrdStatus=4)"
+        );
+    }
+
+    // ── Section 2: MISSING required header tags ──────────────────────────────
+
+    // Missing MsgSeqNum (34)
+    {
+        vcase!(
+            build_with_overrides(
+                &format!("35=0|49={}|52={}|56={}|", VT_CLI, VT_TS, VT_SRV),
+                None, None,
+            ),
+            1, 0, "MISSING_HEADER_TAG", "Missing MsgSeqNum (tag 34)"
+        );
+    }
+    // Missing SenderCompID (49)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=0|34={}|52={}|56={}|", s, VT_TS, VT_SRV),
+                None, None,
+            ),
+            1, 0, "MISSING_HEADER_TAG", "Missing SenderCompID (tag 49)"
+        );
+    }
+    // Missing SendingTime (52)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=0|34={}|49={}|56={}|", s, VT_CLI, VT_SRV),
+                None, None,
+            ),
+            1, 0, "MISSING_HEADER_TAG", "Missing SendingTime (tag 52)"
+        );
+    }
+    // Missing TargetCompID (56)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=0|34={}|49={}|52={}|", s, VT_CLI, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_HEADER_TAG", "Missing TargetCompID (tag 56)"
+        );
+    }
+
+    // ── Section 3: MISSING required body tags ────────────────────────────────
+
+    // NOS missing ClOrdID (11)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|21=1|38=1000000|40=1|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "NOS missing ClOrdID (tag 11)"
+        );
+    }
+    // NOS missing HandlInst (21)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|38=1000000|40=1|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "NOS missing HandlInst (tag 21)"
+        );
+    }
+    // NOS missing OrderQty (38)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|40=1|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "NOS missing OrderQty (tag 38)"
+        );
+    }
+    // NOS missing OrdType (40)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "NOS missing OrdType (tag 40)"
+        );
+    }
+    // NOS missing Side (54)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "NOS missing Side (tag 54)"
+        );
+    }
+    // NOS missing Symbol (55)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "NOS missing Symbol (tag 55)"
+        );
+    }
+    // NOS missing TransactTime (60)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "NOS missing TransactTime (tag 60)"
+        );
+    }
+    // ER missing ExecType (150)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|39=0|55={}|54=1|38=1000000|14=0|151=1000000|6=0|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "ER missing ExecType (tag 150)"
+        );
+    }
+    // ER missing LeavesQty (151)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=0|55={}|54=1|38=1000000|14=0|6=0|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "ER missing LeavesQty (tag 151)"
+        );
+    }
+    // ER missing OrdStatus (39)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|55={}|54=1|38=1000000|14=0|151=1000000|6=0|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "ER missing OrdStatus (tag 39)"
+        );
+    }
+    // Logon missing EncryptMethod (98)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=A|34={}|49={}|52={}|56={}|108=30|", s, VT_CLI, VT_TS, VT_SRV),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "Logon missing EncryptMethod (tag 98)"
+        );
+    }
+    // Logon missing HeartBtInt (108)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=A|34={}|49={}|52={}|56={}|98=0|", s, VT_CLI, VT_TS, VT_SRV),
+                None, None,
+            ),
+            1, 0, "MISSING_REQUIRED_TAG", "Logon missing HeartBtInt (tag 108)"
+        );
+    }
+
+    // ── Section 4: INVALID enum values ──────────────────────────────────────
+
+    // Side = 0 (0 is not a valid Side value; 1=Buy, 2=Sell, etc.)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=0|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "INVALID_ENUM", "NOS Side=0 (invalid; valid: 1-9)"
+        );
+    }
+    // Side = X
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=X|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "INVALID_ENUM", "NOS Side=X (not a valid FIX Side value)"
+        );
+    }
+    // OrdType = 0 (not in FIX 4.4 valid OrdType set)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=0|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "INVALID_ENUM", "NOS OrdType=0 (invalid; FIX 4.4 valid: 1-9, A-P)"
+        );
+    }
+    // TimeInForce = X
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|59=X|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "INVALID_ENUM", "NOS TimeInForce=X (invalid)"
+        );
+    }
+    // OrdStatus = X
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=X|55={}|54=1|38=1000000|14=0|151=1000000|6=0|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "INVALID_ENUM", "ER OrdStatus=X (invalid)"
+        );
+    }
+    // ExecType = Z
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=Z|39=0|55={}|54=1|38=1000000|14=0|151=1000000|6=0|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "INVALID_ENUM", "ER ExecType=Z (invalid)"
+        );
+    }
+    // EncryptMethod = 9 (only 0-6 valid)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=A|34={}|49={}|52={}|56={}|98=9|108=30|", s, VT_CLI, VT_TS, VT_SRV),
+                None, None,
+            ),
+            1, 0, "INVALID_ENUM", "Logon EncryptMethod=9 (invalid; valid: 0-6)"
+        );
+    }
+    // HandlInst = 9 (only 1-3 valid)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=9|38=1000000|40=1|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "INVALID_ENUM", "NOS HandlInst=9 (invalid; valid: 1-3)"
+        );
+    }
+
+    // ── Section 5: CONDITIONAL tags missing ─────────────────────────────────
+
+    // Limit NOS missing Price (44)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=2|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "CONDITIONAL_TAG_MISSING", "NOS OrdType=2 (Limit) but Price (tag 44) missing"
+        );
+    }
+    // Stop NOS missing StopPx (99)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=3|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "CONDITIONAL_TAG_MISSING", "NOS OrdType=3 (Stop) but StopPx (tag 99) missing"
+        );
+    }
+    // GTD NOS missing ExpireDate (432)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=2|44=1.08500|54=1|55={}|59=6|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "CONDITIONAL_TAG_MISSING", "NOS TimeInForce=6 (GTD) but ExpireDate (tag 432) missing"
+        );
+    }
+    // ER ExecType=F missing LastPx (31)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54=1|38=1000000|14=1000000|151=0|32=1000000|6=1.08500|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "CONDITIONAL_TAG_MISSING", "ER ExecType=F (Trade) but LastPx (tag 31) missing"
+        );
+    }
+    // ER ExecType=F missing LastQty (32)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54=1|38=1000000|14=1000000|151=0|31=1.08500|6=1.08500|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "CONDITIONAL_TAG_MISSING", "ER ExecType=F (Trade) but LastQty (tag 32) missing"
+        );
+    }
+    // RFQ NOS (OrdType=D) missing QuoteID (117)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=D|44=1.08500|54=1|55={}|59=4|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "CONDITIONAL_TAG_MISSING", "NOS OrdType=D (PreviouslyQuoted) but QuoteID (tag 117) missing"
+        );
+    }
+    // ER ExecType=G (TradeCorrect) missing ExecRefID (19)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=G|39=2|55={}|54=1|38=1000000|14=1000000|151=0|31=1.08500|32=1000000|6=1.08500|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "CONDITIONAL_TAG_MISSING", "ER ExecType=G (TradeCorrect) but ExecRefID (tag 19) missing"
+        );
+    }
+
+    // ── Section 6: CONSISTENCY violations ───────────────────────────────────
+
+    // ER: LeavesQty(200000) + CumQty(700000) = 900000 ≠ OrderQty(1000000)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54=1|38=1000000|14=700000|151=200000|31=1.08500|32=700000|6=1.08500|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            1, 0, "CONSISTENCY_FILL_QTY", "ER ExecType=F: LeavesQty(200000) + CumQty(700000) = 900000 ≠ OrderQty(1000000)"
+        );
+    }
+    // ER: OrdStatus=2 (Filled) but LeavesQty = 50000 (must be 0)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54=1|38=1000000|14=950000|151=50000|31=1.08500|32=950000|6=1.08500|60={}|",
+                    s, VT_SRV, VT_TS, VT_CLI, s, s, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            2, 0, "CONSISTENCY_FILLED_LEAVES", "ER OrdStatus=2 (Filled) but LeavesQty=50000 (must be 0); also fails fill qty check"
+        );
+    }
+
+    // ── Section 7: DUPLICATE tags ────────────────────────────────────────────
+
+    // Duplicate Symbol (55)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|55=GBP/USD|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            0, 1, "DUPLICATE_TAG", "NOS with duplicate Symbol (tag 55) — second value GBP/USD"
+        );
+    }
+    // Duplicate ClOrdID (11)
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|11=CO99999999|21=1|38=1000000|40=1|54=1|55={}|60={}|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            0, 1, "DUPLICATE_TAG", "NOS with duplicate ClOrdID (tag 11)"
+        );
+    }
+
+    // ── Section 8: CUSTOM / EXTENDED tags ───────────────────────────────────
+
+    // Custom tag >= 5000 → Warning
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|60={}|9001=INTERNAL-REF-001|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            0, 1, "CUSTOM_TAG", "NOS with proprietary tag 9001 (custom, >= 5000) — should warn only"
+        );
+    }
+    // Multiple custom tags
+    {
+        let s = seq_id; seq_id += 1;
+        vcase!(
+            build_with_overrides(
+                &format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|60={}|5001=VENUE-REF|5002=ALGO-STRAT|",
+                    s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS),
+                None, None,
+            ),
+            0, 2, "CUSTOM_TAG", "NOS with two proprietary tags 5001 and 5002 — two warnings"
+        );
+    }
+
+    // ── Section 9: FIX VERSION violations ───────────────────────────────────
+
+    // FIX.4.2 message containing tag 453 (NoPartyIDs, introduced in FIX.4.4)
+    {
+        let s = seq_id; seq_id += 1;
+        let body = format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|60={}|453=1|448=CITIFX|447=D|452=1|",
+            s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS);
+        let body_len = body.len() as u32;
+        let header = format!("8=FIX.4.2|9={}|", body_len);
+        let checksum: u32 = header.bytes().chain(body.bytes()).map(|b| b as u32).sum::<u32>() % 256;
+        vcase!(
+            format!("{}{}10={:03}|", header, body, checksum),
+            0, 3, "VERSION_VIOLATION", "FIX.4.2 message with tags 453/448/452 (introduced in FIX.4.4) — three version warnings"
+        );
+    }
+    // FIX.4.2 message with tag 571 (TradeReportID, introduced in FIX.4.4)
+    {
+        let s = seq_id; seq_id += 1;
+        let body = format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|60={}|571=TRD-001|",
+            s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS);
+        let body_len = body.len() as u32;
+        let header = format!("8=FIX.4.2|9={}|", body_len);
+        let checksum: u32 = header.bytes().chain(body.bytes()).map(|b| b as u32).sum::<u32>() % 256;
+        vcase!(
+            format!("{}{}10={:03}|", header, body, checksum),
+            0, 1, "VERSION_VIOLATION", "FIX.4.2 message with tag 571 (TradeReportID, introduced in FIX.4.4)"
+        );
+    }
+
+    // ── Section 10: CHECKSUM and BODYLENGTH ─────────────────────────────────
+
+    // Wrong checksum (computed + 1)
+    {
+        let s = seq_id; seq_id += 1;
+        let body = format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|60={}|",
+            s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS);
+        let body_len = body.len() as u32;
+        let header = format!("8=FIX.4.4|9={}|", body_len);
+        let real_cs: u32 = header.bytes().chain(body.bytes()).map(|b| b as u32).sum::<u32>() % 256;
+        let bad_cs = (real_cs + 1) % 256;
+        vcase!(
+            format!("{}{}10={:03}|", header, body, bad_cs),
+            1, 0, "CHECKSUM_MISMATCH", format!("Correct checksum is {:03} but tag 10 has {:03}", real_cs, bad_cs)
+        );
+    }
+    // Wrong BodyLength (set to 5, real is much larger)
+    {
+        let s = seq_id; seq_id += 1;
+        let body = format!("35=D|34={}|49={}|52={}|56={}|11=CO{:08}|21=1|38=1000000|40=1|54=1|55={}|60={}|",
+            s, VT_CLI, VT_TS, VT_SRV, s, VT_SYM, VT_TS);
+        vcase!(
+            build_with_overrides(&body, Some(5), None),
+            1, 0, "BODY_LENGTH_MISMATCH", format!("BodyLength set to 5 but actual body is {} bytes", body.len())
+        );
+    }
+    // Correct checksum and BodyLength (control — must be clean)
+    {
+        let s = seq_id;
+        vcase!(valid_nos_market(s), 0, 0, "VALID", "Control: valid NOS with correct checksum and BodyLength");
+    }
+
+    // ── Write output files ────────────────────────────────────────────────────
+
+    let log_file = File::create(log_path).expect("Cannot create log file");
+    let mut log  = BufWriter::new(log_file);
+
+    let man_file  = File::create(manifest_path).expect("Cannot create manifest file");
+    let mut manifest = BufWriter::new(man_file);
+
+    writeln!(manifest, "# FIX Validator test fixture manifest").unwrap();
+    writeln!(manifest, "# Generated by gen_fix --mode validator").unwrap();
+    writeln!(manifest, "# Columns: line_number | expected_errors | expected_warnings | category | description").unwrap();
+    writeln!(manifest, "#").unwrap();
+    writeln!(manifest, "# Load {} into AiFIXParser, switch to Validate tab,", log_path).unwrap();
+    writeln!(manifest, "# click 'Batch Validate', and compare results against this manifest.").unwrap();
+    writeln!(manifest, "#").unwrap();
+
+    let total = cases.len();
+    for (i, case) in cases.iter().enumerate() {
+        log.write_all(case.msg.as_bytes()).unwrap();
+        log.write_all(b"\n").unwrap();
+        writeln!(manifest, "{}|{}|{}|{}|{}",
+            i + 1, case.exp_errors, case.exp_warnings, case.category, case.description
+        ).unwrap();
+    }
+    log.flush().unwrap();
+    manifest.flush().unwrap();
+
+    eprintln!("Validator test fixture: {} messages written to {}", total, log_path);
+    eprintln!("Manifest written to {}", manifest_path);
+    eprintln!();
+    eprintln!("Summary:");
+    let valid_count = cases.iter().filter(|c| c.exp_errors == 0 && c.exp_warnings == 0).count();
+    let error_count = cases.iter().filter(|c| c.exp_errors > 0).count();
+    let warn_count  = cases.iter().filter(|c| c.exp_warnings > 0 && c.exp_errors == 0).count();
+    eprintln!("  {:3} VALID (0 errors, 0 warnings)", valid_count);
+    eprintln!("  {:3} should produce ERRORS", error_count);
+    eprintln!("  {:3} should produce WARNINGS only", warn_count);
+    eprintln!();
+    eprintln!("To use: Load {} in AiFIXParser → Validate tab → Batch Validate", log_path);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
     // Optional positional args: <target_count> <output_file>
     //   cargo run --release --bin gen_fix -- 100000 fix_test_100k.log
+    //   cargo run --release --bin gen_fix -- --mode validator
     let args: Vec<String> = std::env::args().collect();
+
+    // Check for --mode validator
+    if args.iter().any(|a| a == "--mode") {
+        let mode_idx = args.iter().position(|a| a == "--mode").unwrap();
+        if args.get(mode_idx + 1).map(|s| s.as_str()) == Some("validator") {
+            let log_path  = args.get(mode_idx + 2).map(|s| s.as_str()).unwrap_or(VTEST_LOG);
+            let man_path  = args.get(mode_idx + 3).map(|s| s.as_str()).unwrap_or(VTEST_MANIFEST);
+            gen_validator_test(log_path, man_path);
+            return;
+        }
+    }
+
     let target: usize = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(DEFAULT_TARGET);
     let output: &str  = args.get(2).map(|s| s.as_str()).unwrap_or(DEFAULT_OUTPUT);
 

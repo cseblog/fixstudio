@@ -402,6 +402,12 @@ fn trim_bytes(b: &[u8]) -> &[u8] {
 
 // ── Scalar path ───────────────────────────────────────────────────────────────
 
+/// Parse a single FIX message from raw bytes (pipe or SOH delimited).
+/// Used by the validator for single-message debugger mode.
+pub fn parse_single_for_validation(raw: &[u8]) -> FixMessage {
+    parse_single_simd(raw)
+}
+
 /// Parse a single FIX message string into a [`FixMessage`].
 fn parse_single(raw: &str) -> FixMessage {
     let mut msg = FixMessage {

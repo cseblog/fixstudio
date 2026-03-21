@@ -8,6 +8,7 @@ use crate::components::detail::detail_panel;
 use crate::components::lifecycle::lifecycle_panel;
 use crate::components::overview::overview_panel;
 use crate::components::timeline::timeline_panel;
+use crate::components::validator_view::validator_panel;
 use crate::model::FixMessage;
 use crate::parser::{parse_all, parse_all_simd, parse_all_simd_bytes};
 use crate::sample::{sample_data, FIX_SPECS};
@@ -31,6 +32,7 @@ enum ViewMode {
     Timeline,
     Lifecycle,
     Overview,
+    Validator,
 }
 
 fn is_newer_version(latest: &str, current: &str) -> bool {
@@ -66,7 +68,7 @@ pub fn app() -> Element {
 
     // ── Panel layout state ──
     // right_panel_width controls premium-panel; app-main is flex:1 filling the rest
-    let right_panel_width: Signal<f64> = use_signal(|| 300.0_f64);
+    let right_panel_width: Signal<f64> = use_signal(|| 200.0_f64);
     let left_panel_collapsed  = use_signal(|| false);
     let mut right_panel_collapsed = use_signal(|| false);
 
@@ -435,8 +437,9 @@ pub fn app() -> Element {
         && !*loading.read();
     let has_messages = !messages.read().is_empty();
     let pro = true;
-    let in_lifecycle = *view_mode.read() == ViewMode::Lifecycle;
-    let in_overview  = *view_mode.read() == ViewMode::Overview;
+    let in_lifecycle  = *view_mode.read() == ViewMode::Lifecycle;
+    let in_overview   = *view_mode.read() == ViewMode::Overview;
+    let in_validator  = *view_mode.read() == ViewMode::Validator;
     let left_collapsed  = *left_panel_collapsed.read();
     let right_collapsed = *right_panel_collapsed.read();
     let right_w = *right_panel_width.read() as u32;
@@ -505,31 +508,6 @@ pub fn app() -> Element {
                     class: "app-main",
                     style: if left_collapsed { "flex: none; width: 0; min-width: 0; overflow: hidden;" } else { "flex: 1; min-width: 0;" },
 
-                    // Panel view tabs (Timeline / Lifecycle / Overview)
-                    if has_messages {
-                        div { class: "panel-tabs",
-                            button {
-                                class: if !in_lifecycle && !in_overview {
-                                    "panel-tab panel-tab-active"
-                                } else {
-                                    "panel-tab"
-                                },
-                                onclick: move |_| view_mode.set(ViewMode::Timeline),
-                                "Timeline"
-                            }
-                            button {
-                                class: if in_lifecycle { "panel-tab panel-tab-active" } else { "panel-tab" },
-                                onclick: move |_| view_mode.set(ViewMode::Lifecycle),
-                                "Trade Latency"
-                            }
-                            button {
-                                class: if in_overview { "panel-tab panel-tab-active" } else { "panel-tab" },
-                                onclick: move |_| view_mode.set(ViewMode::Overview),
-                                "Session Analysis"
-                            }
-                        }
-                    }
-
                     if show_hero {
                         // ── Hero landing ──
                         div { class: "hero",
@@ -579,7 +557,7 @@ pub fn app() -> Element {
                             }
                         }
                     } else {
-                        // ── Input area ──
+                        // ── Input area (above tabs) ──
                         if *loading.read() {
                             div { class: "fix-loading", "Loading file and parsing messages…" }
                         } else if let Some(ref name) = *file_name.read() {
@@ -616,7 +594,7 @@ pub fn app() -> Element {
                                     }
                                 }
                             }
-                        } else {
+                        } else if !in_validator {
                             textarea {
                                 class: "fix-input",
                                 placeholder: "Paste FIX messages here …",
@@ -625,8 +603,40 @@ pub fn app() -> Element {
                             }
                         }
 
-                        // ── Main panels ──
-                        if in_overview {
+                        // ── Panel view tabs (Timeline / Lifecycle / Overview / Validate) ──
+                        if has_messages || in_validator {
+                            div { class: "panel-tabs",
+                                button {
+                                    class: if !in_lifecycle && !in_overview && !in_validator {
+                                        "panel-tab panel-tab-active"
+                                    } else {
+                                        "panel-tab"
+                                    },
+                                    onclick: move |_| view_mode.set(ViewMode::Timeline),
+                                    "Timeline"
+                                }
+                                button {
+                                    class: if in_lifecycle { "panel-tab panel-tab-active" } else { "panel-tab" },
+                                    onclick: move |_| view_mode.set(ViewMode::Lifecycle),
+                                    "Trade Latency"
+                                }
+                                button {
+                                    class: if in_overview { "panel-tab panel-tab-active" } else { "panel-tab" },
+                                    onclick: move |_| view_mode.set(ViewMode::Overview),
+                                    "Session Analysis"
+                                }
+                                button {
+                                    class: if in_validator { "panel-tab panel-tab-active" } else { "panel-tab" },
+                                    onclick: move |_| view_mode.set(ViewMode::Validator),
+                                    "FIX Validator"
+                                }
+                            }
+                        }
+
+                        // ── Main content ──
+                        if in_validator {
+                            validator_panel { messages: messages }
+                        } else if in_overview {
                             overview_panel {
                                 messages: messages,
                                 pro: pro,
@@ -776,7 +786,13 @@ pub fn app() -> Element {
                                 if has_messages {
                                     button {
                                         class: "btn-feature",
-                                        onclick: move |_| view_mode.set(ViewMode::Overview),
+                                        onclick: move |_| {
+                                            if in_overview {
+                                                view_mode.set(ViewMode::Timeline);
+                                            } else {
+                                                view_mode.set(ViewMode::Overview);
+                                            }
+                                        },
                                         if in_overview { "← Back to Timeline" } else { "View Report →" }
                                     }
                                 } else {
@@ -784,14 +800,25 @@ pub fn app() -> Element {
                                 }
                             }
 
-                            // FIX Validator (coming soon)
-                            div { class: "feature-card feature-card-soon",
+                            // FIX Validator
+                            div { class: "feature-card",
                                 div { class: "feature-card-top",
                                     span { class: "feature-card-name", "FIX Validator" }
-                                    span { class: "badge badge-orange feature-badge", "Soon" }
+                                    span { class: "badge badge-green feature-badge", "Active" }
                                 }
                                 p { class: "feature-card-desc",
-                                    "Validate messages against FIX spec, check required tags & checksums."
+                                    "Validate messages against FIX spec, check required tags, enums, checksums & consistency rules."
+                                }
+                                button {
+                                    class: "btn-feature",
+                                    onclick: move |_| {
+                                        if in_validator {
+                                            view_mode.set(ViewMode::Timeline);
+                                        } else {
+                                            view_mode.set(ViewMode::Validator);
+                                        }
+                                    },
+                                    if in_validator { "← Back to Timeline" } else { "Open Validator →" }
                                 }
                             }
 

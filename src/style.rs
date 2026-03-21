@@ -1550,4 +1550,237 @@ html, body { height: 100%; overflow: hidden; background: #0f0f11; }
     font-size: 14px;
     color: #444448;
 }
+
+/* ── Validator panel ──────────────────────────────────────────────────────── */
+.validator-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    background: #111113;
+    padding: 0 0 16px;
+}
+.validator-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 8px 16px 0;
+    border-bottom: 1px solid #2c2c30;
+    flex-shrink: 0;
+    background: #161618;
+    margin-bottom: 12px;
+}
+.validator-msg-count {
+    color: #444448;
+    font-weight: 400;
+}
+
+/* Single-message debugger */
+.validator-single {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    padding: 0 16px;
+    gap: 10px;
+    overflow-y: auto;
+}
+.validator-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    flex-shrink: 0;
+}
+.validator-input {
+    flex: 1;
+    min-height: 90px;
+    max-height: 160px;
+    padding: 9px 12px;
+    border: 1px solid #2c2c30;
+    border-radius: 4px;
+    background: #161618;
+    color: #dddde3;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    resize: vertical;
+    transition: border-color 0.12s;
+    line-height: 1.5;
+}
+.validator-input::placeholder { color: #2c2c30; font-size: 11px; }
+.validator-input:focus { outline: none; border-color: #b8922a; }
+.validator-validate-btn { flex-shrink: 0; align-self: flex-start; }
+
+/* Summary bar */
+.validator-summary {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 7px 12px;
+    background: #161618;
+    border: 1px solid #2c2c30;
+    border-radius: 4px;
+    font-size: 12px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+.vsummary-ok   { color: #3d8f5a; font-weight: 600; }
+.vsummary-err  { color: #963232; font-weight: 700; }
+.vsummary-warn { color: #9e7a28; font-weight: 600; }
+.vsummary-chk-ok  { color: #3d8f5a; font-size: 11px; }
+.vsummary-chk-err { color: #963232; font-size: 11px; font-weight: 600; }
+
+/* Field table */
+.validator-field-table {
+    border: 1px solid #2c2c30;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #161618;
+    font-size: 12px;
+}
+.vfield-header {
+    background: #1d1d20;
+    font-weight: 600;
+    color: #888890;
+    font-size: 11px;
+    border-bottom: 1px solid #2c2c30;
+}
+.vfield-row {
+    display: grid;
+    grid-template-columns: 48px 160px 1fr 52px;
+    gap: 6px;
+    padding: 5px 10px;
+    align-items: center;
+    border-top: 1px solid #1d1d20;
+}
+.vfield-header.vfield-row { border-top: none; }
+.vfield-ok   { }
+.vfield-error { background: rgba(150,50,50,0.07); }
+.vfield-warn  { background: rgba(158,122,40,0.07); }
+.vfield-tag-num {
+    color: #b8922a;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+.vfield-name  { color: #888890; }
+.vfield-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #dddde3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.vfield-status { text-align: center; }
+.vstatus-ok   { color: #3d8f5a; font-weight: 700; }
+.vstatus-err  { color: #963232; font-weight: 700; }
+.vstatus-warn { color: #9e7a28; font-weight: 700; }
+
+/* Issue detail rows */
+.vfield-issue {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 3px 10px 4px 68px;
+    background: #111113;
+    border-top: 1px solid #1d1d20;
+    font-size: 11px;
+}
+.vissue-rule-err  {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: #963232;
+    background: rgba(150, 50, 50, 0.12);
+    border: 1px solid rgba(150, 50, 50, 0.3);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-right: 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.vissue-rule-warn {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: #9e7a28;
+    background: rgba(158, 122, 40, 0.12);
+    border: 1px solid rgba(158, 122, 40, 0.3);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-right: 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.vissue-err  { color: #963232; }
+.vissue-warn { color: #9e7a28; }
+.vissue-hint { color: #444448; font-style: italic; }
+
+/* Structural issues */
+.validator-structural {
+    border: 1px solid rgba(150,50,50,0.25);
+    border-radius: 4px;
+    background: rgba(150,50,50,0.04);
+    flex-shrink: 0;
+}
+
+/* Batch view */
+.validator-batch {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    padding: 0 16px;
+    gap: 10px;
+}
+.validator-batch-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+}
+.validator-batch-empty {
+    padding: 24px;
+    text-align: center;
+    color: #3d8f5a;
+    font-size: 13px;
+    border: 1px solid rgba(61,143,90,0.2);
+    border-radius: 4px;
+    background: rgba(61,143,90,0.04);
+}
+.validator-batch-table {
+    border: 1px solid #2c2c30;
+    border-radius: 4px;
+    overflow-y: auto;
+    background: #161618;
+    flex: 1;
+    min-height: 0;
+}
+.vbatch-header {
+    background: #1d1d20;
+    font-weight: 600;
+    color: #888890;
+    font-size: 11px;
+    border-bottom: 1px solid #2c2c30;
+}
+.vbatch-row {
+    display: grid;
+    grid-template-columns: 60px 80px 80px 1fr;
+    gap: 6px;
+    padding: 6px 10px;
+    align-items: center;
+    font-size: 12px;
+    border-top: 1px solid #1d1d20;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.vbatch-header.vbatch-row { border-top: none; cursor: default; }
+.vbatch-error { background: rgba(150,50,50,0.05); }
+.vbatch-warn  { background: rgba(158,122,40,0.05); }
+.vbatch-error:hover { background: rgba(150,50,50,0.12); }
+.vbatch-warn:hover  { background: rgba(158,122,40,0.12); }
+.vbatch-idx   { color: #444448; font-variant-numeric: tabular-nums; }
+.vbatch-type  { color: #b8922a; font-weight: 600; }
+.vbatch-issues { display: flex; align-items: center; gap: 4px; }
+.vbatch-first { color: #888890; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 "#;

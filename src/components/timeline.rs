@@ -195,9 +195,9 @@ pub fn timeline_panel(
         div { class: "panel-timeline",
             div { class: "panel-header",
                 div { class: "panel-title",
-                    h2 { "Timeline" }
+                    // h2 { "Timeline" }
                     if let Some((count, us)) = *parse_stats.read() {
-                        span { class: "parse-stats", "parsed {count} messages in {format_duration(us)}" }
+                        span { class: "parse-stats", "Parsed {count} messages in {format_duration(us)}" }
                     }
                     if has_more {
                         span { class: "filter-count", "showing {display_end} of {total_count}" }
@@ -262,7 +262,7 @@ pub fn timeline_panel(
                     span { "Sender" }
                     span { "Target" }
                     span { "Message" }
-                    span { "Client order ID" }
+                    span { "ID" }
                     span { "Detail" }
                 }
                 div { class: "tbl-filter tbl-timeline-row",

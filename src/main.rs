@@ -9,6 +9,7 @@ mod sample;
 mod session_health;
 mod session_summary;
 mod style;
+mod validator;
 
 use dioxus_desktop::{launch::launch, Config, WindowBuilder};
 
