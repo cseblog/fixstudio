@@ -539,12 +539,12 @@ pub fn app() -> Element {
                                 p { "High-performance FIX protocol parser & inspector" }
                             }
                             div { class: "hero-stats",
-                                div { class: "hero-stat hero-stat-green",
+                                div { class: "hero-stat hero-stat-a",
                                     div { class: "hero-stat-value", id: "hero-msg-count", "0" }
                                     div { class: "hero-stat-unit", "messages" }
                                     div { class: "hero-stat-label", "parsed in one shot" }
                                 }
-                                div { class: "hero-stat hero-stat-purple hero-stat-featured",
+                                div { class: "hero-stat hero-stat-featured",
                                     div { class: "hero-stat-value",
                                         span { id: "hero-parse-ms", "0" }
                                         span { class: "hero-stat-suffix", "ms" }
@@ -552,7 +552,7 @@ pub fn app() -> Element {
                                     div { class: "hero-stat-unit", "parse time" }
                                     div { class: "hero-stat-label", "for 1,000,000 messages" }
                                 }
-                                div { class: "hero-stat hero-stat-cyan",
+                                div { class: "hero-stat hero-stat-b",
                                     div { class: "hero-stat-value",
                                         span { id: "hero-throughput", "0" }
                                         span { class: "hero-stat-suffix", " MiB/s" }

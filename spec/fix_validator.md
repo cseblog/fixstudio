@@ -2,6 +2,9 @@
 
 **Category:** Free (with AI explanation as Pro)
 
+**my phyloshopy developing**
+All code changes have to help our software: Robustness, simplest, and clean des  
+
 ### What it does
 
 Validates any pasted FIX message against the spec and provides precise, actionable error messages.
