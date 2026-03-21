@@ -15,9 +15,14 @@ Validates any pasted FIX message against the spec and provides precise, actionab
 - Sequence of tag groups (e.g., repeating groups must have delimiter tag first)
 - FIX version consistency (tags introduced in 4.4 shouldn't appear in a 4.2 message)
 
+you looks at FIX specification populars, using these specification as reference to help us validate FIX messages. 
+Because we are building a general tool for eFX in sell sides,  buy sides, and other multi dealer broker platform such as ECN, Thomson Retuer, Flextrade, 306T, Bloomberg FXGO, FXall, BidFX..etc
+
 
 
 ### Research questions
 - Whether to build a full FIX data dictionary in Rust or use an existing open-source spec (FIX Orchestra / QuickFIX XML dictionaries)
 - How to handle custom tags (tag >= 5000) — user-defined schema upload?
 - Performance: validating 1M messages — should validation run in parallel with parsing?
+
+

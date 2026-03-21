@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::model::FixMessage;
-use crate::session_health::{run_health_checks, HealthIssue, HealthIssueKind, IssueSeverity};
+use crate::session_health::run_health_checks;
 
 // ── Tag helper ────────────────────────────────────────────────────────────────
 
@@ -42,26 +42,13 @@ pub struct LatencyStats {
 }
 
 #[derive(Clone, PartialEq)]
-#[allow(dead_code)]
-pub enum EventSeverity {
-    Warning,
-    Info,
-    Resolved,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct NotableEvent {
-    pub severity:    EventSeverity,
-    pub time:        String,
-    pub description: String,
-}
-
-#[derive(Clone, PartialEq)]
 pub struct SessionSummary {
     pub session_label:  String,
     pub begin_string:   String,
     pub sender:         String,
     pub target:         String,
+    /// Number of distinct session pairs found in the log.
+    pub session_count:  usize,
     pub start_time:     String,
     pub end_time:       String,
     pub duration_str:   String,
@@ -69,7 +56,6 @@ pub struct SessionSummary {
     pub order_stats:    OrderStats,
     pub latency_stats:  LatencyStats,
     pub top_symbols:    Vec<(String, u64)>,
-    pub notable_events: Vec<NotableEvent>,
     /// Full health report — already computed during summary build, re-exposed here
     /// so the UI component does not need to run health checks a second time.
     pub health:         crate::session_health::SessionHealthReport,
@@ -78,13 +64,12 @@ pub struct SessionSummary {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub fn build_session_summary(messages: &[FixMessage]) -> SessionSummary {
-    let (begin_string, sender, target) = identify_session(messages);
+    let (begin_string, sender, target, session_count) = identify_session(messages);
     let (start_time, end_time, duration_str) = compute_time_range(messages);
     let order_stats   = compute_order_stats(messages);
     let latency_stats = compute_latency_stats(messages);
     let top_symbols   = compute_top_symbols(messages);
     let health        = run_health_checks(messages);
-    let notable_events = health_to_events(&health.issues);
 
     let session_label = if sender.is_empty() && target.is_empty() {
         "Unknown Session".to_string()
@@ -97,6 +82,7 @@ pub fn build_session_summary(messages: &[FixMessage]) -> SessionSummary {
         begin_string,
         sender,
         target,
+        session_count,
         start_time,
         end_time,
         duration_str,
@@ -104,31 +90,104 @@ pub fn build_session_summary(messages: &[FixMessage]) -> SessionSummary {
         order_stats,
         latency_stats,
         top_symbols,
-        notable_events,
         health,
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn identify_session(messages: &[FixMessage]) -> (String, String, String) {
-    // Sample the first 200 messages — enough to identify the dominant session triple
-    // without scanning millions of messages for metadata that won't change.
-    const SAMPLE: usize = 200;
-    let mut counts: HashMap<(String, String, String), u64> = HashMap::new();
-    for msg in messages.iter().take(SAMPLE) {
-        let key = (
-            tag_val(msg, 8).to_string(),
-            tag_val(msg, 49).to_string(),
-            tag_val(msg, 56).to_string(),
-        );
-        *counts.entry(key).or_insert(0) += 1;
+/// Scan every Logon (35=A) message to enumerate all unique session pairs.
+/// Returns (begin_string, sender_label, target_label, session_count).
+/// For multi-session files the sender_label lists all distinct client-side comp IDs.
+fn identify_session(messages: &[FixMessage]) -> (String, String, String, usize) {
+    // Collect unique (sender, target) pairs from Logon messages.
+    // Logons are O(sessions) in count so iterating all messages is cheap.
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut begin_string = String::new();
+
+    for msg in messages.iter() {
+        if tag_val(msg, 35) != "A" { continue; }
+        let sender = if !msg.sender.is_empty() {
+            msg.sender.to_string()
+        } else {
+            tag_val(msg, 49).to_string()
+        };
+        let target = if !msg.target.is_empty() {
+            msg.target.to_string()
+        } else {
+            tag_val(msg, 56).to_string()
+        };
+        if sender.is_empty() || target.is_empty() { continue; }
+        if begin_string.is_empty() {
+            let bs = tag_val(msg, 8);
+            if !bs.is_empty() { begin_string = bs.to_string(); }
+        }
+        if !pairs.contains(&(sender.clone(), target.clone())) {
+            pairs.push((sender, target));
+        }
     }
-    counts
-        .into_iter()
-        .max_by_key(|(_, count)| *count)
-        .map(|((bs, snd, tgt), _)| (bs, snd, tgt))
-        .unwrap_or_default()
+
+    if pairs.is_empty() {
+        // No logon messages found — fall back to frequency sampling of first 500 msgs.
+        let mut counts: HashMap<(String, String, String), u64> = HashMap::new();
+        for msg in messages.iter().take(500) {
+            let key = (
+                tag_val(msg, 8).to_string(),
+                msg.sender.to_string(),
+                msg.target.to_string(),
+            );
+            if key.1.is_empty() { continue; }
+            *counts.entry(key).or_insert(0) += 1;
+        }
+        return counts
+            .into_iter()
+            .max_by_key(|(_, c)| *c)
+            .map(|((bs, snd, tgt), _)| (bs, snd, tgt, 1))
+            .unwrap_or_else(|| (String::new(), String::new(), String::new(), 0));
+    }
+
+    // Identify the "client" side: the comp ID that sends NOS (35=D) messages.
+    let nos_senders: std::collections::HashSet<String> = messages
+        .iter()
+        .filter(|m| tag_val(m, 35) == "D")
+        .map(|m| m.sender.to_string())
+        .collect();
+
+    let mut client_ids: Vec<String> = Vec::new();
+    let mut server_ids: Vec<String> = Vec::new();
+
+    for (s, t) in &pairs {
+        if nos_senders.contains(s) {
+            if !client_ids.contains(s) { client_ids.push(s.clone()); }
+            if !server_ids.contains(t) { server_ids.push(t.clone()); }
+        } else if nos_senders.contains(t) {
+            if !client_ids.contains(t) { client_ids.push(t.clone()); }
+            if !server_ids.contains(s) { server_ids.push(s.clone()); }
+        } else {
+            if !client_ids.contains(s) { client_ids.push(s.clone()); }
+            if !server_ids.contains(t) { server_ids.push(t.clone()); }
+        }
+    }
+
+    client_ids.sort();
+    server_ids.sort();
+
+    let session_count = client_ids.len().max(1);
+
+    let sender_str = match client_ids.len() {
+        0 => String::new(),
+        1 => client_ids[0].clone(),
+        n if n <= 5 => client_ids.join(", "),
+        n => format!("{} (+{})", client_ids[..5].join(", "), n - 5),
+    };
+
+    let target_str = match server_ids.len() {
+        0 => String::new(),
+        1 => server_ids[0].clone(),
+        _ => server_ids.join(", "),
+    };
+
+    (begin_string, sender_str, target_str, session_count)
 }
 
 fn compute_time_range(messages: &[FixMessage]) -> (String, String, String) {
@@ -317,33 +376,3 @@ fn compute_top_symbols(messages: &[FixMessage]) -> Vec<(String, u64)> {
     result
 }
 
-fn health_to_events(issues: &[HealthIssue]) -> Vec<NotableEvent> {
-    issues
-        .iter()
-        .map(|issue| NotableEvent {
-            severity:    match issue.severity {
-                IssueSeverity::Critical => EventSeverity::Warning,
-                IssueSeverity::Warning  => EventSeverity::Warning,
-                IssueSeverity::Info     => EventSeverity::Info,
-            },
-            time:        issue.time.clone(),
-            description: format!(
-                "{}  {}",
-                health_issue_prefix(&issue.kind),
-                issue.technical_desc
-            ),
-        })
-        .collect()
-}
-
-fn health_issue_prefix(kind: &HealthIssueKind) -> &'static str {
-    match kind {
-        HealthIssueKind::HeartbeatGap      => "Heartbeat gap —",
-        HealthIssueKind::SequenceGap       => "Sequence gap —",
-        HealthIssueKind::ExcessiveResends  => "Excessive resends —",
-        HealthIssueKind::Reconnect         => "Reconnect —",
-        HealthIssueKind::MessageRateBurst  => "Rate burst —",
-        HealthIssueKind::LateCancel        => "Late cancel —",
-        HealthIssueKind::RejectedCancel    => "Rejected cancel —",
-    }
-}

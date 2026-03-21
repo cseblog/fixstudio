@@ -3,7 +3,6 @@ mod components;
 mod dictionary;
 mod export;
 mod fill_quality;
-mod license;
 mod model;
 mod parser;
 mod sample;

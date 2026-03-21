@@ -1,4 +1,4 @@
-//! Overview Session Report — three-tab panel: Summary, Fill Quality, Health.
+//! Overview Session Analysis — three-tab panel: Summary, Fill Quality, Health.
 
 use dioxus::prelude::*;
 use dioxus::document::eval;
@@ -7,7 +7,7 @@ use crate::export::{messages_to_csv, now_tag};
 use crate::fill_quality::{build_scorecard, FillQualityScorecard, ScorecardRow};
 use crate::model::FixMessage;
 use crate::session_health::{HealthIssueKind, IssueSeverity, SessionHealthReport};
-use crate::session_summary::{build_session_summary, EventSeverity, SessionSummary};
+use crate::session_summary::{build_session_summary, SessionSummary};
 
 // ── Tab enum ──────────────────────────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
             // ── Header ───────────────────────────────────────────────────────
             div { class: "overview-header",
                 div { class: "overview-header-left",
-                    h2 { class: "overview-title", "Overview Session Report" }
+                    h2 { class: "overview-title", "Session Analysis" }
                     if let Some(ref d) = data_opt {
                         span { class: "overview-meta",
                             "{d.summary.sender} → {d.summary.target}  ·  \
@@ -201,6 +201,12 @@ fn render_summary(s: &SessionSummary) -> Element {
                     span { class: "summary-label", "Session" }
                     span { class: "summary-value summary-session-label",
                         "{s.session_label}"
+                    }
+                }
+                if s.session_count > 1 {
+                    div { class: "summary-row",
+                        span { class: "summary-label", "Pairs" }
+                        span { class: "summary-value", "{s.session_count} session pairs" }
                     }
                 }
                 div { class: "summary-row",
@@ -308,32 +314,6 @@ fn render_summary(s: &SessionSummary) -> Element {
                 }
             }
 
-            if !s.notable_events.is_empty() {
-                div { class: "summary-divider" }
-                div { class: "summary-section",
-                    div { class: "summary-events-header", "Notable events" }
-                    for event in s.notable_events.iter() {
-                        div { class: "summary-event",
-                            span {
-                                class: match event.severity {
-                                    EventSeverity::Warning  => "event-icon event-warn",
-                                    EventSeverity::Info     => "event-icon event-info",
-                                    EventSeverity::Resolved => "event-icon event-ok",
-                                },
-                                {match event.severity {
-                                    EventSeverity::Warning  => "⚠",
-                                    EventSeverity::Info     => "ℹ",
-                                    EventSeverity::Resolved => "✓",
-                                }}
-                            }
-                            if !event.time.is_empty() {
-                                span { class: "event-time", "{event.time}  " }
-                            }
-                            span { class: "event-desc", "{event.description}" }
-                        }
-                    }
-                }
-            }
         }
     }
 }

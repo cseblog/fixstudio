@@ -8,7 +8,6 @@ use crate::components::detail::detail_panel;
 use crate::components::lifecycle::lifecycle_panel;
 use crate::components::overview::overview_panel;
 use crate::components::timeline::timeline_panel;
-use crate::license::{clear_license, instance_name, load_license, save_license, StoredLicense};
 use crate::model::FixMessage;
 use crate::parser::{parse_all, parse_all_simd, parse_all_simd_bytes};
 use crate::sample::{sample_data, FIX_SPECS};
@@ -19,27 +18,12 @@ const VERSION_URL: &str = "https://aifixparser.com/latest-version";
 const DOWNLOAD_URL: &str = "https://aifixparser.com/#download";
 const GA_ID: &str = "G-Y9J423BNZ0";
 
-/// Replace with your real Lemon Squeezy checkout URL after creating your product.
-const LS_CHECKOUT_URL: &str = "https://aifixparser.lemonsqueezy.com/buy/1380467";
-
-/// Set to true during development to bypass all license checks (treat everyone as Pro).
-/// REMEMBER: set this back to false before release!
-const DEV_MODE: bool = true;
-
 #[derive(Clone, PartialEq)]
 enum UpdateStatus {
     Idle,
     Checking,
     Available(String),
     UpToDate,
-}
-
-#[derive(Clone, PartialEq)]
-enum LicenseStatus {
-    Idle,
-    Checking,
-    Success,
-    Error(String),
 }
 
 #[derive(Clone, PartialEq)]
@@ -78,12 +62,6 @@ pub fn app() -> Element {
     let mut loaded_files: Signal<Vec<String>> = use_signal(Vec::new);
     let mut show_file_list = use_signal(|| false);
     let mut update_status: Signal<UpdateStatus> = use_signal(|| UpdateStatus::Idle);
-
-    // ── Premium / license state ──
-    let mut is_pro = use_signal(|| DEV_MODE);
-    let mut show_license_modal = use_signal(|| false);
-    let mut license_key_input = use_signal(String::new);
-    let mut license_status = use_signal(|| LicenseStatus::Idle);
     let mut view_mode = use_signal(|| ViewMode::Timeline);
 
     // ── Panel layout state ──
@@ -360,83 +338,6 @@ pub fn app() -> Element {
         });
     };
 
-    // Activate license key via Lemon Squeezy API
-    let activate_license = move || {
-        let key = license_key_input.read().trim().to_string();
-        if key.is_empty() {
-            return;
-        }
-        let name = instance_name();
-        let mut is_pro = is_pro.clone();
-        let mut license_status = license_status.clone();
-        let mut show_license_modal = show_license_modal.clone();
-        license_status.set(LicenseStatus::Checking);
-        spawn(async move {
-            let js = format!(
-                r#"(async () => {{
-                    try {{
-                        const resp = await fetch(
-                            'https://api.lemonsqueezy.com/v1/licenses/activate',
-                            {{
-                                method: 'POST',
-                                headers: {{
-                                    'Content-Type': 'application/x-www-form-urlencoded',
-                                    'Accept': 'application/json'
-                                }},
-                                body: new URLSearchParams({{
-                                    license_key: '{key}',
-                                    instance_name: '{name}'
-                                }}).toString(),
-                                signal: AbortSignal.timeout(10000)
-                            }}
-                        );
-                        const data = await resp.json();
-                        if (data.activated) {{
-                            window.dioxus.send('ok:' + data.instance.id);
-                        }} else {{
-                            window.dioxus.send('err:' + (data.error || 'Invalid license key'));
-                        }}
-                    }} catch(e) {{
-                        window.dioxus.send('err:' + e.message);
-                    }}
-                }})();"#
-            );
-            let mut ev = eval(&js);
-            match ev.recv::<String>().await {
-                Ok(s) if s.starts_with("ok:") => {
-                    let instance_id = s.trim_start_matches("ok:").to_string();
-                    save_license(&StoredLicense {
-                        key: key.clone(),
-                        instance_id,
-                    });
-                    is_pro.set(true);
-                    license_status.set(LicenseStatus::Success);
-                    // Auto-close modal after brief success display
-                    spawn(async move {
-                        show_license_modal.set(false);
-                    });
-                }
-                Ok(s) => {
-                    let err = s.trim_start_matches("err:").to_string();
-                    license_status.set(LicenseStatus::Error(err));
-                }
-                _ => {
-                    license_status.set(LicenseStatus::Error("Network error".to_string()));
-                }
-            }
-        });
-    };
-
-    // Deactivate / remove license
-    let mut deactivate_license = move || {
-        clear_license();
-        is_pro.set(false);
-        view_mode.set(ViewMode::Timeline);
-        show_license_modal.set(false);
-        license_key_input.set(String::new());
-        license_status.set(LicenseStatus::Idle);
-    };
-
     // ── On-mount effects ──
 
     // 1. Inject GA4 + fire app_open
@@ -472,51 +373,7 @@ pub fn app() -> Element {
         ));
     });
 
-    // 2. Validate stored license on startup
-    use_effect(move || {
-        if DEV_MODE { return; }
-        if let Some(stored) = load_license() {
-            let key = stored.key.clone();
-            let instance_id = stored.instance_id.clone();
-            let mut is_pro = is_pro.clone();
-            spawn(async move {
-                let js = format!(
-                    r#"(async () => {{
-                        try {{
-                            const resp = await fetch(
-                                'https://api.lemonsqueezy.com/v1/licenses/validate',
-                                {{
-                                    method: 'POST',
-                                    headers: {{
-                                        'Content-Type': 'application/x-www-form-urlencoded',
-                                        'Accept': 'application/json'
-                                    }},
-                                    body: new URLSearchParams({{
-                                        license_key: '{key}',
-                                        instance_id: '{instance_id}'
-                                    }}).toString(),
-                                    signal: AbortSignal.timeout(8000)
-                                }}
-                            );
-                            const data = await resp.json();
-                            window.dioxus.send(data.valid ? 'valid' : 'invalid');
-                        }} catch(e) {{
-                            window.dioxus.send('offline');
-                        }}
-                    }})();"#
-                );
-                let mut ev = eval(&js);
-                match ev.recv::<String>().await {
-                    Ok(s) if s == "valid"   => { is_pro.set(true); }
-                    Ok(s) if s == "invalid" => { clear_license(); }
-                    // Network error → grant benefit of the doubt (offline-friendly)
-                    _                       => { is_pro.set(true); }
-                }
-            });
-        }
-    });
-
-    // 3. Auto-check for updates
+    // 2. Auto-check for updates
     use_effect(move || {
         update_status.set(UpdateStatus::Checking);
         spawn(async move {
@@ -541,7 +398,7 @@ pub fn app() -> Element {
         });
     });
 
-    // 4. Hero counter animation
+    // 3. Hero counter animation
     use_effect(move || {
         let visible = messages.read().is_empty()
             && file_name.read().is_none()
@@ -577,7 +434,7 @@ pub fn app() -> Element {
         && file_name.read().is_none()
         && !*loading.read();
     let has_messages = !messages.read().is_empty();
-    let pro = *is_pro.read();
+    let pro = true;
     let in_lifecycle = *view_mode.read() == ViewMode::Lifecycle;
     let in_overview  = *view_mode.read() == ViewMode::Overview;
     let left_collapsed  = *left_panel_collapsed.read();
@@ -638,20 +495,6 @@ pub fn app() -> Element {
                     }
                 }
 
-                // Pro badge OR upgrade button
-                if pro {
-                    span {
-                        class: "pro-badge",
-                        onclick: move |_| show_license_modal.set(true),
-                        "PRO"
-                    }
-                } else {
-                    button {
-                        class: "btn btn-upgrade",
-                        onclick: move |_| show_license_modal.set(true),
-                        "✦ Upgrade to Pro"
-                    }
-                }
             }
 
             // ── Two-panel body ──
@@ -675,34 +518,14 @@ pub fn app() -> Element {
                                 "Timeline"
                             }
                             button {
-                                class: if in_lifecycle {
-                                    "panel-tab panel-tab-pro panel-tab-active"
-                                } else {
-                                    "panel-tab panel-tab-pro"
-                                },
-                                onclick: move |_| {
-                                    if pro {
-                                        view_mode.set(ViewMode::Lifecycle);
-                                    } else {
-                                        show_license_modal.set(true);
-                                    }
-                                },
-                                if pro { "Trade Latency" } else { "✦ Trade Latency" }
+                                class: if in_lifecycle { "panel-tab panel-tab-active" } else { "panel-tab" },
+                                onclick: move |_| view_mode.set(ViewMode::Lifecycle),
+                                "Trade Latency"
                             }
                             button {
-                                class: if in_overview {
-                                    "panel-tab panel-tab-pro panel-tab-active"
-                                } else {
-                                    "panel-tab panel-tab-pro"
-                                },
-                                onclick: move |_| {
-                                    if pro {
-                                        view_mode.set(ViewMode::Overview);
-                                    } else {
-                                        show_license_modal.set(true);
-                                    }
-                                },
-                                if pro { "Session Report" } else { "✦ Session Report" }
+                                class: if in_overview { "panel-tab panel-tab-active" } else { "panel-tab" },
+                                onclick: move |_| view_mode.set(ViewMode::Overview),
+                                "Session Analysis"
                             }
                         }
                     }
@@ -887,10 +710,7 @@ pub fn app() -> Element {
 
                     // Panel header
                     div { class: "premium-panel-header",
-                        span {
-                            class: if pro { "premium-panel-title premium-panel-title-pro" } else { "premium-panel-title" },
-                            "✦ Pro Features"
-                        }
+                        span { class: "premium-panel-title premium-panel-title-pro", "Features" }
                         button {
                             class: "panel-collapse-btn",
                             title: "Collapse panel",
@@ -914,89 +734,57 @@ pub fn app() -> Element {
                         }
                     }
 
-                        // Upgrade CTA (free users only)
-                        if !pro {
-                            div { class: "premium-upgrade-cta",
-                                p { class: "upgrade-cta-text",
-                                    "Unlock powerful analytics for your FIX session data."
-                                }
-                                button {
-                                    class: "btn btn-upgrade-panel",
-                                    onclick: move |_| show_license_modal.set(true),
-                                    "✦ Upgrade to Pro"
-                                }
-                                span { class: "upgrade-cta-price", "From $19/month" }
-                            }
-                        }
-
                         // Feature cards (scrollable)
                         div { class: "premium-panel-scroll",
 
-                            // ── PRO TIER ──
-                            div { class: "feature-tier-label", "PRO TIER" }
-
                             // Trade Latency Analysis
-                            div {
-                                class: if pro { "feature-card" } else { "feature-card feature-card-locked" },
+                            div { class: "feature-card",
                                 div { class: "feature-card-top",
                                     span { class: "feature-card-name", "Trade Latency Analysis" }
-                                    if pro {
-                                        span { class: "badge badge-green feature-badge", "Active" }
-                                    } else {
-                                        span { class: "badge badge-gray feature-badge", "Pro" }
-                                    }
+                                    span { class: "badge badge-green feature-badge", "Active" }
                                 }
                                 p { class: "feature-card-desc",
                                     "Reconstruct full order chains from RFQ to fill, with latency at each hop."
                                 }
-                                if pro {
-                                    if has_messages {
-                                        button {
-                                            class: "btn-feature",
-                                            onclick: move |_| {
-                                                if in_lifecycle {
-                                                    view_mode.set(ViewMode::Timeline);
-                                                } else {
-                                                    view_mode.set(ViewMode::Lifecycle);
-                                                }
-                                            },
-                                            if in_lifecycle { "← Back to Timeline" } else { "View Lifecycle →" }
-                                        }
-                                    } else {
-                                        span { class: "feature-card-hint", "Load data to use" }
+                                if has_messages {
+                                    button {
+                                        class: "btn-feature",
+                                        onclick: move |_| {
+                                            if in_lifecycle {
+                                                view_mode.set(ViewMode::Timeline);
+                                            } else {
+                                                view_mode.set(ViewMode::Lifecycle);
+                                            }
+                                        },
+                                        if in_lifecycle { "← Back to Timeline" } else { "View Lifecycle →" }
                                     }
+                                } else {
+                                    span { class: "feature-card-hint", "Load data to use" }
                                 }
                             }
 
-                            // Overview Session Report (Fill Quality + Health + Summary)
-                            div {
-                                class: if pro { "feature-card" } else { "feature-card feature-card-locked" },
+                            // Session Analysis
+                            div { class: "feature-card",
                                 div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Session Report" }
-                                    if pro {
-                                        span { class: "badge badge-green feature-badge", "Active" }
-                                    } else {
-                                        span { class: "badge badge-gray feature-badge", "Pro" }
-                                    }
+                                    span { class: "feature-card-name", "Session Analysis" }
+                                    span { class: "badge badge-green feature-badge", "Active" }
                                 }
                                 p { class: "feature-card-desc",
                                     "Fill quality scorecard, session health diagnostics, \
                                     and an executive session summary."
                                 }
-                                if pro {
-                                    if has_messages {
-                                        button {
-                                            class: "btn-feature",
-                                            onclick: move |_| view_mode.set(ViewMode::Overview),
-                                            if in_overview { "← Back to Timeline" } else { "View Report →" }
-                                        }
-                                    } else {
-                                        span { class: "feature-card-hint", "Load data to use" }
+                                if has_messages {
+                                    button {
+                                        class: "btn-feature",
+                                        onclick: move |_| view_mode.set(ViewMode::Overview),
+                                        if in_overview { "← Back to Timeline" } else { "View Report →" }
                                     }
+                                } else {
+                                    span { class: "feature-card-hint", "Load data to use" }
                                 }
                             }
 
-                            // FIX Message Validator (coming soon)
+                            // FIX Validator (coming soon)
                             div { class: "feature-card feature-card-soon",
                                 div { class: "feature-card-top",
                                     span { class: "feature-card-name", "FIX Validator" }
@@ -1007,158 +795,32 @@ pub fn app() -> Element {
                                 }
                             }
 
-                            // ── PREMIUM TIER ──
-                            div { class: "feature-tier-label feature-tier-label-premium", "PREMIUM TIER" }
-
-                            // AI Chat with Logs
-                            div { class: "feature-card feature-card-premium",
+                            // Order Flow Patterns — combined with AI reject diagnostics (coming soon)
+                            div { class: "feature-card feature-card-soon",
                                 div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "AI Chat with Logs" }
-                                    span { class: "badge badge-purple feature-badge", "Premium" }
+                                    span { class: "feature-card-name", "Order Flow & AI Diagnostics" }
+                                    span { class: "badge badge-orange feature-badge", "Soon" }
                                 }
                                 p { class: "feature-card-desc",
-                                    r#""Which fills were worst on AAPL today?" Ask anything about your session."#
-                                }
-                                if !pro {
-                                    button {
-                                        class: "btn-feature-upgrade",
-                                        onclick: move |_| show_license_modal.set(true),
-                                        "Upgrade →"
-                                    }
+                                    "Detect TWAP, VWAP, iceberg & spoofing patterns. \
+                                    AI-powered reject root-cause analysis with suggested fixes."
                                 }
                             }
 
-                            // Reject Root Cause AI
-                            div { class: "feature-card feature-card-premium",
+                            // AI FIX Builder (new, coming soon)
+                            div { class: "feature-card feature-card-soon",
                                 div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Reject Root Cause AI" }
-                                    span { class: "badge badge-purple feature-badge", "Premium" }
+                                    span { class: "feature-card-name", "AI FIX Builder" }
+                                    span { class: "badge badge-orange feature-badge", "Soon" }
                                 }
                                 p { class: "feature-card-desc",
-                                    "Auto-diagnose order rejections with AI explanation & suggested fix."
-                                }
-                            }
-
-                            // Order Flow Patterns
-                            div { class: "feature-card feature-card-premium",
-                                div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Order Flow Patterns" }
-                                    span { class: "badge badge-purple feature-badge", "Premium" }
-                                }
-                                p { class: "feature-card-desc",
-                                    "Detect TWAP, VWAP, iceberg & spoofing patterns in order flow."
-                                }
-                            }
-
-                            // Multi-Session Comparison
-                            div { class: "feature-card feature-card-premium",
-                                div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Multi-Session Compare" }
-                                    span { class: "badge badge-purple feature-badge", "Premium" }
-                                }
-                                p { class: "feature-card-desc",
-                                    "Load two sessions side-by-side and compare fill quality & latency."
+                                    "Talk to AI to generate FIX engine client or server code — \
+                                    sessions, message handlers, and schemas tailored to your spec."
                                 }
                             }
                         }
                     }
                 }
-            // ── License Modal ──
-            if *show_license_modal.read() {
-                div {
-                    class: "modal-overlay",
-                    onclick: move |_| {
-                        show_license_modal.set(false);
-                        license_status.set(LicenseStatus::Idle);
-                    },
-                    div {
-                        class: "modal",
-                        onclick: move |evt| evt.stop_propagation(),
-
-                        div { class: "modal-header",
-                            span { class: "modal-title", "Activate Pro License" }
-                            button {
-                                class: "modal-close",
-                                onclick: move |_| {
-                                    show_license_modal.set(false);
-                                    license_status.set(LicenseStatus::Idle);
-                                },
-                                "×"
-                            }
-                        }
-
-                        if pro {
-                            p { class: "modal-desc",
-                                "Your Pro license is active. You have access to CSV export, "
-                                "Trade Latency Analysis reconstruction, and all future Pro features."
-                            }
-                            div { class: "modal-deactivate",
-                                span { "Want to move to another machine?" }
-                                button {
-                                    class: "btn-deactivate",
-                                    onclick: move |_| deactivate_license(),
-                                    "Deactivate"
-                                }
-                            }
-                        } else {
-                            p { class: "modal-desc",
-                                "Enter your license key to unlock Pro features: "
-                                "CSV export, Trade Latency Analysis reconstruction, and more."
-                            }
-                            label { class: "modal-label", r#for: "license-key-input", "License key" }
-                            input {
-                                id: "license-key-input",
-                                class: "license-input",
-                                r#type: "text",
-                                placeholder: "XXXX-XXXX-XXXX-XXXX",
-                                value: "{license_key_input.read()}",
-                                oninput: move |evt| {
-                                    license_key_input.set(evt.value());
-                                    license_status.set(LicenseStatus::Idle);
-                                },
-                                onkeydown: move |evt| {
-                                    if evt.key() == Key::Enter {
-                                        activate_license();
-                                    }
-                                },
-                            }
-                            div { class: "modal-actions",
-                                button {
-                                    class: "btn btn-activate",
-                                    disabled: matches!(*license_status.read(), LicenseStatus::Checking),
-                                    onclick: move |_| activate_license(),
-                                    match *license_status.read() {
-                                        LicenseStatus::Checking => "Activating…",
-                                        _ => "Activate",
-                                    }
-                                }
-                                button {
-                                    class: "btn-buy",
-                                    onclick: move |_| {
-                                        let url = LS_CHECKOUT_URL.to_string();
-                                        std::thread::spawn(move || { let _ = open::that(url); });
-                                    },
-                                    "Buy Pro →"
-                                }
-                            }
-                            div { class: "activate-status",
-                                match license_status.read().clone() {
-                                    LicenseStatus::Success => rsx! {
-                                        span { class: "activate-ok", "✓ License activated! Welcome to Pro." }
-                                    },
-                                    LicenseStatus::Error(e) => rsx! {
-                                        span { class: "activate-err", "✗ {e}" }
-                                    },
-                                    LicenseStatus::Checking => rsx! {
-                                        span { class: "activate-wait", "Verifying with Lemon Squeezy…" }
-                                    },
-                                    LicenseStatus::Idle => rsx! { },
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

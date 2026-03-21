@@ -16,6 +16,8 @@ use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
+type MsgBuf = Vec<(u64, String)>;
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_TARGET: usize = 1_000_000;
@@ -158,12 +160,10 @@ fn build(body_fields: &str) -> String {
     format!("{}{}10={:03}|", header, body_fields, checksum)
 }
 
-/// Helper: write a complete message + newline to the writer, increment counter.
+/// Collect a complete message into the time-sorted buffer.
 #[inline]
-fn emit(w: &mut BufWriter<File>, body: &str, total: &mut usize) {
-    let msg = build(body);
-    w.write_all(msg.as_bytes()).unwrap();
-    w.write_all(b"\n").unwrap();
+fn emit(msgs: &mut MsgBuf, ts: u64, body: &str, total: &mut usize) {
+    msgs.push((ts, build(body)));
     *total += 1;
 }
 
@@ -203,14 +203,14 @@ impl Session {
 
 // ── Message emitters ──────────────────────────────────────────────────────────
 
-fn emit_logon(w: &mut BufWriter<File>, s: &mut Session, total: &mut usize) {
+fn emit_logon(msgs: &mut MsgBuf, s: &mut Session, total: &mut usize) {
     // client → server
     let ts_c = fmt_ts(s.time_us);
     let seq_c = s.next_seq_c();
     let mut b = String::with_capacity(128);
     write!(b, "35=A|34={}|49={}|52={}|56={}|98=0|108=30|",
         seq_c, s.client, ts_c, s.server).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // server → client (12 ms later)
     s.tick(12_000);
@@ -219,17 +219,17 @@ fn emit_logon(w: &mut BufWriter<File>, s: &mut Session, total: &mut usize) {
     let mut b = String::with_capacity(128);
     write!(b, "35=A|34={}|49={}|52={}|56={}|98=0|108=30|",
         seq_s, s.server, ts_s, s.client).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
     s.tick(1_000_000); // 1 s quiet after logon
 }
 
-fn emit_logout(w: &mut BufWriter<File>, s: &mut Session, total: &mut usize) {
+fn emit_logout(msgs: &mut MsgBuf, s: &mut Session, total: &mut usize) {
     let ts = fmt_ts(s.time_us);
     let seq_c = s.next_seq_c();
     let mut b = String::with_capacity(80);
     write!(b, "35=5|34={}|49={}|52={}|56={}|58=End of trading day|",
         seq_c, s.client, ts, s.server).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(50_000);
     let ts = fmt_ts(s.time_us);
@@ -237,24 +237,24 @@ fn emit_logout(w: &mut BufWriter<File>, s: &mut Session, total: &mut usize) {
     let mut b = String::with_capacity(80);
     write!(b, "35=5|34={}|49={}|52={}|56={}|58=Acknowledged|",
         seq_s, s.server, ts, s.client).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 }
 
-fn emit_heartbeats(w: &mut BufWriter<File>, s: &mut Session, total: &mut usize) {
+fn emit_heartbeats(msgs: &mut MsgBuf, s: &mut Session, total: &mut usize) {
     while s.time_us >= s.hb_due_us {
         let ts_c = fmt_ts(s.hb_due_us);
         let seq_c = s.next_seq_c();
         let mut b = String::with_capacity(80);
         write!(b, "35=0|34={}|49={}|52={}|56={}|",
             seq_c, s.client, ts_c, s.server).unwrap();
-        emit(w, &b, total);
+        emit(msgs, s.time_us, &b, total);
 
         let ts_s = fmt_ts(s.hb_due_us + 8_000);
         let seq_s = s.next_seq_s();
         let mut b = String::with_capacity(80);
         write!(b, "35=0|34={}|49={}|52={}|56={}|",
             seq_s, s.server, ts_s, s.client).unwrap();
-        emit(w, &b, total);
+        emit(msgs, s.time_us, &b, total);
 
         s.hb_due_us += 30_000_000;
     }
@@ -264,7 +264,7 @@ fn emit_heartbeats(w: &mut BufWriter<File>, s: &mut Session, total: &mut usize) 
 
 /// RFQ → Quote → NOS(Previously-Quoted) → ExecRpt(New) → ExecRpt(Fill)   [5 msgs]
 fn workflow_rfq_fill(
-    w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
+    msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
     let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
@@ -291,7 +291,7 @@ fn workflow_rfq_fill(
         "35=R|34={}|49={}|52={}|56={}|131=QR{:08}|146=1|55={}|38={}|54={}|64={}|",
         seq, s.client, ts, s.server, qreq_id, sym, lots, side, SETTL_DATE
     ).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ── Quote (server → client, 80–450 μs later) ──
     let network_us = rng.urange(80, 450);
@@ -303,7 +303,7 @@ fn workflow_rfq_fill(
         "35=S|34={}|49={}|52={}|56={}|117=QT{:08}|131=QR{:08}|55={}|132={:.5}|133={:.5}|134={}|135={}|64={}|",
         seq, s.server, ts, s.client, quot_id, qreq_id, sym, bid, offer, lots, lots, SETTL_DATE
     ).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ── NOS: client accepts quote (50 ms – 1 s decision time) ──
     let decision_us = rng.urange(50_000, 1_000_000);
@@ -316,7 +316,7 @@ fn workflow_rfq_fill(
         "35=D|34={}|49={}|52={}|56={}|11=CO{:08}|1={}|55={}|54={}|38={}|40=D|44={:.5}|117=QT{:08}|59=4|64={}|60={}|21=1|",
         seq, s.client, ts_nos, s.server, cl_ord, account, sym, side, lots, fill_px, quot_id, SETTL_DATE, ts_nos
     ).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ── ExecRpt: New (5–40 ms) ──
     let new_us = rng.urange(5_000, 40_000);
@@ -328,7 +328,7 @@ fn workflow_rfq_fill(
         "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=0|55={}|54={}|38={}|14=0|151={}|6=0|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec1, sym, side, lots, lots, ts
     ).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ── ExecRpt: Fill (1–15 ms) ──
     let fill_us = rng.urange(1_000, 15_000);
@@ -340,7 +340,7 @@ fn workflow_rfq_fill(
         "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54={}|38={}|14={}|151=0|31={:.5}|32={}|6={:.5}|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec2, sym, side, lots, lots, fill_px, lots, fill_px, ts
     ).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // advance 10 – 500 ms before next workflow
     s.tick(rng.urange(10_000, 500_000));
@@ -348,7 +348,7 @@ fn workflow_rfq_fill(
 
 /// RFQ → Quote → NOS → ExecRpt(New) → ExecRpt(Partial) → ExecRpt(Fill)   [6 msgs]
 fn workflow_rfq_partial(
-    w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
+    msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
     let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
@@ -377,7 +377,7 @@ fn workflow_rfq_partial(
     let mut b = String::with_capacity(200);
     write!(b, "35=R|34={}|49={}|52={}|56={}|131=QR{:08}|146=1|55={}|38={}|54={}|64={}|",
         seq, s.client, ts, s.server, qreq_id, sym, lots, side, SETTL_DATE).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // Quote
     s.tick(rng.urange(80, 450));
@@ -386,7 +386,7 @@ fn workflow_rfq_partial(
     let mut b = String::with_capacity(256);
     write!(b, "35=S|34={}|49={}|52={}|56={}|117=QT{:08}|131=QR{:08}|55={}|132={:.5}|133={:.5}|134={}|135={}|64={}|",
         seq, s.server, ts, s.client, quot_id, qreq_id, sym, bid, offer, lots, lots, SETTL_DATE).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // NOS
     s.tick(rng.urange(50_000, 800_000));
@@ -395,7 +395,7 @@ fn workflow_rfq_partial(
     let mut b = String::with_capacity(256);
     write!(b, "35=D|34={}|49={}|52={}|56={}|11=CO{:08}|1={}|55={}|54={}|38={}|40=D|44={:.5}|117=QT{:08}|59=4|64={}|60={}|21=1|",
         seq, s.client, ts_nos, s.server, cl_ord, account, sym, side, lots, fill_px, quot_id, SETTL_DATE, ts_nos).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ExecRpt New
     s.tick(rng.urange(5_000, 30_000));
@@ -404,7 +404,7 @@ fn workflow_rfq_partial(
     let mut b = String::with_capacity(256);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=0|55={}|54={}|38={}|14=0|151={}|6=0|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec1, sym, side, lots, lots, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ExecRpt PartialFill
     s.tick(rng.urange(2_000, 20_000));
@@ -413,7 +413,7 @@ fn workflow_rfq_partial(
     let mut b = String::with_capacity(256);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=1|39=1|55={}|54={}|38={}|14={}|151={}|31={:.5}|32={}|6={:.5}|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec2, sym, side, lots, partial, remain, fill_px, partial, fill_px, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ExecRpt Fill (remainder)
     s.tick(rng.urange(1_000, 10_000));
@@ -422,14 +422,14 @@ fn workflow_rfq_partial(
     let mut b = String::with_capacity(256);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54={}|38={}|14={}|151=0|31={:.5}|32={}|6={:.5}|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec3, sym, side, lots, lots, fill_px, remain, fill_px, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(rng.urange(10_000, 300_000));
 }
 
 /// Direct NOS(Market) → ExecRpt(New) → ExecRpt(Fill)   [3 msgs]
 fn workflow_market_fill(
-    w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
+    msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
     let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
@@ -448,7 +448,7 @@ fn workflow_market_fill(
     let mut b = String::with_capacity(220);
     write!(b, "35=D|34={}|49={}|52={}|56={}|11=CO{:08}|1={}|55={}|54={}|38={}|40=1|59=3|64={}|60={}|21=1|",
         seq, s.client, ts_nos, s.server, cl_ord, account, sym, side, lots, SETTL_DATE, ts_nos).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(rng.urange(3_000, 25_000));
     let ts = fmt_ts(s.time_us);
@@ -456,7 +456,7 @@ fn workflow_market_fill(
     let mut b = String::with_capacity(256);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=0|55={}|54={}|38={}|14=0|151={}|6=0|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec1, sym, side, lots, lots, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(rng.urange(500, 8_000));
     let ts = fmt_ts(s.time_us);
@@ -464,14 +464,14 @@ fn workflow_market_fill(
     let mut b = String::with_capacity(256);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54={}|38={}|14={}|151=0|31={:.5}|32={}|6={:.5}|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec2, sym, side, lots, lots, fill_px, lots, fill_px, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(rng.urange(10_000, 150_000));
 }
 
 /// Direct NOS(Limit) → ExecRpt(New) → [waits] → ExecRpt(Fill/Expired)   [3 msgs]
 fn workflow_limit_order(
-    w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
+    msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
     let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
@@ -495,7 +495,7 @@ fn workflow_limit_order(
     let mut b = String::with_capacity(256);
     write!(b, "35=D|34={}|49={}|52={}|56={}|11=CO{:08}|1={}|55={}|54={}|38={}|40=2|44={:.5}|59=0|64={}|60={}|21=1|",
         seq, s.client, ts_nos, s.server, cl_ord, account, sym, side, lots, limit_px, SETTL_DATE, ts_nos).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(rng.urange(5_000, 40_000));
     let ts = fmt_ts(s.time_us);
@@ -503,7 +503,7 @@ fn workflow_limit_order(
     let mut b = String::with_capacity(256);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=0|55={}|54={}|38={}|14=0|151={}|44={:.5}|6=0|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec1, sym, side, lots, lots, limit_px, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // Filled 70% of the time, expired 30%
     s.tick(rng.urange(200_000, 5_000_000));
@@ -518,14 +518,14 @@ fn workflow_limit_order(
         write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=C|39=C|55={}|54={}|38={}|14=0|151=0|6=0|58=Order expired|60={}|",
             seq, s.server, ts, s.client, ord_id, cl_ord, exec2, sym, side, lots, ts).unwrap();
     }
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(rng.urange(10_000, 100_000));
 }
 
 /// NOS → ExecRpt(New) → OrderCancelRequest → ExecRpt(Cancelled)   [4 msgs]
 fn workflow_cancel(
-    w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
+    msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
     let (sym, _, spread, _, _) = SYMBOLS[sym_idx];
@@ -547,7 +547,7 @@ fn workflow_cancel(
     let mut b = String::with_capacity(256);
     write!(b, "35=D|34={}|49={}|52={}|56={}|11=CO{:08}|1={}|55={}|54={}|38={}|40=2|44={:.5}|59=1|64={}|60={}|21=1|",
         seq, s.client, ts_nos, s.server, cl_ord1, account, sym, side, lots, limit_px, SETTL_DATE, ts_nos).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ExecRpt New
     s.tick(rng.urange(5_000, 30_000));
@@ -556,7 +556,7 @@ fn workflow_cancel(
     let mut b = String::with_capacity(256);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=0|55={}|54={}|38={}|14=0|151={}|44={:.5}|6=0|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord1, exec1, sym, side, lots, lots, limit_px, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // OrderCancelRequest (client decides to cancel, 100ms – 2s later)
     s.tick(rng.urange(100_000, 2_000_000));
@@ -565,7 +565,7 @@ fn workflow_cancel(
     let mut b = String::with_capacity(220);
     write!(b, "35=F|34={}|49={}|52={}|56={}|11=CO{:08}|41=CO{:08}|37=OR{:08}|55={}|54={}|38={}|60={}|",
         seq, s.client, ts_cxl, s.server, cl_ord2, cl_ord1, ord_id, sym, side, lots, ts_cxl).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ExecRpt Cancelled
     s.tick(rng.urange(3_000, 20_000));
@@ -574,14 +574,14 @@ fn workflow_cancel(
     let mut b = String::with_capacity(280);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|41=CO{:08}|17=EX{:08}|150=4|39=4|55={}|54={}|38={}|14=0|151=0|6=0|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord2, cl_ord1, exec2, sym, side, lots, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(rng.urange(10_000, 100_000));
 }
 
 /// RFQ → Quote → NOS → ExecRpt(Rejected)   [4 msgs]
 fn workflow_rfq_reject(
-    w: &mut BufWriter<File>, s: &mut Session, ids: &mut Ids,
+    msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids,
     rng: &mut Rng, sym_idx: usize, total: &mut usize,
 ) {
     let (sym, mid, spread, _, _) = SYMBOLS[sym_idx];
@@ -605,7 +605,7 @@ fn workflow_rfq_reject(
     let mut b = String::with_capacity(200);
     write!(b, "35=R|34={}|49={}|52={}|56={}|131=QR{:08}|146=1|55={}|38={}|54={}|64={}|",
         seq, s.client, ts, s.server, qreq_id, sym, lots, side, SETTL_DATE).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // Quote
     s.tick(rng.urange(80, 450));
@@ -614,7 +614,7 @@ fn workflow_rfq_reject(
     let mut b = String::with_capacity(256);
     write!(b, "35=S|34={}|49={}|52={}|56={}|117=QT{:08}|131=QR{:08}|55={}|132={:.5}|133={:.5}|134={}|135={}|64={}|",
         seq, s.server, ts, s.client, quot_id, qreq_id, sym, bid, offer, lots, lots, SETTL_DATE).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // NOS
     s.tick(rng.urange(50_000, 600_000));
@@ -623,7 +623,7 @@ fn workflow_rfq_reject(
     let mut b = String::with_capacity(256);
     write!(b, "35=D|34={}|49={}|52={}|56={}|11=CO{:08}|1={}|55={}|54={}|38={}|40=D|44={:.5}|117=QT{:08}|59=4|64={}|60={}|21=1|",
         seq, s.client, ts_nos, s.server, cl_ord, account, sym, side, lots, fill_px, quot_id, SETTL_DATE, ts_nos).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     // ExecRpt Rejected
     s.tick(rng.urange(4_000, 15_000));
@@ -640,7 +640,7 @@ fn workflow_rfq_reject(
     let mut b = String::with_capacity(256);
     write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=8|39=8|55={}|54={}|38={}|14=0|151=0|6=0|58={}|60={}|",
         seq, s.server, ts, s.client, ord_id, cl_ord, exec1, sym, side, lots, reason, ts).unwrap();
-    emit(w, &b, total);
+    emit(msgs, s.time_us, &b, total);
 
     s.tick(rng.urange(10_000, 80_000));
 }
@@ -654,14 +654,13 @@ fn main() {
     let target: usize = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(DEFAULT_TARGET);
     let output: &str  = args.get(2).map(|s| s.as_str()).unwrap_or(DEFAULT_OUTPUT);
 
-    let file = File::create(output).expect("Cannot create output file");
-    let mut w = BufWriter::with_capacity(4 * 1024 * 1024, file);
-
+    let mut msgs: MsgBuf = Vec::with_capacity(target + 4096);
     let mut total = 0usize;
     let mut ids   = Ids::new();
     let mut rng   = Rng(0xDEAD_BEEF_1234_5678);
 
-    // 8 sessions, each starts at 07:00 UTC with a small stagger
+    // All 8 sessions run concurrently; each starts at 07:00 UTC with a small stagger.
+    // Messages are collected with timestamps and sorted at the end.
     let n_sessions  = SESSIONS.len();
     let per_session = target / n_sessions;
 
@@ -669,8 +668,8 @@ fn main() {
         let stagger_us = (idx as u64) * 250_000; // 250 ms between session logons
         let mut s = Session::new(idx, stagger_us);
 
-        emit_logon(&mut w, &mut s, &mut total);
-        emit_heartbeats(&mut w, &mut s, &mut total);
+        emit_logon(&mut msgs, &mut s, &mut total);
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
 
         // Session-level target: stop a few messages short to hit exactly target overall
         let session_target = if idx == n_sessions - 1 {
@@ -681,7 +680,7 @@ fn main() {
 
         while total < session_target + (idx * per_session) && s.time_us < DAY_END_US {
             // Emit any due heartbeats
-            emit_heartbeats(&mut w, &mut s, &mut total);
+            emit_heartbeats(&mut msgs, &mut s, &mut total);
 
             // Pick symbol (weight toward majors)
             let sym_weights = [25u64, 20, 20, 10, 8, 8, 4, 8, 5, 5, 4, 3];
@@ -695,12 +694,12 @@ fn main() {
 
             // Pick workflow (weighted)
             match rng.next() % 100 {
-                0..=44  => workflow_rfq_fill(&mut w, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
-                45..=59 => workflow_rfq_partial(&mut w, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
-                60..=74 => workflow_market_fill(&mut w, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
-                75..=84 => workflow_limit_order(&mut w, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
-                85..=92 => workflow_cancel(&mut w, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
-                _       => workflow_rfq_reject(&mut w, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
+                0..=44  => workflow_rfq_fill(&mut msgs, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
+                45..=59 => workflow_rfq_partial(&mut msgs, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
+                60..=74 => workflow_market_fill(&mut msgs, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
+                75..=84 => workflow_limit_order(&mut msgs, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
+                85..=92 => workflow_cancel(&mut msgs, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
+                _       => workflow_rfq_reject(&mut msgs, &mut s, &mut ids, &mut rng, sym_idx, &mut total),
             }
 
             // Occasional burst: short pause between clusters (simulates market activity bursts)
@@ -709,13 +708,19 @@ fn main() {
             }
         }
 
-        emit_heartbeats(&mut w, &mut s, &mut total);
-        emit_logout(&mut w, &mut s, &mut total);
-
-        eprintln!("Session {} ({} → {}): {} total messages so far",
-            idx + 1, SESSIONS[idx].0, SESSIONS[idx].1, total);
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        emit_logout(&mut msgs, &mut s, &mut total);
     }
 
+    // Sort all sessions' messages by timestamp to produce a realistic interleaved log.
+    msgs.sort_unstable_by_key(|(ts, _)| *ts);
+
+    let file = File::create(output).expect("Cannot create output file");
+    let mut w = BufWriter::with_capacity(4 * 1024 * 1024, file);
+    for (_, msg) in &msgs {
+        w.write_all(msg.as_bytes()).unwrap();
+        w.write_all(b"\n").unwrap();
+    }
     w.flush().unwrap();
-    eprintln!("\nDone. {} messages written to {}", total, output);
+    eprintln!("Done. {} messages written to {}", total, output);
 }
