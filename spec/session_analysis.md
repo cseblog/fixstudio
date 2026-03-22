@@ -234,7 +234,210 @@ pub struct ScorecardRow {
 | Late cancel | OrderCancelRequest (35=F) SendingTime > final fill ER SendingTime for same ClOrdID | 35, 41, 52 |
 | Rejected cancel | OrderCancelReject (35=9) present | 35, 9 |
 
-### 4.3 Output Structure
+### 4.3 Design Principles
+
+- Designed for **1 million FIX messages** — all detection rules are O(N) single-pass or two-pass; no nested loops.
+- Each rule produces a **typed detail payload** rather than a flat string, enabling rich per-rule charts.
+- All rules are **grouped**: N events of the same kind → 1 `HealthIssue`, not N issues.
+- The Health tab renders each issue as a **collapsible card** with a rule-specific chart, not a plain list.
+
+### 4.4 Architecture: Typed Detail Payload
+
+The existing flat `HealthIssue` gains a `detail` field carrying typed data per rule:
+
+```rust
+pub struct HealthIssue {
+    pub kind:            HealthIssueKind,
+    pub severity:        IssueSeverity,
+    pub time:            String,
+    pub msg_indices:     Vec<usize>,
+    pub technical_desc:  String,
+    pub business_impact: String,
+    pub detail:          HealthDetail,   // ← typed payload
+}
+
+pub enum HealthDetail {
+    HeartbeatGaps(HeartbeatGapDetail),
+    SequenceGaps(SequenceGapDetail),
+    Resends(ResendDetail),
+    Reconnects(ReconnectDetail),
+    RateBursts(RateBurstDetail),
+    LateCancels(LateCancelDetail),
+    RejectedCancels(RejectedCancelDetail),
+    None,
+}
+```
+
+### 4.5 Rule Detail Structs & Visualisations
+
+#### Rule 1 — Heartbeat Gap
+
+```rust
+pub struct HeartbeatGapDetail {
+    pub configured_interval_sec: i64,
+    pub gaps: Vec<HeartbeatGap>,
+}
+pub struct HeartbeatGap {
+    pub time:    String,
+    pub gap_ms:  i64,
+    pub msg_idx: usize,
+}
+```
+
+- All gaps grouped into **one issue**.
+- **Chart: scatter plot** — X = time-of-day, Y = gap duration (ms), dashed threshold line at `interval × 1.5`.
+- Pattern insight: gaps clustered at market open indicate network cold-start; random scatter indicates TCP flap.
+
+---
+
+#### Rule 2 — Sequence Gap
+
+```rust
+pub struct SequenceGapDetail {
+    pub total_missing: u64,
+    pub gaps: Vec<SequenceGap>,
+}
+pub struct SequenceGap {
+    pub from_seq: u64,
+    pub to_seq:   u64,
+    pub missing:  u64,
+    pub time:     String,
+    pub indices:  [usize; 2],   // message before and after the gap
+}
+```
+
+- **Chart: bar chart** — each bar = one gap, height = number of missing seqnums, X = time.
+- Single tall bar = session reset; many short bars = packet drops.
+- Summary line: "47 total missing across 3 gaps".
+
+---
+
+#### Rule 3 — Excessive Resends
+
+```rust
+pub struct ResendDetail {
+    pub count:         usize,
+    pub rate_per_1000: usize,
+    pub instances:     Vec<ResendInstance>,
+}
+pub struct ResendInstance {
+    pub time:      String,
+    pub begin_seq: u64,   // tag 7  BeginSeqNo
+    pub end_seq:   u64,   // tag 16 EndSeqNo (0 = infinity)
+    pub msg_idx:   usize,
+}
+```
+
+- **Chart: timeline scatter** — each dot = one ResendRequest, X = time.
+- Burst cluster → single incident; evenly spread → chronic sequence-number drift.
+
+---
+
+#### Rule 4 — Reconnects
+
+```rust
+pub struct ReconnectDetail {
+    pub logons: Vec<LogonEvent>,
+}
+pub struct LogonEvent {
+    pub time:      String,
+    pub seq_num:   u64,
+    pub reset_seq: bool,   // true if MsgSeqNum == 1 (full session reset)
+    pub msg_idx:   usize,
+}
+```
+
+- **Chart: connection-state timeline** — horizontal bar, green = connected, red = gap between logons.
+- Amber marker for mid-session reconnects (reset_seq = false); grey for clean new sessions (reset_seq = true).
+- Shows duration of each outage window.
+
+---
+
+#### Rule 5 — Message Rate Burst
+
+```rust
+pub struct RateBurstDetail {
+    pub threshold:    usize,
+    pub buckets:      Vec<RateBucket>,   // all 1-second windows across session
+    pub burst_indices: Vec<usize>,       // which bucket indices exceeded threshold
+}
+pub struct RateBucket {
+    pub second_label: String,
+    pub count:        usize,
+}
+```
+
+- **Computation:** bucket by `floor(timestamp_us / 1_000_000)` into a `HashMap<i64, usize>` → O(N) time, O(session-seconds) memory. No sliding window needed.
+- **Chart: area/bar chart** of message rate over full session, amber threshold line, exceeded buckets highlighted.
+- Most visually self-explanatory rule — spike shape is immediately obvious.
+
+---
+
+#### Rule 6 — Late Cancels
+
+```rust
+pub struct LateCancelDetail {
+    pub cases: Vec<LateCancelCase>,
+}
+pub struct LateCancelCase {
+    pub cl_ord_id:   String,
+    pub fill_time:   String,
+    pub cancel_time: String,
+    pub lag_ms:      i64,    // cancel arrived this many ms after fill
+    pub msg_idx:     usize,
+}
+```
+
+- **Chart: scatter plot** — X = time of cancel, Y = lag in ms.
+- Clusters at specific times → OMS batch delay (e.g. slow reconciliation loop).
+- Secondary: **lag histogram** bucketed as <1ms / 1–10ms / 10–100ms / >100ms.
+
+---
+
+#### Rule 7 — Rejected Cancels
+
+```rust
+pub struct RejectedCancelDetail {
+    pub rejections: Vec<CancelRejection>,
+}
+pub struct CancelRejection {
+    pub time:           String,
+    pub orig_cl_ord_id: String,
+    pub reason_code:    String,   // tag 102
+    pub reason_text:    String,   // human label
+    pub msg_idx:        usize,
+}
+```
+
+Tag 102 reason codes: `0 = TooLateToCancel`, `1 = UnknownOrder`, `2 = BrokerCredit`, `3 = AlreadyPendingCancel`, `4 = UnableToProcessMassCancelRequest`.
+
+- **Primary chart: donut pie** — breakdown by reason_code. `TooLateToCancel` = race condition; `UnknownOrder` = OMS sync gap.
+- **Secondary: timeline scatter** — X = time, coloured by reason code.
+
+---
+
+### 4.6 Health Tab UI Layout
+
+Each rule renders as a **collapsible card** with a summary headline and an embedded ECharts chart:
+
+```text
+┌─ ⚠ Sequence Gap ──────────────────────── 3 gaps · 47 missing seqnums ─┐
+│  [bar chart: gap size over time]                                         │
+│  1823→1831 at 11:42  ·  2100→2105 at 14:23  ·  3040→3041 at 16:01      │
+└──────────────────────────────────────────────────────────────────────────┘
+
+┌─ ▲ Message Rate Burst ───────────────────── 2 bursts · peak 143 msg/s ─┐
+│  [area chart: message rate across full session, threshold line]           │
+└──────────────────────────────────────────────────────────────────────────┘
+
+┌─ ⚠ Rejected Cancels ──────────────────────────── 12 rejections · 3 types ─┐
+│  [donut pie: TooLateToCancel 8 · UnknownOrder 3 · AlreadyPending 1]         │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Cards with zero events are hidden. Cards with `Info` severity are collapsed by default.
+
+### 4.7 Output Structure (Updated)
 
 ```rust
 pub struct SessionHealthReport {
@@ -242,12 +445,13 @@ pub struct SessionHealthReport {
 }
 
 pub struct HealthIssue {
-    pub kind: HealthIssueKind,
-    pub severity: IssueSeverity,  // Critical, Warning, Info
-    pub time: String,
-    pub msg_indices: Vec<usize>,
-    pub technical_desc: String,
-    pub business_impact: String,  // 2–3 sentences, can be AI-generated later
+    pub kind:            HealthIssueKind,
+    pub severity:        IssueSeverity,
+    pub time:            String,
+    pub msg_indices:     Vec<usize>,
+    pub technical_desc:  String,
+    pub business_impact: String,
+    pub detail:          HealthDetail,
 }
 
 pub enum HealthIssueKind {
@@ -261,14 +465,15 @@ pub enum HealthIssueKind {
 }
 ```
 
-### 4.4 Example Business Impact (Template)
+### 4.8 Example Business Impact (Template)
 
 > "Three heartbeat gaps occurred at 10:15, 11:42, and 14:23. All three correlate with 'Connection timeout' reject messages 2–3 seconds later, and each was followed by a Logon (Resend). This pattern is consistent with intermittent TCP keepalive failure between your gateway and the execution venue. Check MTU settings or firewall idle-timeout configuration."
 
-### 4.5 Implementation Location
+### 4.9 Implementation Location
 
-- **New module:** `src/session_health.rs` — rule-based detection
-- **UI:** Integrate into Session Summary "Notable events" or a separate "Health" tab
+- **Module:** `src/session_health.rs` — detection rules + typed detail structs
+- **UI:** Health tab in `src/components/overview.rs` — collapsible cards with per-rule ECharts
+- **Status:** Detection logic implemented (flat strings). Detail structs and charts **pending**.
 
 ---
 

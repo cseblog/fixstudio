@@ -1,6 +1,9 @@
 target
 target/*
+fixtures
+fixtures/*
 
+*.log
 # Large sample files — keep locally, never commit
 sample_1m.fix
 *.fix.zip

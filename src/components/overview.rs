@@ -6,7 +6,11 @@ use dioxus::document::eval;
 use crate::export::{messages_to_csv, now_tag};
 use crate::fill_quality::{build_scorecard, FillQualityScorecard, ScorecardRow};
 use crate::model::FixMessage;
-use crate::session_health::{HealthIssueKind, IssueSeverity, SessionHealthReport};
+use crate::session_health::{
+    HealthDetail, HealthIssue, HealthIssueKind, IssueSeverity, SessionHealthReport,
+    HeartbeatGapDetail, SequenceGapDetail, ResendDetail, ReconnectDetail,
+    RateBurstDetail, LateCancelDetail, RejectedCancelDetail, parse_time_us,
+};
 use crate::session_summary::{build_session_summary, SessionSummary};
 
 // ── Tab enum ──────────────────────────────────────────────────────────────────
@@ -84,6 +88,8 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
                 data_ref.as_ref().map(|d| build_summary_charts_js(&d.scorecard))
             } else if tab == OverviewTab::FillQuality && view == FqView::Charts {
                 data_ref.as_ref().map(|d| build_charts_js(&d.scorecard))
+            } else if tab == OverviewTab::Health {
+                data_ref.as_ref().map(|d| build_health_charts_js(&d.summary.health))
             } else {
                 None
             }
@@ -539,37 +545,53 @@ fn render_health(report: &SessionHealthReport) -> Element {
             }
         };
     }
+
+    // Pre-compute all display data before entering RSX.
+    struct Card {
+        idx:             usize,
+        kind_label:      &'static str,
+        sev_class:       &'static str,
+        sev_icon:        &'static str,
+        technical_desc:  String,
+        business_impact: String,
+        detail_lines:    Vec<String>,
+    }
+
+    let cards: Vec<Card> = report.issues.iter().enumerate().map(|(idx, issue)| {
+        let (sev_class, sev_icon) = match issue.severity {
+            IssueSeverity::Critical => ("health-icon health-critical", "●"),
+            IssueSeverity::Warning  => ("health-icon health-warning",  "▲"),
+            IssueSeverity::Info     => ("health-icon health-info",     "ℹ"),
+        };
+        Card {
+            idx,
+            kind_label:      health_kind_label(&issue.kind),
+            sev_class,
+            sev_icon,
+            technical_desc:  issue.technical_desc.clone(),
+            business_impact: issue.business_impact.clone(),
+            detail_lines:    health_detail_lines(issue),
+        }
+    }).collect();
+
     rsx! {
         div { class: "health-list",
-            for issue in report.issues.iter() {
-                div { class: "health-issue",
-                    div { class: "health-issue-header",
-                        span {
-                            class: match issue.severity {
-                                IssueSeverity::Critical => "health-icon health-critical",
-                                IssueSeverity::Warning  => "health-icon health-warning",
-                                IssueSeverity::Info     => "health-icon health-info",
-                            },
-                            {match issue.severity {
-                                IssueSeverity::Critical => "●",
-                                IssueSeverity::Warning  => "▲",
-                                IssueSeverity::Info     => "ℹ",
-                            }}
-                        }
-                        span { class: "health-kind",
-                            {health_kind_label(&issue.kind)}
-                        }
-                        if !issue.time.is_empty() {
-                            span { class: "health-time", "{issue.time}" }
-                        }
-                        if !issue.msg_indices.is_empty() {
-                            span { class: "health-msg-count",
-                                {format!("({} msg)", issue.msg_indices.len())}
+            for card in cards.iter() {
+                div { class: "health-card",
+                    div { class: "health-card-header",
+                        span { class: "{card.sev_class}", "{card.sev_icon}" }
+                        span { class: "health-kind", "{card.kind_label}" }
+                        span { class: "health-tech-desc", "{card.technical_desc}" }
+                    }
+                    div { class: "health-impact", "{card.business_impact}" }
+                    if !card.detail_lines.is_empty() {
+                        div { class: "health-detail-lines",
+                            for line in card.detail_lines.iter() {
+                                div { class: "health-detail-line", "{line}" }
                             }
                         }
                     }
-                    div { class: "health-tech-desc", "{issue.technical_desc}" }
-                    div { class: "health-impact",    "{issue.business_impact}" }
+                    div { id: "health-chart-{card.idx}", class: "health-chart" }
                 }
             }
         }
@@ -585,6 +607,59 @@ fn health_kind_label(kind: &HealthIssueKind) -> &'static str {
         HealthIssueKind::MessageRateBurst => "Message Rate Burst",
         HealthIssueKind::LateCancel       => "Late Cancel",
         HealthIssueKind::RejectedCancel   => "Rejected Cancel",
+    }
+}
+
+/// Per-rule text rows shown below the business impact in each card.
+fn health_detail_lines(issue: &HealthIssue) -> Vec<String> {
+    match &issue.detail {
+        HealthDetail::HeartbeatGaps(d) => d.gaps.iter().take(5)
+            .map(|g| format!("at {}  —  {}ms", g.time, g.gap_ms))
+            .collect(),
+        HealthDetail::SequenceGaps(d) => d.gaps.iter().take(8)
+            .map(|g| format!("{}→{}  at {}  ({} missing)", g.from_seq, g.to_seq, g.time, g.missing))
+            .collect(),
+        HealthDetail::Resends(d) => d.instances.iter().take(5)
+            .map(|r| if r.end_seq == 0 {
+                format!("at {}  —  BeginSeq={}", r.time, r.begin_seq)
+            } else {
+                format!("at {}  —  seq {}→{}", r.time, r.begin_seq, r.end_seq)
+            })
+            .collect(),
+        HealthDetail::Reconnects(d) => d.logons.iter()
+            .map(|l| if l.reset_seq {
+                format!("{}  —  session reset  (seq={})", l.time, l.seq_num)
+            } else {
+                format!("{}  —  reconnect  (seq={})", l.time, l.seq_num)
+            })
+            .collect(),
+        HealthDetail::RateBursts(d) => {
+            let mut burst_buckets: Vec<(&str, usize)> = d.burst_indices.iter()
+                .filter_map(|&i| d.buckets.get(i))
+                .map(|b| (b.second_label.as_str(), b.count))
+                .collect();
+            burst_buckets.sort_by(|a, b| b.1.cmp(&a.1));
+            burst_buckets.iter().take(5)
+                .map(|(t, c)| format!("{}  —  {} msg/sec", t, c))
+                .collect()
+        },
+        HealthDetail::LateCancels(d) => {
+            let mut cases = d.cases.clone();
+            cases.sort_by(|a, b| b.lag_ms.cmp(&a.lag_ms));
+            cases.iter().take(5)
+                .map(|c| format!("{}  —  {}ms after fill", c.cl_ord_id, c.lag_ms))
+                .collect()
+        },
+        HealthDetail::RejectedCancels(d) => {
+            let mut counts: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for r in &d.rejections {
+                *counts.entry(r.reason_text.as_str()).or_insert(0) += 1;
+            }
+            let mut v: Vec<(&str, usize)> = counts.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.iter().map(|(reason, count)| format!("{reason}: {count}")).collect()
+        },
     }
 }
 
@@ -908,6 +983,244 @@ fn treemap_option(sc: &FillQualityScorecard) -> serde_json::Value {
                     }
                 }
             ],
+            "data": data
+        }]
+    })
+}
+
+// ── Health tab ECharts builders ───────────────────────────────────────────────
+
+fn build_health_charts_js(report: &SessionHealthReport) -> String {
+    let body: Vec<String> = report.issues.iter().enumerate()
+        .filter_map(|(idx, issue)| health_issue_chart_js(idx, issue))
+        .collect();
+    if body.is_empty() { return String::new(); }
+    format!(
+        "(function init() {{\n  \
+         if (typeof echarts === 'undefined') {{ setTimeout(init, 150); return; }}\n  \
+         {body}\n}})();\n",
+        body = body.join("\n  ")
+    )
+}
+
+fn health_issue_chart_js(idx: usize, issue: &HealthIssue) -> Option<String> {
+    let opt = match &issue.detail {
+        HealthDetail::HeartbeatGaps(d)   => health_hb_chart(d),
+        HealthDetail::SequenceGaps(d)    => health_seq_chart(d),
+        HealthDetail::Resends(d)         => health_resend_chart(d),
+        HealthDetail::Reconnects(d)      => health_reconnect_chart(d),
+        HealthDetail::RateBursts(d)      => health_burst_chart(d),
+        HealthDetail::LateCancels(d)     => health_late_cancel_chart(d),
+        HealthDetail::RejectedCancels(d) => health_rejected_cancel_chart(d),
+    };
+    let opt_json = serde_json::to_string(&opt).ok()?;
+    Some(format!(
+        "var e{idx}=document.getElementById('health-chart-{idx}');\
+         if(e{idx}){{var c{idx}=echarts.getInstanceByDom(e{idx})||\
+         echarts.init(e{idx},null,{{renderer:'canvas'}});\
+         c{idx}.setOption({opt_json},true);}}",
+        idx = idx, opt_json = opt_json
+    ))
+}
+
+// Rule 1 — Heartbeat Gap: scatter X=time, Y=gap_ms, threshold markLine.
+fn health_hb_chart(d: &HeartbeatGapDetail) -> serde_json::Value {
+    let labels: Vec<&str> = d.gaps.iter().map(|g| g.time.as_str()).collect();
+    let values: Vec<i64>  = d.gaps.iter().map(|g| g.gap_ms).collect();
+    let threshold_ms      = d.configured_interval_sec * 1_500;
+    serde_json::json!({
+        "backgroundColor": "transparent",
+        "tooltip": { "trigger": "axis" },
+        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
+        "xAxis": { "type": "category", "data": labels,
+            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
+        "yAxis": { "type": "value",
+            "axisLabel": { "color": "#6b7280", "formatter": "{value}ms" },
+            "splitLine": { "lineStyle": { "color": "#374151" } } },
+        "series": [{
+            "type": "scatter", "data": values,
+            "symbolSize": 9, "itemStyle": { "color": "#b8922a" },
+            "markLine": {
+                "silent": true,
+                "lineStyle": { "color": "#b8922a", "type": "dashed", "opacity": 0.5 },
+                "label": { "formatter": "threshold", "color": "#b8922a", "fontSize": 10 },
+                "data": [{ "yAxis": threshold_ms }]
+            }
+        }]
+    })
+}
+
+// Rule 2 — Sequence Gap: bar X=gap label, Y=missing count.
+fn health_seq_chart(d: &SequenceGapDetail) -> serde_json::Value {
+    let labels: Vec<String> = d.gaps.iter()
+        .map(|g| format!("{}→{}", g.from_seq, g.to_seq))
+        .collect();
+    let values: Vec<u64> = d.gaps.iter().map(|g| g.missing).collect();
+    serde_json::json!({
+        "backgroundColor": "transparent",
+        "tooltip": { "trigger": "axis", "formatter": "{b}<br/>Missing: {c}" },
+        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
+        "xAxis": { "type": "category", "data": labels,
+            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
+        "yAxis": { "type": "value",
+            "axisLabel": { "color": "#6b7280" },
+            "splitLine": { "lineStyle": { "color": "#374151" } } },
+        "series": [{
+            "type": "bar", "data": values, "barMaxWidth": 40,
+            "itemStyle": { "color": "#f87171", "borderRadius": [3,3,0,0] },
+            "label": { "show": true, "position": "top", "color": "#9ca3af", "fontSize": 10 }
+        }]
+    })
+}
+
+// Rule 3 — Excessive Resends: scatter timeline, Y=range size requested.
+fn health_resend_chart(d: &ResendDetail) -> serde_json::Value {
+    let labels: Vec<&str> = d.instances.iter().map(|r| r.time.as_str()).collect();
+    let values: Vec<u64>  = d.instances.iter()
+        .map(|r| if r.end_seq > r.begin_seq { r.end_seq - r.begin_seq + 1 } else { 1 })
+        .collect();
+    serde_json::json!({
+        "backgroundColor": "transparent",
+        "tooltip": { "trigger": "axis", "formatter": "{b}<br/>Range: {c} messages" },
+        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
+        "xAxis": { "type": "category", "data": labels,
+            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
+        "yAxis": { "type": "value", "name": "range",
+            "axisLabel": { "color": "#6b7280" },
+            "splitLine": { "lineStyle": { "color": "#374151" } } },
+        "series": [{
+            "type": "scatter", "data": values,
+            "symbolSize": 9, "itemStyle": { "color": "#fb923c" }
+        }]
+    })
+}
+
+// Rule 4 — Reconnects: bar showing gap in seconds before each reconnect logon.
+// Amber = mid-session reconnect; grey = clean session reset.
+fn health_reconnect_chart(d: &ReconnectDetail) -> serde_json::Value {
+    if d.logons.len() < 2 { return serde_json::json!({}); }
+    let mut labels:   Vec<String>            = Vec::new();
+    let mut gap_data: Vec<serde_json::Value> = Vec::new();
+    for window in d.logons.windows(2) {
+        let gap_sec = parse_time_us(&window[1].time)
+            .zip(parse_time_us(&window[0].time))
+            .map(|(c, p)| ((c - p).abs() / 1_000_000) as i64)
+            .unwrap_or(0);
+        labels.push(window[1].time.clone());
+        let color = if window[1].reset_seq { "#6b7280" } else { "#b8922a" };
+        gap_data.push(serde_json::json!({ "value": gap_sec, "itemStyle": { "color": color } }));
+    }
+    serde_json::json!({
+        "backgroundColor": "transparent",
+        "tooltip": { "trigger": "axis", "formatter": "{b}<br/>Gap before logon: {c}s" },
+        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
+        "xAxis": { "type": "category", "data": labels,
+            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
+        "yAxis": { "type": "value", "name": "sec",
+            "axisLabel": { "color": "#6b7280", "formatter": "{value}s" },
+            "splitLine": { "lineStyle": { "color": "#374151" } } },
+        "series": [{
+            "type": "bar", "data": gap_data, "barMaxWidth": 30,
+            "label": { "show": true, "position": "top",
+                       "formatter": "{c}s", "color": "#9ca3af", "fontSize": 10 }
+        }]
+    })
+}
+
+// Rule 5 — Rate Burst: bar chart of msg/sec, down-sampled to ≤200 points, threshold line.
+fn health_burst_chart(d: &RateBurstDetail) -> serde_json::Value {
+    const MAX_POINTS: usize = 200;
+    let (labels, counts): (Vec<String>, Vec<usize>) = if d.buckets.len() <= MAX_POINTS {
+        (
+            d.buckets.iter().map(|b| b.second_label.clone()).collect(),
+            d.buckets.iter().map(|b| b.count).collect(),
+        )
+    } else {
+        let group = (d.buckets.len() + MAX_POINTS - 1) / MAX_POINTS;
+        let mut lbs = Vec::new();
+        let mut cts = Vec::new();
+        for chunk in d.buckets.chunks(group) {
+            lbs.push(chunk[0].second_label.clone());
+            cts.push(chunk.iter().map(|b| b.count).max().unwrap_or(0));
+        }
+        (lbs, cts)
+    };
+    let threshold = d.threshold;
+    let data: Vec<serde_json::Value> = counts.iter().map(|&c| {
+        if c > threshold {
+            serde_json::json!({ "value": c, "itemStyle": { "color": "#b8922a" } })
+        } else {
+            serde_json::json!(c)
+        }
+    }).collect();
+    serde_json::json!({
+        "backgroundColor": "transparent",
+        "tooltip": { "trigger": "axis" },
+        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
+        "xAxis": { "type": "category", "data": labels,
+            "axisLabel": { "color": "#6b7280", "fontSize": 10 },
+            "axisTick": { "show": false } },
+        "yAxis": { "type": "value",
+            "axisLabel": { "color": "#6b7280" },
+            "splitLine": { "lineStyle": { "color": "#374151" } } },
+        "series": [{
+            "type": "bar", "data": data, "barMaxWidth": 6,
+            "itemStyle": { "color": "#4b5563", "borderRadius": [1,1,0,0] },
+            "markLine": {
+                "silent": true,
+                "lineStyle": { "color": "#b8922a", "type": "dashed", "opacity": 0.7 },
+                "label": { "formatter": "threshold", "color": "#b8922a", "fontSize": 10 },
+                "data": [{ "yAxis": threshold }]
+            }
+        }]
+    })
+}
+
+// Rule 6 — Late Cancels: scatter X=cancel time, Y=lag ms.
+fn health_late_cancel_chart(d: &LateCancelDetail) -> serde_json::Value {
+    let labels: Vec<&str> = d.cases.iter().map(|c| c.cancel_time.as_str()).collect();
+    let values: Vec<i64>  = d.cases.iter().map(|c| c.lag_ms).collect();
+    serde_json::json!({
+        "backgroundColor": "transparent",
+        "tooltip": { "trigger": "axis", "formatter": "{b}<br/>Lag: {c}ms" },
+        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
+        "xAxis": { "type": "category", "data": labels,
+            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
+        "yAxis": { "type": "value",
+            "axisLabel": { "color": "#6b7280", "formatter": "{value}ms" },
+            "splitLine": { "lineStyle": { "color": "#374151" } } },
+        "series": [{
+            "type": "scatter", "data": values,
+            "symbolSize": 9, "itemStyle": { "color": "#fb923c" }
+        }]
+    })
+}
+
+// Rule 7 — Rejected Cancels: donut pie by rejection reason (tag 102).
+fn health_rejected_cancel_chart(d: &RejectedCancelDetail) -> serde_json::Value {
+    let mut counts: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
+    for r in &d.rejections {
+        *counts.entry(r.reason_text.as_str()).or_insert(0) += 1;
+    }
+    let mut pairs: Vec<(&str, u64)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1));
+    let data: Vec<serde_json::Value> = pairs.iter()
+        .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
+        .collect();
+    serde_json::json!({
+        "backgroundColor": "transparent",
+        "tooltip": { "trigger": "item", "formatter": "{b}: {c} ({d}%)" },
+        "legend": {
+            "orient": "horizontal", "bottom": 2, "left": "center",
+            "textStyle": { "color": "#888890", "fontSize": 10 },
+            "itemWidth": 8, "itemHeight": 8
+        },
+        "series": [{
+            "type": "pie", "radius": ["38%", "60%"], "center": ["50%", "42%"],
+            "label": { "show": false }, "labelLine": { "show": false },
+            "emphasis": {
+                "label": { "show": true, "fontSize": 11, "fontWeight": "bold", "color": "#dddde3" }
+            },
             "data": data
         }]
     })

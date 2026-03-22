@@ -1480,18 +1480,22 @@ html, body { height: 100%; overflow: hidden; background: #0f0f11; }
     color: #444448;
 }
 .health-ok-icon { font-size: 20px; color: #3d8f5a; }
-.health-list { display: flex; flex-direction: column; gap: 12px; }
-.health-issue {
+.health-list { display: flex; flex-direction: column; gap: 14px; }
+
+/* Card */
+.health-card {
     background: #161618;
     border: 1px solid #2c2c30;
     border-radius: 6px;
     padding: 12px 14px;
-}
-.health-issue-header {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 8px;
-    margin-bottom: 6px;
+}
+.health-card-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
 }
 .health-icon { font-size: 13px; flex-shrink: 0; }
 .health-critical { color: #963232; }
@@ -1501,24 +1505,40 @@ html, body { height: 100%; overflow: hidden; background: #0f0f11; }
     font-weight: 700;
     font-size: 13px;
     color: #dddde3;
-    flex: 1;
+    flex-shrink: 0;
 }
-.health-time {
-    font-family: ui-monospace, 'SF Mono', monospace;
-    font-size: 11px;
-    color: #444448;
-}
-.health-msg-count { font-size: 11px; color: #444448; }
 .health-tech-desc {
     font-size: 12px;
     color: #9e7a28;
     font-family: ui-monospace, 'SF Mono', monospace;
-    margin-bottom: 6px;
+    flex: 1;
+    min-width: 0;
 }
 .health-impact {
     font-size: 12px;
     color: #444448;
     line-height: 1.5;
+}
+
+/* Detail rows (per-event text list) */
+.health-detail-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-left: 2px solid #2c2c30;
+    padding-left: 10px;
+}
+.health-detail-line {
+    font-size: 11px;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    color: #888890;
+}
+
+/* Chart container */
+.health-chart {
+    width: 100%;
+    height: 200px;
+    margin-top: 4px;
 }
 
 /* ── Trade Latency ECharts histogram ─────────────────────────────────────── */

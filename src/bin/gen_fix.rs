@@ -21,7 +21,9 @@ type MsgBuf = Vec<(u64, String)>;
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_TARGET: usize = 1_000_000;
+const DEFAULT_DIR:    &str  = "fixtures";
 const DEFAULT_OUTPUT: &str  = "fix_test_1m.log";
+const HEALTH_OUTPUT:  &str  = "fix_health_test_100k.log";
 const DATE: &str = "20240315"; // Friday 15-Mar-2024
 
 /// (client_comp_id, server_comp_id)
@@ -1385,27 +1387,358 @@ fn gen_validator_test(log_path: &str, manifest_path: &str) {
     eprintln!("To use: Load {} in AiFIXParser → Validate tab → Batch Validate", log_path);
 }
 
+// ── Session-health test generator ─────────────────────────────────────────────
+//
+// Usage:  cargo run --release --bin gen_fix -- --mode health
+// Output: fixtures/fix_health_test_100k.log
+//
+// Produces ~100 k FIX messages on a single session (CITIFX/FXECN) with
+// deliberate anomalies at known milestones to exercise all 7 detection rules.
+
+fn ensure_dir(dir: &str) {
+    std::fs::create_dir_all(dir)
+        .unwrap_or_else(|e| eprintln!("Warning: cannot create dir '{}': {}", dir, e));
+}
+
+fn out_path(dir: &str, filename: &str) -> String {
+    format!("{}/{}", dir.trim_end_matches('/'), filename)
+}
+
+fn find_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.iter().position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.as_str())
+}
+
+// ── Health injection helpers ───────────────────────────────────────────────────
+
+/// Skip `skip` client sequence numbers, leaving a gap the detector will catch.
+fn inject_seq_gap(s: &mut Session, skip: u64) {
+    s.seq_c += skip;
+}
+
+/// Emit a heartbeat, advance time by `gap_sec` seconds without emitting another,
+/// then emit the next heartbeat — creating a gap that exceeds the 30 s threshold.
+fn inject_heartbeat_gap(msgs: &mut MsgBuf, s: &mut Session, total: &mut usize, gap_sec: u64) {
+    // Anchor heartbeat
+    let ts = fmt_ts(s.time_us);
+    let seq = s.next_seq_c();
+    let mut b = String::with_capacity(80);
+    write!(b, "35=0|34={}|49={}|52={}|56={}|", seq, s.client, ts, s.server).unwrap();
+    emit(msgs, s.time_us, &b, total);
+
+    // Silence — advance without calling emit_heartbeats
+    s.tick(gap_sec * 1_000_000);
+
+    // Second heartbeat with large gap
+    let ts = fmt_ts(s.time_us);
+    let seq = s.next_seq_c();
+    let mut b = String::with_capacity(80);
+    write!(b, "35=0|34={}|49={}|52={}|56={}|", seq, s.client, ts, s.server).unwrap();
+    emit(msgs, s.time_us, &b, total);
+
+    // Reset heartbeat timer so normal cycle resumes
+    s.hb_due_us = s.time_us + 30_000_000;
+}
+
+/// Emit Logout → 5 s pause → Logon, simulating a mid-session reconnect.
+/// If `reset_seq` the sequence numbers are zeroed before the new Logon (seq=1 = reset).
+fn inject_reconnect(msgs: &mut MsgBuf, s: &mut Session, total: &mut usize, reset_seq: bool) {
+    emit_logout(msgs, s, total);
+    s.tick(5_000_000);
+    if reset_seq {
+        s.seq_c = 0;
+        s.seq_s = 0;
+    }
+    emit_logon(msgs, s, total);
+}
+
+/// Emit `count` heartbeats within a single second — triggers message-rate burst detection.
+fn inject_burst(msgs: &mut MsgBuf, s: &mut Session, total: &mut usize, count: usize) {
+    let start_us = s.time_us;
+    for i in 0..count {
+        s.time_us = (start_us + i as u64 * 1_000_000 / count as u64).min(DAY_END_US);
+        let ts = fmt_ts(s.time_us);
+        let seq = s.next_seq_c();
+        let mut b = String::with_capacity(80);
+        write!(b, "35=0|34={}|49={}|52={}|56={}|", seq, s.client, ts, s.server).unwrap();
+        emit(msgs, s.time_us, &b, total);
+    }
+    s.time_us = (start_us + 1_100_000).min(DAY_END_US);
+    s.hb_due_us = s.time_us + 30_000_000;
+}
+
+/// NOS → Fill → CancelRequest (arrives after fill — late cancel).
+fn inject_late_cancel(msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids, total: &mut usize) {
+    let sym    = "EUR/USD";
+    let cl1    = ids.next_cord();
+    let cl2    = ids.next_cord();
+    let ord_id = ids.next_ord();
+    let exec1  = ids.next_exec();
+    let exec2  = ids.next_exec();
+
+    // NOS Market
+    let ts_nos = fmt_ts(s.time_us);
+    let seq = s.next_seq_c();
+    let mut b = String::with_capacity(220);
+    write!(b, "35=D|34={}|49={}|52={}|56={}|11=CO{:08}|1=CITI-FX-01|55={}|54=1|38=1000000|40=1|59=3|64={}|60={}|21=1|",
+        seq, s.client, ts_nos, s.server, cl1, sym, SETTL_DATE, ts_nos).unwrap();
+    emit(msgs, s.time_us, &b, total);
+
+    // ExecRpt New
+    s.tick(5_000);
+    let ts = fmt_ts(s.time_us);
+    let seq = s.next_seq_s();
+    let mut b = String::with_capacity(256);
+    write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=0|39=0|55={}|54=1|38=1000000|14=0|151=1000000|6=0|60={}|",
+        seq, s.server, ts, s.client, ord_id, cl1, exec1, sym, ts).unwrap();
+    emit(msgs, s.time_us, &b, total);
+
+    // ExecRpt Fill
+    s.tick(3_000);
+    let ts = fmt_ts(s.time_us);
+    let seq = s.next_seq_s();
+    let mut b = String::with_capacity(256);
+    write!(b, "35=8|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|17=EX{:08}|150=F|39=2|55={}|54=1|38=1000000|14=1000000|151=0|31=1.08500|32=1000000|6=1.08500|60={}|",
+        seq, s.server, ts, s.client, ord_id, cl1, exec2, sym, ts).unwrap();
+    emit(msgs, s.time_us, &b, total);
+
+    // Cancel request after fill (45 ms later — too late)
+    s.tick(45_000);
+    let ts_cxl = fmt_ts(s.time_us);
+    let seq = s.next_seq_c();
+    let mut b = String::with_capacity(220);
+    write!(b, "35=F|34={}|49={}|52={}|56={}|11=CO{:08}|41=CO{:08}|37=OR{:08}|55={}|54=1|38=1000000|60={}|",
+        seq, s.client, ts_cxl, s.server, cl2, cl1, ord_id, sym, ts_cxl).unwrap();
+    emit(msgs, s.time_us, &b, total);
+}
+
+/// Emit an OrderCancelReject (35=9) with the given tag-102 reason code.
+fn inject_rejected_cancel(
+    msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids, total: &mut usize,
+    reason_code: &str,
+) {
+    let cl_ord      = ids.next_cord();
+    let orig_cl_ord = ids.next_cord();
+    let ord_id      = ids.next_ord();
+    let ts  = fmt_ts(s.time_us);
+    let seq = s.next_seq_s();
+    let mut b = String::with_capacity(220);
+    write!(b, "35=9|34={}|49={}|52={}|56={}|37=OR{:08}|11=CO{:08}|41=CO{:08}|102={}|58=Cancel rejected|",
+        seq, s.server, ts, s.client, ord_id, cl_ord, orig_cl_ord, reason_code).unwrap();
+    emit(msgs, s.time_us, &b, total);
+    s.tick(500_000);
+}
+
+/// Emit a ResendRequest (35=2) for the given sequence range.
+fn inject_resend_request(
+    msgs: &mut MsgBuf, s: &mut Session, total: &mut usize,
+    begin_seq: u64, end_seq: u64,
+) {
+    let ts  = fmt_ts(s.time_us);
+    let seq = s.next_seq_c();
+    let mut b = String::with_capacity(120);
+    write!(b, "35=2|34={}|49={}|52={}|56={}|7={}|16={}|",
+        seq, s.client, ts, s.server, begin_seq, end_seq).unwrap();
+    emit(msgs, s.time_us, &b, total);
+    s.tick(2_000_000);
+}
+
+/// Randomly emit a ResendRequest with probability 1-in-`interval`.
+fn maybe_resend(msgs: &mut MsgBuf, s: &mut Session, total: &mut usize, rng: &mut Rng, interval: u64) {
+    if rng.next() % interval == 0 {
+        let begin = s.seq_c.saturating_sub(5).max(1);
+        let end   = s.seq_c;
+        inject_resend_request(msgs, s, total, begin, end);
+    }
+}
+
+/// Run one random normal trading workflow on session `s`.
+fn run_one_workflow(
+    msgs: &mut MsgBuf, s: &mut Session, ids: &mut Ids,
+    rng: &mut Rng, total: &mut usize,
+) {
+    let sym_idx = rng.next() as usize % SYMBOLS.len();
+    match rng.next() % 5 {
+        0 => workflow_rfq_fill(msgs, s, ids, rng, sym_idx, total),
+        1 => workflow_rfq_partial(msgs, s, ids, rng, sym_idx, total),
+        2 => workflow_market_fill(msgs, s, ids, rng, sym_idx, total),
+        3 => workflow_limit_order(msgs, s, ids, rng, sym_idx, total),
+        _ => workflow_cancel(msgs, s, ids, rng, sym_idx, total),
+    }
+}
+
+/// Generate ~`target` messages on a single CITIFX/FXECN session with deliberate
+/// anomalies injected at known milestones:
+///
+///   ~  8 000  →  sequence gap × 2  (skip 10 seqnums each)
+///   ~ 12 000  →  heartbeat gap × 2  (90 s and 120 s silence)
+///   ~ 20 000  →  reconnect #1  (mid-session, no seq reset)
+///   ~ 35 000  →  sequence gap #3  (skip 15 seqnums)
+///   ~ 50 000  →  message-rate burst × 2  (150 and 180 msgs in one second)
+///   ~ 55 000  →  late cancels × 5
+///   ~ 65 000  →  reconnect #2  (seq reset — new session)
+///   ~ 75 000  →  rejected cancels × 5  (codes 0, 1, 3, 0, 1)
+///   throughout  →  resend requests (≈1 per 30 workflows, ~600 total)
+fn gen_health_test(output: &str, target: usize) {
+    let mut msgs: MsgBuf = Vec::with_capacity(target + 8192);
+    let mut total = 0usize;
+    let mut ids   = Ids::new();
+    let mut rng   = Rng(0xFEED_BABE_CAFE_DEAD);
+
+    let mut s = Session::new(0, 0); // CITIFX / FXECN
+
+    emit_logon(&mut msgs, &mut s, &mut total);
+
+    // ── Phase 1 → milestone 1a ─────────────────────────────────────────────
+    while total < 8_000 && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+    inject_seq_gap(&mut s, 10);
+    for _ in 0..100 { // a short block between the two gaps
+        if s.time_us >= DAY_END_US { break; }
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+    }
+    inject_seq_gap(&mut s, 10);
+
+    // ── Phase 2 → milestone 2 ─────────────────────────────────────────────
+    while total < 12_000 && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+    inject_heartbeat_gap(&mut msgs, &mut s, &mut total, 90);
+    s.tick(30_000_000);
+    inject_heartbeat_gap(&mut msgs, &mut s, &mut total, 120);
+
+    // ── Phase 3 → milestone 3 ─────────────────────────────────────────────
+    while total < 20_000 && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+    inject_reconnect(&mut msgs, &mut s, &mut total, false);
+
+    // ── Phase 4 → milestone 4 ─────────────────────────────────────────────
+    while total < 35_000 && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+    inject_seq_gap(&mut s, 15);
+
+    // ── Phase 5 → milestone 5 ─────────────────────────────────────────────
+    while total < 50_000 && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+    inject_burst(&mut msgs, &mut s, &mut total, 150);
+    s.tick(5_000_000);
+    inject_burst(&mut msgs, &mut s, &mut total, 180);
+
+    // ── Phase 6 → milestone 6 ─────────────────────────────────────────────
+    while total < 55_000 && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+    for _ in 0..5 {
+        inject_late_cancel(&mut msgs, &mut s, &mut ids, &mut total);
+        s.tick(2_000_000);
+    }
+
+    // ── Phase 7 → milestone 7 ─────────────────────────────────────────────
+    while total < 65_000 && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+    inject_reconnect(&mut msgs, &mut s, &mut total, true); // seq reset
+
+    // ── Phase 8 → milestone 8 ─────────────────────────────────────────────
+    while total < 75_000 && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+    for &code in &["0", "1", "3", "0", "1"] {
+        inject_rejected_cancel(&mut msgs, &mut s, &mut ids, &mut total, code);
+        s.tick(1_000_000);
+    }
+
+    // ── Phase 9 → target ──────────────────────────────────────────────────
+    while total < target.saturating_sub(4) && s.time_us < DAY_END_US {
+        emit_heartbeats(&mut msgs, &mut s, &mut total);
+        run_one_workflow(&mut msgs, &mut s, &mut ids, &mut rng, &mut total);
+        maybe_resend(&mut msgs, &mut s, &mut total, &mut rng, 30);
+    }
+
+    emit_heartbeats(&mut msgs, &mut s, &mut total);
+    emit_logout(&mut msgs, &mut s, &mut total);
+
+    msgs.sort_unstable_by_key(|(ts, _)| *ts);
+
+    let file = File::create(output).expect("Cannot create health test output file");
+    let mut w = BufWriter::with_capacity(4 * 1024 * 1024, file);
+    for (_, msg) in &msgs {
+        w.write_all(msg.as_bytes()).unwrap();
+        w.write_all(b"\n").unwrap();
+    }
+    w.flush().unwrap();
+    eprintln!("Health test: {} messages written to {}", total, output);
+    eprintln!("Anomalies: 3× seq-gap, 2× hb-gap, 2× reconnect, 2× rate-burst, 5× late-cancel, 5× rejected-cancel, ~{}× resends",
+        total / 30 / 5);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
-    // Optional positional args: <target_count> <output_file>
-    //   cargo run --release --bin gen_fix -- 100000 fix_test_100k.log
-    //   cargo run --release --bin gen_fix -- --mode validator
+    // Usage:
+    //   cargo run --release --bin gen_fix                              # 1 M msgs → fixtures/fix_test_1m.log
+    //   cargo run --release --bin gen_fix -- --mode health             # 100 k health test
+    //   cargo run --release --bin gen_fix -- --mode validator          # validator fixture
+    //   cargo run --release --bin gen_fix -- --output-dir /tmp         # custom output directory
+    //   cargo run --release --bin gen_fix -- 100000 fix_100k.log       # positional (legacy)
     let args: Vec<String> = std::env::args().collect();
 
-    // Check for --mode validator
-    if args.iter().any(|a| a == "--mode") {
-        let mode_idx = args.iter().position(|a| a == "--mode").unwrap();
-        if args.get(mode_idx + 1).map(|s| s.as_str()) == Some("validator") {
-            let log_path  = args.get(mode_idx + 2).map(|s| s.as_str()).unwrap_or(VTEST_LOG);
-            let man_path  = args.get(mode_idx + 3).map(|s| s.as_str()).unwrap_or(VTEST_MANIFEST);
-            gen_validator_test(log_path, man_path);
-            return;
+    // Output directory (default: fixtures/)
+    let dir = find_flag(&args, "--output-dir").unwrap_or(DEFAULT_DIR);
+    ensure_dir(dir);
+
+    // --mode dispatch
+    if let Some(mode_idx) = args.iter().position(|a| a == "--mode") {
+        match args.get(mode_idx + 1).map(|s| s.as_str()) {
+            Some("validator") => {
+                let log_path = out_path(dir, VTEST_LOG);
+                let man_path = out_path(dir, VTEST_MANIFEST);
+                gen_validator_test(&log_path, &man_path);
+                return;
+            }
+            Some("health") => {
+                let output = out_path(dir, HEALTH_OUTPUT);
+                gen_health_test(&output, 100_000);
+                return;
+            }
+            Some(m) => {
+                eprintln!("Unknown mode '{}'. Valid modes: validator, health", m);
+                std::process::exit(1);
+            }
+            None => {
+                eprintln!("--mode requires an argument");
+                std::process::exit(1);
+            }
         }
     }
 
+    // Default: 1 M message generator
     let target: usize = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(DEFAULT_TARGET);
-    let output: &str  = args.get(2).map(|s| s.as_str()).unwrap_or(DEFAULT_OUTPUT);
+    let output = args.get(2)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| out_path(dir, DEFAULT_OUTPUT));
 
     let mut msgs: MsgBuf = Vec::with_capacity(target + 4096);
     let mut total = 0usize;
@@ -1468,7 +1801,7 @@ fn main() {
     // Sort all sessions' messages by timestamp to produce a realistic interleaved log.
     msgs.sort_unstable_by_key(|(ts, _)| *ts);
 
-    let file = File::create(output).expect("Cannot create output file");
+    let file = File::create(&output).expect("Cannot create output file");
     let mut w = BufWriter::with_capacity(4 * 1024 * 1024, file);
     for (_, msg) in &msgs {
         w.write_all(msg.as_bytes()).unwrap();
