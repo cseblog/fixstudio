@@ -1,4 +1,4 @@
-//! FIX Message Validator — single-message debugger + batch summary.
+//! FIX Message Validator — single-message debugger + auto batch summary.
 
 use dioxus::prelude::*;
 
@@ -22,13 +22,54 @@ enum Tab { Single, Batch }
 // ── Component ─────────────────────────────────────────────────────────────────
 
 pub fn validator_panel(props: ValidatorProps) -> Element {
-    let mut tab             = use_signal(|| Tab::Batch);
-    let mut raw_input       = use_signal(String::new);
+    let mut tab          = use_signal(|| Tab::Batch);
+    let mut raw_input    = use_signal(String::new);
     let mut report: Signal<Option<ValidationReport>> = use_signal(|| None);
     let mut parsed_fields: Signal<Vec<(u16, String)>> = use_signal(Vec::new);
+
+    // Batch state — populated automatically via use_effect
     let mut batch_reports: Signal<Vec<(usize, String, ValidationReport)>> = use_signal(Vec::new);
-    let mut batch_ran       = use_signal(|| false);
-    let messages            = props.messages;
+    let mut batch_total   = use_signal(|| 0usize);
+    let mut validating    = use_signal(|| false);
+
+    let messages = props.messages;
+
+    // ── Auto-validate whenever messages change ────────────────────────────────
+    use_effect(move || {
+        let msgs = messages.read().clone();
+        let count = msgs.len();
+        batch_total.set(count);
+        batch_reports.set(vec![]);
+
+        if count == 0 {
+            validating.set(false);
+            return;
+        }
+
+        validating.set(true);
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(usize, String, ValidationReport)>>();
+
+        rayon::spawn(move || {
+            let reports = validate_batch(&msgs);
+            let with_issues: Vec<(usize, String, ValidationReport)> = reports
+                .into_iter()
+                .enumerate()
+                .filter(|(_, r)| !r.is_clean() || r.warning_count() > 0)
+                .map(|(i, r)| {
+                    let mt = msgs[i].msg_type_raw.to_string();
+                    (i, mt, r)
+                })
+                .collect();
+            let _ = tx.send(with_issues);
+        });
+
+        spawn(async move {
+            if let Ok(data) = rx.await {
+                batch_reports.set(data);
+                validating.set(false);
+            }
+        });
+    });
 
     // ── Validate single message ───────────────────────────────────────────────
     let validate_single = move |_| {
@@ -40,7 +81,6 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
         }
         let bytes: Vec<u8> = raw.bytes().collect();
         let r = validate_raw(&bytes);
-        // Extract parsed fields for display
         let msg = parse_single_for_validation(&bytes);
         let fields: Vec<(u16, String)> = msg.fields
             .iter()
@@ -50,33 +90,10 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
         report.set(Some(r));
     };
 
-    // ── Validate batch ────────────────────────────────────────────────────────
-    let validate_all = move |_| {
-        let msgs = messages.read().clone();
-        if msgs.is_empty() {
-            batch_reports.set(vec![]);
-            batch_ran.set(true);
-            return;
-        }
-        let reports = validate_batch(&msgs);
-        let with_issues: Vec<(usize, String, ValidationReport)> = reports
-            .into_iter()
-            .enumerate()
-            .filter(|(_, r)| !r.is_clean() || r.warning_count() > 0)
-            .map(|(i, r)| {
-                let mt = msgs[i].msg_type_raw.to_string();
-                (i, mt, r)
-            })
-            .collect();
-        batch_reports.set(with_issues);
-        batch_ran.set(true);
-    };
-
-    // ── Drill: load a message into single-debugger ────────────────────────────
+    // ── Drill: load a batch message into the single-debugger ─────────────────
     let mut drill_msg = move |idx: usize| {
         let msgs = messages.read();
         if let Some(msg) = msgs.get(idx) {
-            // Reconstruct pipe-delimited raw from parsed fields
             let raw: String = msg.fields
                 .iter()
                 .map(|f| format!("{}={}|", f.tag, f.value))
@@ -96,9 +113,10 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
         }
     };
 
-    let msg_count = messages.read().len();
-    let in_single = *tab.read() == Tab::Single;
-    let in_batch  = *tab.read() == Tab::Batch;
+    let msg_count    = messages.read().len();
+    let in_single    = *tab.read() == Tab::Single;
+    let in_batch     = *tab.read() == Tab::Batch;
+    let is_validating = *validating.read();
 
     rsx! {
         div { class: "validator-panel",
@@ -212,14 +230,12 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
                             let issues = rep.issues.clone();
                             rsx! {
                                 div { class: "validator-field-table",
-                                    // Header
                                     div { class: "vfield-header vfield-row",
                                         span { class: "vfield-tag", "Tag" }
                                         span { class: "vfield-name", "Name" }
                                         span { class: "vfield-value", "Value" }
                                         span { class: "vfield-status", "Status" }
                                     }
-                                    // Rows
                                     for (tag, value) in fields.iter() {
                                         {
                                             let t = *tag;
@@ -253,7 +269,6 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
                                                         }
                                                     }
                                                 }
-                                                // Inline issue messages under the field row
                                                 for issue in field_issues {
                                                     div { class: "vfield-issue",
                                                         span {
@@ -313,87 +328,165 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
             if in_batch {
                 // ── Batch validation ──
                 div { class: "validator-batch",
-                    div { class: "validator-batch-toolbar",
-                        button {
-                            class: "btn btn-process",
-                            onclick: validate_all,
-                            disabled: msg_count == 0,
-                            if msg_count == 0 {
-                                "No messages loaded"
-                            } else {
-                                "Validate {msg_count} messages"
-                            }
-                        }
-                        if *batch_ran.read() {
-                            {
-                                let rows = batch_reports.read();
-                                let err_msgs  = rows.iter().filter(|(_, _, r)| r.error_count() > 0).count();
-                                let warn_msgs = rows.iter().filter(|(_, _, r)| r.warning_count() > 0 && r.error_count() == 0).count();
-                                let err_label = format!("{} message{} with errors", err_msgs, if err_msgs == 1 { "" } else { "s" });
-                                rsx! {
-                                    if err_msgs == 0 && warn_msgs == 0 {
-                                        span { class: "vsummary-ok", "✓ All {msg_count} messages valid" }
-                                    } else {
-                                        span { class: "vsummary-err", "{err_label}" }
-                                        span { class: "vsummary-warn", "{warn_msgs} with warnings only" }
+
+                    // ── Summary report (always visible) ──
+                    {
+                        let rows       = batch_reports.read();
+                        let total      = *batch_total.read();
+                        let err_msgs   = rows.iter().filter(|(_, _, r)| r.error_count() > 0).count();
+                        let warn_msgs  = rows.iter().filter(|(_, _, r)| r.warning_count() > 0 && r.error_count() == 0).count();
+                        let valid_msgs = total.saturating_sub(err_msgs + warn_msgs);
+                        let err_label    = format!("{} error{}",   err_msgs,  if err_msgs  == 1 { "" } else { "s" });
+                        let warn_label   = format!("{} warning{}", warn_msgs, if warn_msgs == 1 { "" } else { "s" });
+                        let err_in_msgs  = format!("in {} msg{}",  err_msgs,  if err_msgs  == 1 { "" } else { "s" });
+                        let warn_in_msgs = format!("in {} msg{}",  warn_msgs, if warn_msgs == 1 { "" } else { "s" });
+                        rsx! {
+                            div { class: "vbatch-summary",
+                                if is_validating {
+                                    span { class: "vbatch-summary-running", "Validating…" }
+                                } else if total == 0 {
+                                    span { class: "vbatch-summary-empty", "No messages loaded" }
+                                } else if err_msgs == 0 && warn_msgs == 0 {
+                                    span { class: "vbatch-summary-stat vbatch-stat-ok",
+                                        span { class: "vbatch-stat-value", "✓ {total}" }
+                                        span { class: "vbatch-stat-label", "all valid" }
+                                    }
+                                } else {
+                                    span { class: "vbatch-summary-stat vbatch-stat-ok",
+                                        span { class: "vbatch-stat-value", "{valid_msgs}" }
+                                        span { class: "vbatch-stat-label", "valid" }
+                                    }
+                                    span { class: "vbatch-summary-stat vbatch-stat-err",
+                                        span { class: "vbatch-stat-value", "{err_label}" }
+                                        span { class: "vbatch-stat-label", "{err_in_msgs}" }
+                                    }
+                                    if warn_msgs > 0 {
+                                        span { class: "vbatch-summary-stat vbatch-stat-warn",
+                                            span { class: "vbatch-stat-value", "{warn_label}" }
+                                            span { class: "vbatch-stat-label", "{warn_in_msgs}" }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
 
-                    if *batch_ran.read() {
-                        {
-                            let rows = batch_reports.read().clone();
-                            if rows.is_empty() {
-                                rsx! {
-                                    div { class: "validator-batch-empty",
-                                        "All messages passed validation — no issues found."
+                    // ── Error code breakdown ──
+                    {
+                        let rows = batch_reports.read();
+                        if !rows.is_empty() {
+                            // Count messages affected per error code
+                            let mut map: std::collections::HashMap<&'static str, (usize, Severity)> =
+                                std::collections::HashMap::new();
+                            for (_, _, rep) in rows.iter() {
+                                let mut seen: std::collections::HashSet<&'static str> =
+                                    std::collections::HashSet::new();
+                                for issue in &rep.issues {
+                                    if seen.insert(issue.code) {
+                                        let e = map.entry(issue.code).or_insert((0, Severity::Warning));
+                                        e.0 += 1;
+                                        if issue.severity == Severity::Error {
+                                            e.1 = Severity::Error;
+                                        }
                                     }
                                 }
-                            } else {
-                                rsx! {
-                                    div { class: "validator-batch-table",
-                                        // Header
-                                        div { class: "vbatch-header vbatch-row",
-                                            span { class: "vbatch-idx", "#" }
-                                            span { class: "vbatch-type", "MsgType" }
-                                            span { class: "vbatch-issues", "Issues" }
-                                            span { class: "vbatch-first", "First error" }
-                                        }
-                                        for (idx, mt, rep) in rows.iter() {
-                                            {
-                                                let i = *idx;
-                                                let mt = mt.clone();
-                                                let errs = rep.error_count();
-                                                let warns = rep.warning_count();
-                                                let first = rep.first_error()
-                                                    .map(|e| e.message.clone())
-                                                    .or_else(|| rep.issues.first().map(|e| e.message.clone()))
-                                                    .unwrap_or_default();
-                                                rsx! {
-                                                    div {
-                                                        class: if errs > 0 { "vbatch-row vbatch-error" } else { "vbatch-row vbatch-warn" },
-                                                        onclick: move |_| drill_msg(i),
-                                                        title: "Click to inspect in Message Debugger",
-                                                        span { class: "vbatch-idx", "{i + 1}" }
-                                                        span { class: "vbatch-type", "{mt}" }
-                                                        span { class: "vbatch-issues",
-                                                            if errs > 0 {
-                                                                span { class: "vstatus-err", "✗ {errs}" }
-                                                            }
-                                                            if warns > 0 {
-                                                                span { class: "vstatus-warn", " ⚠ {warns}" }
-                                                            }
-                                                        }
-                                                        span { class: "vbatch-first", "{first}" }
+                            }
+                            // Sort: errors first, then by count descending
+                            let mut breakdown: Vec<(&'static str, usize, Severity)> = map
+                                .into_iter()
+                                .map(|(code, (count, sev))| (code, count, sev))
+                                .collect();
+                            breakdown.sort_by(|a, b| {
+                                let sev_ord = |s: &Severity| if *s == Severity::Error { 0 } else { 1 };
+                                sev_ord(&a.2).cmp(&sev_ord(&b.2))
+                                    .then(b.1.cmp(&a.1))
+                            });
+                            rsx! {
+                                div { class: "vbatch-breakdown",
+                                    div { class: "vbatch-breakdown-header",
+                                        span { class: "vbd-rule", "Rule" }
+                                        span { class: "vbd-code", "Code" }
+                                        span { class: "vbd-count", "Msgs" }
+                                    }
+                                    for (code, count, sev) in breakdown.iter() {
+                                        {
+                                            let rn = crate::validator::rule_number(code);
+                                            let rule_lbl = if *sev == Severity::Error {
+                                                format!("Error Rule {rn}")
+                                            } else {
+                                                format!("Warning Rule {rn}")
+                                            };
+                                            rsx! {
+                                                div { class: "vbd-row",
+                                                    span {
+                                                        class: if *sev == Severity::Error { "vbd-rule vissue-rule-err" } else { "vbd-rule vissue-rule-warn" },
+                                                        "{rule_lbl}"
                                                     }
+                                                    span { class: "vbd-code", "{code}" }
+                                                    span { class: "vbd-count", "{count}" }
                                                 }
                                             }
                                         }
                                     }
                                 }
                             }
+                        } else {
+                            rsx! {}
+                        }
+                    }
+
+                    // ── Issues table ──
+                    {
+                        let rows = batch_reports.read().clone();
+                        if !rows.is_empty() {
+                            rsx! {
+                                div { class: "validator-batch-table",
+                                    div { class: "vbatch-header vbatch-row",
+                                        span { class: "vbatch-idx", "#" }
+                                        span { class: "vbatch-type", "MsgType" }
+                                        span { class: "vbatch-issues", "Issues" }
+                                        span { class: "vbatch-first", "First error" }
+                                    }
+                                    for (idx, mt, rep) in rows.iter() {
+                                        {
+                                            let i    = *idx;
+                                            let mt   = mt.clone();
+                                            let errs = rep.error_count();
+                                            let warns = rep.warning_count();
+                                            let first = rep.first_error()
+                                                .map(|e| e.message.clone())
+                                                .or_else(|| rep.issues.first().map(|e| e.message.clone()))
+                                                .unwrap_or_default();
+                                            rsx! {
+                                                div {
+                                                    class: if errs > 0 { "vbatch-row vbatch-error" } else { "vbatch-row vbatch-warn" },
+                                                    onclick: move |_| drill_msg(i),
+                                                    title: "Click to inspect in Message Debugger",
+                                                    span { class: "vbatch-idx", "{i + 1}" }
+                                                    span { class: "vbatch-type", "{mt}" }
+                                                    span { class: "vbatch-issues",
+                                                        if errs > 0 {
+                                                            span { class: "vstatus-err", "✗ {errs}" }
+                                                        }
+                                                        if warns > 0 {
+                                                            span { class: "vstatus-warn", " ⚠ {warns}" }
+                                                        }
+                                                    }
+                                                    span { class: "vbatch-first", "{first}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if !is_validating && *batch_total.read() > 0 {
+                            rsx! {
+                                div { class: "validator-batch-empty",
+                                    "✓ All messages passed validation — no issues found."
+                                }
+                            }
+                        } else {
+                            rsx! {}
                         }
                     }
                 }

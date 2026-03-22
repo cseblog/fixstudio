@@ -182,6 +182,7 @@ pub fn app() -> Element {
         file_name.set(None);
         loaded_files.set(Vec::new());
         show_file_list.set(false);
+        view_mode.set(ViewMode::Timeline);
     };
 
     let mut load_sample = move |spec: &str| {
@@ -514,7 +515,7 @@ pub fn app() -> Element {
                             div { class: "hero-title",
                                 span { class: "hero-icon", "⚡" }
                                 h1 { "AiFIXParser.com" }
-                                p { "High-performance FIX protocol parser & inspector" }
+                                p { "Lightning fast FIX protocol parser & inspector" }
                             }
                             div { class: "hero-stats",
                                 div { class: "hero-stat hero-stat-a",
@@ -720,7 +721,7 @@ pub fn app() -> Element {
 
                     // Panel header
                     div { class: "premium-panel-header",
-                        span { class: "premium-panel-title premium-panel-title-pro", "Features" }
+                        span { class: "premium-panel-title premium-panel-title-pro", "Pro Features" }
                         button {
                             class: "panel-collapse-btn",
                             title: "Collapse panel",
@@ -751,7 +752,7 @@ pub fn app() -> Element {
                             div { class: "feature-card",
                                 div { class: "feature-card-top",
                                     span { class: "feature-card-name", "Trade Latency Analysis" }
-                                    span { class: "badge badge-green feature-badge", "Active" }
+                                    span { class: "badge badge-gray feature-badge", "Active" }
                                 }
                                 p { class: "feature-card-desc",
                                     "Reconstruct full order chains from RFQ to fill, with latency at each hop."
@@ -777,7 +778,7 @@ pub fn app() -> Element {
                             div { class: "feature-card",
                                 div { class: "feature-card-top",
                                     span { class: "feature-card-name", "Session Analysis" }
-                                    span { class: "badge badge-green feature-badge", "Active" }
+                                    span { class: "badge badge-gray feature-badge", "Active" }
                                 }
                                 p { class: "feature-card-desc",
                                     "Fill quality scorecard, session health diagnostics, \
@@ -804,21 +805,25 @@ pub fn app() -> Element {
                             div { class: "feature-card",
                                 div { class: "feature-card-top",
                                     span { class: "feature-card-name", "FIX Validator" }
-                                    span { class: "badge badge-green feature-badge", "Active" }
+                                    span { class: "badge badge-gray feature-badge", "Active" }
                                 }
                                 p { class: "feature-card-desc",
                                     "Validate messages against FIX spec, check required tags, enums, checksums & consistency rules."
                                 }
-                                button {
-                                    class: "btn-feature",
-                                    onclick: move |_| {
-                                        if in_validator {
-                                            view_mode.set(ViewMode::Timeline);
-                                        } else {
-                                            view_mode.set(ViewMode::Validator);
-                                        }
-                                    },
-                                    if in_validator { "← Back to Timeline" } else { "Open Validator →" }
+                                if has_messages {
+                                    button {
+                                        class: "btn-feature",
+                                        onclick: move |_| {
+                                            if in_validator {
+                                                view_mode.set(ViewMode::Timeline);
+                                            } else {
+                                                view_mode.set(ViewMode::Validator);
+                                            }
+                                        },
+                                        if in_validator { "← Back to Timeline" } else { "Open Validator →" }
+                                    }
+                                } else {
+                                    span { class: "feature-card-hint", "Load data to use" }
                                 }
                             }
 
