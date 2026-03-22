@@ -99,11 +99,10 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
         div { class: "overview-panel",
 
             // ── Header ───────────────────────────────────────────────────────
-            div { class: "overview-header",
-                div { class: "overview-header-left",
-                    // h2 { class: "overview-title", "Session Analysis" }
+            div { class: "panel-header",
+                div { class: "panel-title",
                     if let Some(ref d) = data_opt {
-                        span { class: "overview-meta",
+                        span { class: "parse-stats",
                             "{d.summary.sender} → {d.summary.target}  ·  \
                             {d.summary.start_time} – {d.summary.end_time}  ·  \
                             {d.summary.total_messages} messages"
@@ -111,26 +110,24 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
                     }
                 }
                 if pro {
-                    div { class: "overview-header-actions",
-                        button {
-                            class: "btn-export-csv",
-                            onclick: move |_| {
-                                let snap: Vec<FixMessage> = messages.read().clone();
-                                spawn(async move {
-                                    let tag = now_tag();
-                                    if let Some(file) = rfd::AsyncFileDialog::new()
-                                        .set_file_name(&format!("session_overview_{tag}.csv"))
-                                        .add_filter("CSV", &["csv"])
-                                        .save_file()
-                                        .await
-                                    {
-                                        let csv = messages_to_csv(&snap);
-                                        let _ = std::fs::write(file.path(), csv.as_bytes());
-                                    }
-                                });
-                            },
-                            "Export CSV"
-                        }
+                    button {
+                        class: "btn-export-csv",
+                        onclick: move |_| {
+                            let snap: Vec<FixMessage> = messages.read().clone();
+                            spawn(async move {
+                                let tag = now_tag();
+                                if let Some(file) = rfd::AsyncFileDialog::new()
+                                    .set_file_name(&format!("session_overview_{tag}.csv"))
+                                    .add_filter("CSV", &["csv"])
+                                    .save_file()
+                                    .await
+                                {
+                                    let csv = messages_to_csv(&snap);
+                                    let _ = std::fs::write(file.path(), csv.as_bytes());
+                                }
+                            });
+                        },
+                        "Export CSV"
                     }
                 }
             }

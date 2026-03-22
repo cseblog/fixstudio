@@ -594,7 +594,7 @@ pub fn app() -> Element {
                                     }
                                 }
                             }
-                        } else if !in_validator {
+                        } else if !in_validator || !input.read().is_empty() {
                             textarea {
                                 class: "fix-input",
                                 placeholder: "Paste FIX messages here …",

@@ -178,7 +178,14 @@ html, body { height: 100%; overflow: hidden; background: #0f0f11; }
     align-items: center;
     justify-content: space-between;
     margin-bottom: 8px;
+    flex-shrink: 0;
 }
+/* Panels that manage their own spacing via flex gap don't need extra margin.
+   latency-panel gets a tighter gap after its header only. */
+.latency-panel > .panel-header,
+.overview-panel > .panel-header,
+.validator-panel > .panel-header { margin-bottom: 0; }
+.latency-panel > .panel-header { padding-bottom: 4px; border-bottom: 1px solid #1e1e22; }
 .panel-title {
     display: flex;
     align-items: baseline;
@@ -919,15 +926,13 @@ html, body { height: 100%; overflow: hidden; background: #0f0f11; }
     flex-direction: column;
     height: 100%;
     overflow-y: auto;
-    padding: 16px;
-    gap: 16px;
     box-sizing: border-box;
     background: #111113;
 }
 .latency-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .latency-header-left { display: flex; flex-direction: column; gap: 3px; }
 .latency-title { margin: 0; font-size: 15px; font-weight: 600; color: #c8c8d0; letter-spacing: 0.1px; }
-.latency-header-meta { font-size: 11px; color: #2c2c30; }
+.latency-anel-headerheader-meta { font-size: 11px; color: #2c2c30; }
 .latency-section { display: flex; flex-direction: column; gap: 8px; }
 .latency-section-title {
     font-size: 10px; font-weight: 600; letter-spacing: 0.8px;

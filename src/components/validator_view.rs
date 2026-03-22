@@ -103,6 +103,17 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
     rsx! {
         div { class: "validator-panel",
 
+            // ── Header ──
+            div { class: "panel-header",
+                div { class: "panel-title",
+                    if msg_count > 0 {
+                        span { class: "parse-stats", "{msg_count} messages loaded" }
+                    } else {
+                        span { class: "parse-stats", "No messages loaded — paste a message in the debugger below" }
+                    }
+                }
+            }
+
             // ── Tab bar ──
             div { class: "validator-tabs",
                 button {

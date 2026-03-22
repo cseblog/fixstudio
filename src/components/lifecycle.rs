@@ -909,12 +909,10 @@ pub fn lifecycle_panel(
         div { class: "latency-panel",
 
             // ── Header ──────────────────────────────────────────────────────
-            div { class: "latency-header",
-                span { class: "latency-header-meta", "{header_meta}" }
-                // div { class: "latency-header-left",
-                //     // h2 { class: "latency-title", "Trade Lifecycle Reconstructor" }
-                    
-                // }
+            div { class: "panel-header",
+                div { class: "panel-title",
+                    span { class: "parse-stats", "{header_meta}" }
+                }
                 if pro && total_chains > 0 {
                     button {
                         class: "btn-export-csv",
