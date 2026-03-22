@@ -3,6 +3,7 @@
 use dioxus::prelude::*;
 
 use crate::dictionary::tag_description;
+use crate::export::now_tag;
 use crate::model::FixMessage;
 use crate::parser::parse_single_for_validation;
 use crate::validator::{validate_batch, validate_raw, Issue, Severity, ValidationReport};
@@ -31,6 +32,7 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
     let mut batch_reports: Signal<Vec<(usize, String, ValidationReport)>> = use_signal(Vec::new);
     let mut batch_total   = use_signal(|| 0usize);
     let mut validating    = use_signal(|| false);
+    let mut filter_text   = use_signal(String::new);
 
     let messages = props.messages;
 
@@ -437,9 +439,75 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
 
                     // ── Issues table ──
                     {
-                        let rows = batch_reports.read().clone();
-                        if !rows.is_empty() {
+                        let all_rows = batch_reports.read().clone();
+                        if !all_rows.is_empty() {
+                            // Build filtered rows — each entry carries its first-error string.
+                            let needle = filter_text.read().to_lowercase();
+                            let filtered: Vec<(usize, String, usize, usize, String)> = all_rows.iter()
+                                .map(|(idx, mt, rep)| {
+                                    let first = rep.first_error()
+                                        .map(|e| e.message.clone())
+                                        .or_else(|| rep.issues.first().map(|e| e.message.clone()))
+                                        .unwrap_or_default();
+                                    (*idx, mt.clone(), rep.error_count(), rep.warning_count(), first)
+                                })
+                                .filter(|(_, _, _, _, first)| {
+                                    needle.is_empty() || first.to_lowercase().contains(&needle)
+                                })
+                                .collect();
+
+                            let snapshot = all_rows.clone(); // for export closure
                             rsx! {
+                                // ── Filter bar + export ──────────────────────
+                                div { class: "vbatch-toolbar",
+                                    div { class: "vbatch-filter-wrap",
+                                        input {
+                                            class: "vbatch-filter",
+                                            r#type: "text",
+                                            placeholder: "Filter by first error…",
+                                            value: "{filter_text.read()}",
+                                            oninput: move |e| filter_text.set(e.value()),
+                                        }
+                                        if !filter_text.read().is_empty() {
+                                            button {
+                                                class: "vbatch-filter-clear",
+                                                onclick: move |_| filter_text.set(String::new()),
+                                                "×"
+                                            }
+                                        }
+                                    }
+                                    {
+                                        let count_label = if needle.is_empty() {
+                                            format!("{} issues", filtered.len())
+                                        } else {
+                                            format!("{} / {} match", filtered.len(), all_rows.len())
+                                        };
+                                        rsx! {
+                                            span { class: "vbatch-filter-count", "{count_label}" }
+                                        }
+                                    }
+                                    button {
+                                        class: "btn-export-csv",
+                                        onclick: move |_| {
+                                            let rows_snap = snapshot.clone();
+                                            spawn(async move {
+                                                let tag = now_tag();
+                                                if let Some(file) = rfd::AsyncFileDialog::new()
+                                                    .set_file_name(&format!("fix_validation_{tag}.csv"))
+                                                    .add_filter("CSV", &["csv"])
+                                                    .save_file()
+                                                    .await
+                                                {
+                                                    let csv = build_issues_csv(&rows_snap);
+                                                    let _ = std::fs::write(file.path(), csv.as_bytes());
+                                                }
+                                            });
+                                        },
+                                        "Export CSV"
+                                    }
+                                }
+
+                                // ── Table ────────────────────────────────────
                                 div { class: "validator-batch-table",
                                     div { class: "vbatch-header vbatch-row",
                                         span { class: "vbatch-idx", "#" }
@@ -447,16 +515,13 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
                                         span { class: "vbatch-issues", "Issues" }
                                         span { class: "vbatch-first", "First error" }
                                     }
-                                    for (idx, mt, rep) in rows.iter() {
+                                    for (i, mt, errs, warns, first) in filtered.iter() {
                                         {
-                                            let i    = *idx;
-                                            let mt   = mt.clone();
-                                            let errs = rep.error_count();
-                                            let warns = rep.warning_count();
-                                            let first = rep.first_error()
-                                                .map(|e| e.message.clone())
-                                                .or_else(|| rep.issues.first().map(|e| e.message.clone()))
-                                                .unwrap_or_default();
+                                            let i = *i;
+                                            let mt = mt.clone();
+                                            let errs = *errs;
+                                            let warns = *warns;
+                                            let first = first.clone();
                                             rsx! {
                                                 div {
                                                     class: if errs > 0 { "vbatch-row vbatch-error" } else { "vbatch-row vbatch-warn" },
@@ -493,4 +558,38 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
             }
         }
     }
+}
+
+// ── CSV export ────────────────────────────────────────────────────────────────
+
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_owned()
+    }
+}
+
+fn build_issues_csv(rows: &[(usize, String, ValidationReport)]) -> String {
+    let mut out = String::from("#,MsgType,Errors,Warnings,FirstError,AllIssues\n");
+    for (idx, mt, rep) in rows {
+        let first = rep.first_error()
+            .map(|e| e.message.as_str())
+            .or_else(|| rep.issues.first().map(|e| e.message.as_str()))
+            .unwrap_or("");
+        let all: Vec<String> = rep.issues.iter()
+            .map(|i| format!("[{}] {}", i.code, i.message))
+            .collect();
+        let all_str = all.join(" | ");
+        out.push_str(&format!(
+            "{},{},{},{},{},{}\n",
+            idx + 1,
+            csv_escape(mt),
+            rep.error_count(),
+            rep.warning_count(),
+            csv_escape(first),
+            csv_escape(&all_str),
+        ));
+    }
+    out
 }

@@ -74,13 +74,15 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
         });
     });
 
-    // Draw / redraw ECharts whenever the user switches to Charts view or data arrives.
+    // Draw / redraw ECharts whenever the tab or data changes.
     use_effect(move || {
         let tab  = active_tab.read().clone();
         let view = fq_view.read().clone();
         let maybe_js = {
             let data_ref = computed.read();
-            if tab == OverviewTab::FillQuality && view == FqView::Charts {
+            if tab == OverviewTab::Summary {
+                data_ref.as_ref().map(|d| build_summary_charts_js(&d.scorecard))
+            } else if tab == OverviewTab::FillQuality && view == FqView::Charts {
                 data_ref.as_ref().map(|d| build_charts_js(&d.scorecard))
             } else {
                 None
@@ -168,7 +170,7 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
             div { class: "overview-content",
                 if let Some(data) = data_opt {
                     {match tab_val {
-                        OverviewTab::Summary     => render_summary(&data.summary),
+                        OverviewTab::Summary     => render_summary(&data.summary, &data.scorecard),
                         OverviewTab::FillQuality => render_fill_quality(
                             &data.scorecard, sort_col, sort_asc, drill_counterparty, &drill_val, fq_view,
                         ),
@@ -186,106 +188,115 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
 
 // ── Summary tab ───────────────────────────────────────────────────────────────
 
-fn render_summary(s: &SessionSummary) -> Element {
-    let stats = &s.order_stats;
-    let lats  = &s.latency_stats;
+fn render_summary(s: &SessionSummary, sc: &crate::fill_quality::FillQualityScorecard) -> Element {
+    let stats       = &s.order_stats;
+    let lats        = &s.latency_stats;
+    let has_cp_data = !sc.rows.is_empty();
 
     rsx! {
-        div { class: "summary-body",
+        div { class: "summary-layout",
 
-            div { class: "summary-section",
-                div { class: "summary-row",
-                    span { class: "summary-label", "Session" }
-                    span { class: "summary-value summary-session-label",
-                        "{s.session_label}"
-                    }
-                }
-                if s.session_count > 1 {
+            // ── Left: stats table ─────────────────────────────────────────────
+            div { class: "summary-body",
+
+                div { class: "summary-section",
                     div { class: "summary-row",
-                        span { class: "summary-label", "Pairs" }
-                        span { class: "summary-value", "{s.session_count} session pairs" }
+                        span { class: "summary-label", "Session" }
+                        span { class: "summary-value summary-session-label", "{s.session_label}" }
+                    }
+                    if s.session_count > 1 {
+                        div { class: "summary-row",
+                            span { class: "summary-label", "Pairs" }
+                            span { class: "summary-value", "{s.session_count} session pairs" }
+                        }
+                    }
+                    div { class: "summary-row",
+                        span { class: "summary-label", "Duration" }
+                        span { class: "summary-value",
+                            "{s.start_time}  —  {s.end_time}"
+                            if !s.duration_str.is_empty() {
+                                span { class: "summary-duration", "  ({s.duration_str})" }
+                            }
+                        }
+                    }
+                    div { class: "summary-row",
+                        span { class: "summary-label", "Messages" }
+                        span { class: "summary-value", "{s.total_messages}" }
                     }
                 }
-                div { class: "summary-row",
-                    span { class: "summary-label", "Duration" }
-                    span { class: "summary-value",
-                        "{s.start_time}  —  {s.end_time}"
-                        if !s.duration_str.is_empty() {
-                            span { class: "summary-duration",
-                                "  ({s.duration_str})"
+
+                div { class: "summary-divider" }
+
+                div { class: "summary-section",
+                    div { class: "summary-row",
+                        span { class: "summary-label", "Orders" }
+                        span { class: "summary-value summary-bold", "{stats.total}" }
+                    }
+                    div { class: "summary-row summary-sub",
+                        span { class: "summary-label", "  Filled" }
+                        span { class: "summary-value",
+                            "{stats.filled}"
+                            span { class: "summary-pct summary-pct-green", "  ({stats.fill_pct:.1}%)" }
+                        }
+                    }
+                    div { class: "summary-row summary-sub",
+                        span { class: "summary-label", "  Cancelled" }
+                        span { class: "summary-value",
+                            "{stats.cancelled}"
+                            span { class: "summary-pct", "  ({stats.cancel_pct:.1}%)" }
+                        }
+                    }
+                    div { class: "summary-row summary-sub",
+                        span { class: "summary-label", "  Rejected" }
+                        span { class: "summary-value",
+                            "{stats.rejected}"
+                            span {
+                                class: if stats.rejected > 0 { "summary-pct summary-pct-warn" } else { "summary-pct" },
+                                "  ({stats.reject_pct:.1}%)"
                             }
                         }
                     }
                 }
-                div { class: "summary-row",
-                    span { class: "summary-label", "Messages" }
-                    span { class: "summary-value", "{s.total_messages}" }
-                }
-            }
 
-            div { class: "summary-divider" }
+                div { class: "summary-divider" }
 
-            div { class: "summary-section",
-                div { class: "summary-row",
-                    span { class: "summary-label", "Orders" }
-                    span { class: "summary-value summary-bold", "{stats.total}" }
-                }
-                div { class: "summary-row summary-sub",
-                    span { class: "summary-label", "  Filled" }
-                    span { class: "summary-value",
-                        "{stats.filled}"
-                        span { class: "summary-pct summary-pct-green",
-                            "  ({stats.fill_pct:.1}%)"
-                        }
-                    }
-                }
-                div { class: "summary-row summary-sub",
-                    span { class: "summary-label", "  Cancelled" }
-                    span { class: "summary-value",
-                        "{stats.cancelled}"
-                        span { class: "summary-pct",
-                            "  ({stats.cancel_pct:.1}%)"
-                        }
-                    }
-                }
-                div { class: "summary-row summary-sub",
-                    span { class: "summary-label", "  Rejected" }
-                    span { class: "summary-value",
-                        "{stats.rejected}"
-                        span {
-                            class: if stats.rejected > 0
-                                { "summary-pct summary-pct-warn" } else { "summary-pct" },
-                            "  ({stats.reject_pct:.1}%)"
-                        }
-                    }
-                }
-            }
-
-            div { class: "summary-divider" }
-
-            div { class: "summary-section",
-                div { class: "summary-row",
-                    span { class: "summary-label", "Avg ack latency" }
-                    span { class: "summary-value summary-mono",
-                        "{lats.avg_ack_ms:.2}ms"
-                    }
-                }
-                div { class: "summary-row",
-                    span { class: "summary-label", "Avg fill latency" }
-                    span { class: "summary-value summary-mono",
-                        "{lats.avg_fill_ms:.1}ms"
-                    }
-                }
-                if lats.worst_spike_ms > 0.0 {
+                div { class: "summary-section",
                     div { class: "summary-row",
-                        span { class: "summary-label", "Worst spike" }
-                        span { class: "summary-value summary-mono summary-warn",
-                            "{lats.worst_spike_ms:.0}ms"
-                            if let Some(ref t) = lats.worst_spike_time {
-                                span { class: "summary-spike-meta",
-                                    "  at {t}"
-                                    if lats.worst_spike_count > 0 {
-                                        "  ({lats.worst_spike_count} orders)"
+                        span { class: "summary-label", "Avg ack latency" }
+                        span { class: "summary-value summary-mono", "{lats.avg_ack_ms:.2}ms" }
+                    }
+                    div { class: "summary-row",
+                        span { class: "summary-label", "Avg fill latency" }
+                        span { class: "summary-value summary-mono", "{lats.avg_fill_ms:.1}ms" }
+                    }
+                    if lats.worst_spike_ms > 0.0 {
+                        div { class: "summary-row",
+                            span { class: "summary-label", "Worst spike" }
+                            span { class: "summary-value summary-mono summary-warn",
+                                "{lats.worst_spike_ms:.0}ms"
+                                if let Some(ref t) = lats.worst_spike_time {
+                                    span { class: "summary-spike-meta",
+                                        "  at {t}"
+                                        if lats.worst_spike_count > 0 {
+                                            "  ({lats.worst_spike_count} orders)"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !s.top_symbols.is_empty() {
+                    div { class: "summary-divider" }
+                    div { class: "summary-section",
+                        div { class: "summary-row",
+                            span { class: "summary-label", "Top symbols" }
+                            span { class: "summary-value",
+                                for (sym, count) in s.top_symbols.iter().take(5) {
+                                    span { class: "summary-symbol",
+                                        "{sym} "
+                                        span { class: "summary-symbol-count", "({count})  " }
                                     }
                                 }
                             }
@@ -294,23 +305,19 @@ fn render_summary(s: &SessionSummary) -> Element {
                 }
             }
 
-            if !s.top_symbols.is_empty() {
-                div { class: "summary-divider" }
-                div { class: "summary-section",
-                    div { class: "summary-row",
-                        span { class: "summary-label", "Top symbols" }
-                        span { class: "summary-value",
-                            for (sym, count) in s.top_symbols.iter().take(5) {
-                                span { class: "summary-symbol",
-                                    "{sym} "
-                                    span { class: "summary-symbol-count", "({count})  " }
-                                }
-                            }
-                        }
+            // ── Right: per-counterparty pie charts ────────────────────────────
+            if has_cp_data {
+                div { class: "summary-charts",
+                    div { class: "summary-chart-block",
+                        p { class: "summary-chart-label", "Fills by Counterparty" }
+                        div { id: "summary-fill-pie", class: "summary-pie" }
+                    }
+                    div { class: "summary-chart-block",
+                        p { class: "summary-chart-label", "Rejects by Counterparty" }
+                        div { id: "summary-reject-pie", class: "summary-pie" }
                     }
                 }
             }
-
         }
     }
 }
@@ -582,6 +589,106 @@ fn health_kind_label(kind: &HealthIssueKind) -> &'static str {
 }
 
 // ── ECharts JS builders ───────────────────────────────────────────────────────
+
+/// Build JS for the two Summary-tab donut pies: fills & rejects by counterparty.
+fn build_summary_charts_js(sc: &FillQualityScorecard) -> String {
+    let fill_opt   = serde_json::to_string(&summary_fill_pie(sc)).unwrap_or_default();
+    let reject_opt = serde_json::to_string(&summary_reject_pie(sc)).unwrap_or_default();
+    format!(r#"
+(function init() {{
+    if (typeof echarts === 'undefined') {{ setTimeout(init, 150); return; }}
+    var fe = document.getElementById('summary-fill-pie');
+    if (fe) {{
+        var fc = echarts.getInstanceByDom(fe) || echarts.init(fe, null, {{renderer:'canvas'}});
+        fc.setOption({fill_opt}, true);
+    }}
+    var re = document.getElementById('summary-reject-pie');
+    if (re) {{
+        var rc = echarts.getInstanceByDom(re) || echarts.init(re, null, {{renderer:'canvas'}});
+        rc.setOption({reject_opt}, true);
+    }}
+}})();
+"#, fill_opt = fill_opt, reject_opt = reject_opt)
+}
+
+/// Collapse raw `(name, value)` pairs to top-5 + "Others" bucket.
+/// Input must already be sorted descending by value by the caller.
+fn top5_with_others(mut pairs: Vec<(String, u64)>) -> Vec<serde_json::Value> {
+    pairs.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    const MAX: usize = 5;
+    if pairs.len() <= MAX {
+        return pairs.iter()
+            .map(|(n, v)| serde_json::json!({ "name": n, "value": v }))
+            .collect();
+    }
+    let mut out: Vec<serde_json::Value> = pairs[..MAX].iter()
+        .map(|(n, v)| serde_json::json!({ "name": n, "value": v }))
+        .collect();
+    let others: u64 = pairs[MAX..].iter().map(|(_, v)| v).sum();
+    if others > 0 {
+        out.push(serde_json::json!({ "name": "Others", "value": others }));
+    }
+    out
+}
+
+fn summary_fill_pie(sc: &FillQualityScorecard) -> serde_json::Value {
+    let pairs: Vec<(String, u64)> = sc.rows.iter()
+        .filter(|r| r.order_count > 0)
+        .map(|r| {
+            let fills = (r.order_count as f64 * r.fill_rate).round() as u64;
+            (r.counterparty.clone(), fills)
+        })
+        .collect();
+    summary_pie_option("Fills", top5_with_others(pairs))
+}
+
+fn summary_reject_pie(sc: &FillQualityScorecard) -> serde_json::Value {
+    let pairs: Vec<(String, u64)> = sc.rows.iter()
+        .filter(|r| r.order_count > 0)
+        .map(|r| {
+            let rejects = (r.order_count as f64 * r.reject_rate).round() as u64;
+            (r.counterparty.clone(), rejects)
+        })
+        .collect();
+    summary_pie_option("Rejects", top5_with_others(pairs))
+}
+
+fn summary_pie_option(name: &str, data: Vec<serde_json::Value>) -> serde_json::Value {
+    // Legend names are the "name" fields from data.
+    let legend_names: Vec<&str> = data.iter()
+        .filter_map(|d| d["name"].as_str())
+        .collect();
+    serde_json::json!({
+        "backgroundColor": "transparent",
+        "tooltip": {
+            "trigger": "item",
+            "formatter": "{b}: {c} ({d}%)"
+        },
+        "legend": {
+            "orient": "horizontal",
+            "bottom": 2,
+            "left": "center",
+            "data": legend_names,
+            "textStyle": { "color": "#888890", "fontSize": 10 },
+            "itemWidth": 8,
+            "itemHeight": 8,
+            "itemGap": 8
+        },
+        "series": [{
+            "name": name,
+            "type": "pie",
+            "radius": ["38%", "60%"],
+            "center": ["50%", "42%"],
+            "avoidLabelOverlap": false,
+            "label": { "show": false },
+            "labelLine": { "show": false },
+            "emphasis": {
+                "label": { "show": true, "fontSize": 11, "fontWeight": "bold", "color": "#dddde3" }
+            },
+            "data": data
+        }]
+    })
+}
 
 /// Build the JavaScript snippet that initialises/updates both ECharts instances.
 /// Data is serialised via serde_json so all strings are properly escaped.

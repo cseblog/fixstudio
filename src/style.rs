@@ -1325,7 +1325,28 @@ html, body { height: 100%; overflow: hidden; background: #0f0f11; }
 }
 
 /* ── Summary tab ──────────────────────────────────────────────────────────── */
-.summary-body { max-width: 700px; }
+.summary-layout {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+}
+.summary-body { flex: 1; min-width: 0; max-width: 700px; }
+.summary-charts {
+    flex-shrink: 0;
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.summary-chart-block { display: flex; flex-direction: column; gap: 6px; }
+.summary-chart-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #444448;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.summary-pie { height: 200px; width: 100%; }
 .summary-section { padding: 4px 0; }
 .summary-divider {
     height: 1px;
@@ -1812,6 +1833,51 @@ html, body { height: 100%; overflow: hidden; background: #0f0f11; }
     border-radius: 4px;
     background: rgba(61,143,90,0.04);
 }
+/* Issues filter bar */
+.vbatch-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+.vbatch-filter-wrap {
+    position: relative;
+    flex: 1;
+    max-width: 320px;
+}
+.vbatch-filter {
+    width: 100%;
+    background: #161618;
+    border: 1px solid #2c2c30;
+    border-radius: 4px;
+    color: #dddde3;
+    font-size: 12px;
+    padding: 5px 28px 5px 10px;
+    outline: none;
+}
+.vbatch-filter:focus { border-color: #444448; }
+.vbatch-filter-clear {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #444448;
+    font-size: 14px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 2px;
+}
+.vbatch-filter-clear:hover { color: #888890; }
+.vbatch-filter-count {
+    font-size: 11px;
+    color: #444448;
+    white-space: nowrap;
+    margin-right: auto;
+}
+
 .validator-batch-table {
     border: 1px solid #2c2c30;
     border-radius: 4px;

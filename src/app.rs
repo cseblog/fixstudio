@@ -619,7 +619,7 @@ pub fn app() -> Element {
                                 button {
                                     class: if in_lifecycle { "panel-tab panel-tab-active" } else { "panel-tab" },
                                     onclick: move |_| view_mode.set(ViewMode::Lifecycle),
-                                    "Trade Latency"
+                                    "Latency Analysis"
                                 }
                                 button {
                                     class: if in_overview { "panel-tab panel-tab-active" } else { "panel-tab" },
@@ -751,7 +751,7 @@ pub fn app() -> Element {
                             // Trade Latency Analysis
                             div { class: "feature-card",
                                 div { class: "feature-card-top",
-                                    span { class: "feature-card-name", "Trade Latency Analysis" }
+                                    span { class: "feature-card-name", "Latency Analysis" }
                                     span { class: "badge badge-gray feature-badge", "Active" }
                                 }
                                 p { class: "feature-card-desc",
