@@ -58,7 +58,8 @@ a:hover { text-decoration: underline; }
 .btn-lg { padding: 16px 36px; font-size: 17px; }
 .btn-primary {
   background: var(--amber);
-  color: #0f0f11;
+  color: #fff;
+  font-weight: 600;
 }
 .btn-primary:hover { opacity: 0.85; text-decoration: none; }
 .btn-ghost {
@@ -102,7 +103,7 @@ a:hover { text-decoration: underline; }
 .logo:hover { text-decoration: none; color: var(--amber); }
 .logo-icon { width: 24px; height: 24px; vertical-align: middle; margin-right: 6px; border-radius: 4px; }
 .nav-links { display: flex; align-items: center; gap: 24px; }
-.nav-links a { color: var(--text-mid); font-size: 14px; font-weight: 500; }
+.nav-links a { color: var(--text); font-size: 14px; font-weight: 500; }
 .nav-links a:hover { color: var(--text); text-decoration: none; }
 
 /* ── Hero ── */
