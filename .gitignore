@@ -1,9 +1,11 @@
-target
-target/*
-fixtures
-fixtures/*
-
+target/
+fixtures/
 *.log
+.DS_Store
+
+# Large raw video files — keep locally, never commit
+demo/*.mov
+
 # Large sample files — keep locally, never commit
 sample_1m.fix
 *.fix.zip

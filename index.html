@@ -35,11 +35,10 @@
     "operatingSystem": "Windows 10, macOS 12",
     "description": "Free desktop FIX protocol parser and log analyzer. Parse FIX 4.2, FIX 4.4 and FIX 5.0 messages instantly. 100% offline.",
     "screenshot": "https://aifixparser.com/screenshot.png",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD"
-    },
+    "offers": [
+      { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD" },
+      { "@type": "Offer", "name": "Pro", "price": "9.9", "priceCurrency": "USD", "billingIncrement": "P1M" }
+    ],
     "publisher": {
       "@type": "Organization",
       "name": "aifixparser.com",
@@ -158,14 +157,16 @@
       <a href="#" class="logo"><img src="icon.png" alt="AI FIX Parser logo" class="logo-icon" /> AI FIX Parser</a>
       <div class="nav-links">
         <a href="#features">Features</a>
+        <a href="#demo">Demo</a>
+        <a href="#pricing">Pricing</a>
         <a href="#faq">FAQ</a>
-        <a href="#download" class="btn btn-sm btn-primary">Download Free</a>
+        <a href="#download" class="btn btn-sm btn-primary">Download</a>
       </div>
     </div>
   </nav>
 
   <!-- ── Hero ── -->
-  <section class="hero" id="download">
+  <section class="hero" id="hero">
     <div class="hero-inner">
       <span class="hero-badge">Free &middot; 100% Offline &middot; macOS &amp; Windows &middot; <strong>⚡ Parse 1M messages in 150ms</strong></span>
       <h1>FIX Protocol Parser<br/><span class="accent-text">for developers &amp; traders.</span></h1>
@@ -174,6 +175,31 @@
         Works with QuickFIX, Artio FIX, and any FIX engine log output.
         No cloud. Your data never leaves your machine.
       </p>
+
+      <!-- ── Compact download panel ── -->
+      <div class="dl-panel" id="download">
+        <div class="dl-panel-row">
+          <a href="AiFixParser_aarch64.dmg" class="dl-btn" download
+             onclick="gtag('event', 'macos_file_download', { file_name: 'AiFixParser_aarch64.dmg', file_extension: 'dmg', platform: 'macOS' });">
+            <span class="dl-btn-icon">🍎</span>
+            <span class="dl-btn-body">
+              <span class="dl-btn-title">macOS</span>
+              <span class="dl-btn-sub">Apple Silicon · .dmg</span>
+            </span>
+            <span class="dl-btn-arrow">↓</span>
+          </a>
+          <a href="https://github.com/cseblog/aifixparser/releases/download/v1.0.2/AIFixParser-window.exe" class="dl-btn" download
+             onclick="gtag('event', 'windows_file_download', { file_name: 'AIFixParser-windows.exe', file_extension: 'exe', platform: 'Windows' });">
+            <span class="dl-btn-icon">🪟</span>
+            <span class="dl-btn-body">
+              <span class="dl-btn-title">Windows</span>
+              <span class="dl-btn-sub">64-bit · .exe</span>
+            </span>
+            <span class="dl-btn-arrow">↓</span>
+          </a>
+        </div>
+        <p class="dl-panel-note">Free forever &middot; No sign-up &middot; No usage limits</p>
+      </div>
 
       <!-- ── Performance stats ── -->
       <div class="perf-strip">
@@ -202,43 +228,68 @@
         <div class="perf-bar-note">Criterion benchmark &middot; Rust native binary &middot; Apple M-series &middot; single thread</div>
       </div>
 
-      <div class="hero-download">
-        <h2>Download AI FIX Parser — Free</h2>
-        <p class="section-sub">No sign-up required. No usage limits.</p>
-        <div class="download-grid download-grid-2">
-          <a href="AiFixParser_aarch64.dmg" class="download-card" download
-             onclick="gtag('event', 'macos_file_download', { file_name: 'AiFixParser_aarch64.dmg', file_extension: 'dmg', platform: 'macOS' });">
-            <div class="download-icon">🍎</div>
-            <h3>macOS</h3>
-            <p>Apple Silicon (arm64)<br/>macOS 12+</p>
-            <span class="btn btn-primary btn-sm">Download .dmg</span>
-          </a>
-          <a href="https://github.com/cseblog/aifixparser/releases/download/v1.0.2/AIFixParser-window.exe" class="download-card" download
-             onclick="gtag('event', 'windows_file_download', { file_name: 'AIFixParser-windows.exe', file_extension: 'exe', platform: 'Windows' });">
-            <div class="download-icon">🪟</div>
-            <h3>Windows</h3>
-            <p>64-bit installer<br/>Windows 10+</p>
-            <span class="btn btn-primary btn-sm">Download .exe</span>
-          </a>
-        </div>
-      </div>
+    </div>
+  </section>
 
-      <div class="hero-preview">
-        <div class="preview-window">
-          <div class="window-bar">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-            <span class="window-title">AI FIX Parser</span>
-          </div>
-          <div class="window-content">
-            <img src="screenshot.png" alt="AI FIX Parser – FIX protocol message timeline and tag inspector showing parsed FIX 4.4 messages" class="screenshot" />
-          </div>
-        </div>
+  <!-- ── Demo ── -->
+  <section id="demo" class="features demo-section">
+    <div class="section-inner">
+      <h2>See it in action</h2>
+      <p class="section-sub">Watch how AI FIX Parser loads a million-message log, inspects orders, and surfaces session health issues — all offline, in seconds.</p>
+      <div class="demo-video-wrap">
+        <video
+          class="demo-video"
+          controls
+          preload="metadata"
+          poster="demo/demo1-poster.jpg"
+          playsinline>
+          <source src="demo/demo1_trimmed.mp4" type="video/mp4" />
+          Your browser does not support HTML5 video.
+        </video>
       </div>
+    </div>
+  </section>
 
-      <div class="hero-actions">
-        <a href="#features" class="btn btn-ghost">See Features</a>
+  <!-- ── Pricing ── -->
+  <section id="pricing" class="features pricing-section">
+    <div class="section-inner">
+      <h2>Simple, transparent pricing</h2>
+      <p class="section-sub">Start free. Upgrade when you need advanced diagnostics.</p>
+      <div class="pricing-grid">
+
+        <!-- Free tier -->
+        <div class="pricing-card">
+          <div class="pricing-tier-label">Free</div>
+          <div class="pricing-price"><span class="pricing-amount">$0</span><span class="pricing-period">/ forever</span></div>
+          <p class="pricing-desc">Everything you need to parse and debug FIX logs — no sign-up, no limits.</p>
+          <ul class="pricing-features">
+            <li>✓ Parse FIX 4.2, 4.4 &amp; 5.0</li>
+            <li>✓ Message timeline &amp; tag inspector</li>
+            <li>✓ CSV export</li>
+            <li>✓ 100% offline — data never leaves your machine</li>
+          </ul>
+          <a href="#download" class="btn btn-ghost pricing-btn">Download Free</a>
+        </div>
+
+        <!-- Pro tier -->
+        <div class="pricing-card pricing-card-pro">
+          <div class="pricing-tier-badge">Most popular</div>
+          <div class="pricing-tier-label pricing-tier-label-pro">Pro</div>
+          <div class="pricing-price"><span class="pricing-amount">$9.9</span><span class="pricing-period">/ month</span></div>
+          <p class="pricing-desc">Advanced session diagnostics and AI-powered insights for production FIX environments.</p>
+          <ul class="pricing-features">
+            <li>✓ Everything in Free</li>
+            <li>✓ Trade lifecycle reconstruction</li>
+            <li>✓ FIX message validator</li>
+            <li>✓ Session Health — 7 detection rules</li>
+            <li>✓ Fill quality scorecard</li>
+            <li>✓ Session summary &amp; analytics</li>
+            <li>✓ Order flow &amp; pattern detection <span class="coming-chip">Soon</span></li>
+            <li>✓ AI FIX Builder <span class="coming-chip">Soon</span></li>
+          </ul>
+          <a href="#download" class="btn btn-primary pricing-btn">Get Pro</a>
+        </div>
+
       </div>
     </div>
   </section>
