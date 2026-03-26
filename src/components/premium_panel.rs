@@ -1,11 +1,10 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
 
-use crate::license::{clear_license, instance_name, save_license, validate_with_polar, StoredLicense};
+use crate::license::{clear_license, instance_name, save_license, validate_license, StoredLicense};
 use crate::types::ViewMode;
 
-const POLAR_CHECKOUT: &str =
-    "https://buy.polar.sh/polar_cl_1ZgbmndW78PAsOiCev4KIAT5pdVs4hN2JTXVR3zXz6y";
+const CHECKOUT_URL: &str = "https://whop.com/checkout/plan_BPY1swl4kIKvQ";
 
 /// Right-side Pro features panel with license activation.
 #[component]
@@ -216,7 +215,7 @@ pub fn premium_panel(
                         button {
                             class: "btn-upgrade",
                             onclick: move |_| {
-                                let _ = open::that(POLAR_CHECKOUT);
+                                let _ = open::that(CHECKOUT_URL);
                             },
                             "Upgrade to Pro — $9.9/mo"
                         }
@@ -256,7 +255,7 @@ pub fn premium_panel(
                                         activate_loading.set(true);
                                         activate_error.set(None);
                                         spawn(async move {
-                                            match validate_with_polar(&key).await {
+                                            match validate_license(&key).await {
                                                 Ok(()) => {
                                                     save_license(&StoredLicense {
                                                         key: key.clone(),
