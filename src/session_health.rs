@@ -209,8 +209,7 @@ fn detect_sequence_gaps(messages: &[FixMessage], issues: &mut Vec<HealthIssue>) 
     let mut last_seq: u64  = 0;
     let mut last_idx: usize = 0;
 
-    for i in 0..messages.len() {
-        let msg     = &messages[i];
+    for (i, msg) in messages.iter().enumerate() {
         let seq_str = tag_val(msg, 34);
         if seq_str.is_empty()          { continue; }
         if tag_val(msg, 35) == "2"     { continue; } // ResendRequest — skip
@@ -316,8 +315,7 @@ fn detect_heartbeat_gaps(messages: &[FixMessage], issues: &mut Vec<HealthIssue>)
 fn detect_reconnects(messages: &[FixMessage], issues: &mut Vec<HealthIssue>) {
     let mut logon_map: HashMap<(String, String), Vec<LogonEvent>> = HashMap::new();
 
-    for i in 0..messages.len() {
-        let msg = &messages[i];
+    for (i, msg) in messages.iter().enumerate() {
         if tag_val(msg, 35) != "A" { continue; }
         let sender  = tag_val(msg, 49).to_string();
         let target  = tag_val(msg, 56).to_string();

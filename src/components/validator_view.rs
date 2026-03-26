@@ -3,7 +3,7 @@
 use dioxus::prelude::*;
 
 use crate::dictionary::tag_description;
-use crate::export::now_tag;
+use crate::export::{csv_escape, now_tag};
 use crate::model::FixMessage;
 use crate::parser::parse_single_for_validation;
 use crate::validator::{validate_batch, validate_raw, Issue, Severity, ValidationReport};
@@ -101,8 +101,8 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
                 .map(|f| format!("{}={}|", f.tag, f.value))
                 .collect();
             drop(msgs);
-            raw_input.set(raw.clone());
             let bytes: Vec<u8> = raw.bytes().collect();
+            raw_input.set(raw);
             let r = validate_raw(&bytes);
             let fields: Vec<(u16, String)> = parse_single_for_validation(&bytes)
                 .fields
@@ -561,14 +561,6 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
 }
 
 // ── CSV export ────────────────────────────────────────────────────────────────
-
-fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_owned()
-    }
-}
 
 fn build_issues_csv(rows: &[(usize, String, ValidationReport)]) -> String {
     let mut out = String::from("#,MsgType,Errors,Warnings,FirstError,AllIssues\n");

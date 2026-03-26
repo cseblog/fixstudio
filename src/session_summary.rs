@@ -1,9 +1,9 @@
 //! Session summary — one-page executive report over a slice of FIX messages.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::model::FixMessage;
-use crate::session_health::run_health_checks;
+use crate::session_health::{parse_time_us, run_health_checks};
 
 // ── Tag helper ────────────────────────────────────────────────────────────────
 
@@ -13,10 +13,6 @@ fn tag_val<'a>(msg: &'a FixMessage, tag: u16) -> &'a str {
         .find(|f| f.tag == tag)
         .map(|f| f.value.as_str())
         .unwrap_or("")
-}
-
-fn parse_time_us(s: &str) -> Option<i64> {
-    crate::session_health::parse_time_us(s)
 }
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -282,7 +278,7 @@ fn compute_latency_stats(messages: &[FixMessage]) -> LatencyStats {
     let mut fill_latencies: Vec<(i64, String)> = Vec::new(); // (latency_us, time)
 
     // Collect ack from first ER, fill from last ExecType=F ER.
-    let mut first_er_seen: HashMap<String, bool> = HashMap::new();
+    let mut first_er_seen: HashSet<String> = HashSet::new();
 
     for msg in messages.iter() {
         if tag_val(msg, 35) != "8" { continue; }
@@ -293,8 +289,7 @@ fn compute_latency_stats(messages: &[FixMessage]) -> LatencyStats {
         let latency_us = er_us - nos_us;
         if latency_us < 0 { continue; }
 
-        if !first_er_seen.contains_key(&cl_ord_id) {
-            first_er_seen.insert(cl_ord_id.clone(), true);
+        if first_er_seen.insert(cl_ord_id.clone()) {
             ack_latencies.push(latency_us);
         }
 
@@ -307,7 +302,8 @@ fn compute_latency_stats(messages: &[FixMessage]) -> LatencyStats {
     }
 
     let avg_ack_ms  = mean_ms(&ack_latencies);
-    let avg_fill_ms = mean_ms(&fill_latencies.iter().map(|(us, _)| *us).collect::<Vec<_>>());
+    let fill_us_only: Vec<i64> = fill_latencies.iter().map(|(us, _)| *us).collect();
+    let avg_fill_ms = mean_ms(&fill_us_only);
 
     let (worst_spike_ms, worst_spike_time, worst_spike_count) =
         compute_worst_spike(&ack_latencies, &fill_latencies);

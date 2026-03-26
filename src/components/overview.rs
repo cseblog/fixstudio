@@ -52,9 +52,9 @@ struct OverviewData {
 
 #[component]
 pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
-    let mut active_tab          = use_signal(|| OverviewTab::Summary);
-    let sort_col                = use_signal(|| SortCol::Orders);
-    let sort_asc                = use_signal(|| false);
+    let mut active_tab           = use_signal(|| OverviewTab::Summary);
+    let sort_col                 = use_signal(|| SortCol::Orders);
+    let sort_asc                 = use_signal(|| false);
     let mut drill_counterparty: Signal<Option<String>> = use_signal(|| None);
     let fq_view: Signal<FqView>                        = use_signal(|| FqView::Charts);
     let mut computed: Signal<Option<OverviewData>>     = use_signal(|| None);
@@ -84,14 +84,14 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
         let view = fq_view.read().clone();
         let maybe_js = {
             let data_ref = computed.read();
-            if tab == OverviewTab::Summary {
-                data_ref.as_ref().map(|d| build_summary_charts_js(&d.scorecard))
-            } else if tab == OverviewTab::FillQuality && view == FqView::Charts {
-                data_ref.as_ref().map(|d| build_charts_js(&d.scorecard))
-            } else if tab == OverviewTab::Health {
-                data_ref.as_ref().map(|d| build_health_charts_js(&d.summary.health))
-            } else {
-                None
+            match (&tab, &view) {
+                (OverviewTab::Summary, _) =>
+                    data_ref.as_ref().map(|d| build_summary_charts_js(&d.scorecard)),
+                (OverviewTab::FillQuality, FqView::Charts) =>
+                    data_ref.as_ref().map(|d| build_charts_js(&d.scorecard)),
+                (OverviewTab::Health, _) =>
+                    data_ref.as_ref().map(|d| build_health_charts_js(&d.summary.health)),
+                _ => None,
             }
         };
         if let Some(js) = maybe_js {
@@ -101,7 +101,7 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
 
     let tab_val   = active_tab.read().clone();
     let drill_val = drill_counterparty.read().clone();
-    let data_opt: Option<OverviewData> = computed.read().clone();
+    let data_opt  = computed.read().clone();
 
     rsx! {
         div { class: "overview-panel",
@@ -765,12 +765,9 @@ fn summary_pie_option(name: &str, data: Vec<serde_json::Value>) -> serde_json::V
     })
 }
 
-/// Build the JavaScript snippet that initialises/updates both ECharts instances.
-/// Data is serialised via serde_json so all strings are properly escaped.
 fn build_charts_js(sc: &FillQualityScorecard) -> String {
     let bar  = serde_json::to_string(&bar_option(sc)).unwrap_or_default();
     let tree = serde_json::to_string(&treemap_option(sc)).unwrap_or_default();
-    // `{{` / `}}` → literal `{` / `}` in format output; `{bar}` / `{tree}` are injected.
     format!(r#"
 (function init() {{
     if (typeof echarts === 'undefined') {{ setTimeout(init, 150); return; }}
@@ -785,7 +782,7 @@ fn build_charts_js(sc: &FillQualityScorecard) -> String {
         t.setOption({tree}, true);
     }}
 }})();
-"#, bar = bar, tree = tree)
+"#)
 }
 
 fn r1(v: f64) -> f64 { (v * 10.0).round() / 10.0 }

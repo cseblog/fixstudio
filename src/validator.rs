@@ -580,18 +580,15 @@ fn check_body_length(raw: &[u8], msg: &FixMessage, report: &mut ValidationReport
     // Per spec: from the byte *after* "9=value SOH" to the byte *before* the
     // start of "10=".
     let delim = if raw.contains(&b'|') { b'|' } else { 0x01 };
-    let raw_str = raw;
 
-    // Find end of tag 9= field
-    let start_of_9 = find_slice(raw_str, b"9=");
-    let start_of_10 = find_last(raw_str, b"10=");
+    let start_of_9 = find_slice(raw, b"9=");
+    let start_of_10 = find_last(raw, b"10=");
 
     let (Some(pos9), Some(pos10)) = (start_of_9, start_of_10) else {
-        return; // can't compute without knowing boundaries
+        return;
     };
 
-    // Find the delimiter after the 9= value to get start of body
-    let after_9_value = raw_str[pos9..].iter().position(|&b| b == delim)
+    let after_9_value = raw[pos9..].iter().position(|&b| b == delim)
         .map(|p| pos9 + p + 1);
 
     let Some(body_start) = after_9_value else { return; };

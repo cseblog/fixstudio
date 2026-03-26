@@ -1933,4 +1933,49 @@ html, body { height: 100%; overflow: hidden; background: #0f0f11; }
 .vbatch-type  { color: #b8922a; font-weight: 600; }
 .vbatch-issues { display: flex; align-items: center; gap: 4px; }
 .vbatch-first { color: #888890; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── License / activation UI ─────────────────────────────────────────────── */
+.feature-card-locked { opacity: 0.45; pointer-events: none; }
+.license-upgrade-wrap { display: flex; flex-direction: column; gap: 8px; padding: 12px 0 4px; }
+.btn-upgrade {
+  background: #b8922a; color: #fff; font-weight: 700; font-size: 12px;
+  border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; text-align: center;
+}
+.btn-upgrade:hover { background: #c9a030; }
+.btn-activate-link {
+  background: transparent; color: #666672; font-size: 11px;
+  border: none; cursor: pointer; padding: 4px 0; text-align: center; text-decoration: underline;
+}
+.btn-activate-link:hover { color: #aaaabc; }
+.activate-dialog {
+  background: #1a1a1e; border: 1px solid #3a3a40; border-radius: 8px;
+  padding: 16px; display: flex; flex-direction: column; gap: 10px; margin-top: 8px;
+}
+.activate-dialog-title { font-size: 13px; font-weight: 700; color: #e8e8ec; }
+.activate-dialog-sub { font-size: 11px; color: #666672; margin: 0; line-height: 1.5; }
+.activate-input {
+  background: #111113; border: 1px solid #2c2c30; border-radius: 5px;
+  padding: 8px 10px; color: #e8e8ec; font-size: 12px; font-family: monospace;
+  width: 100%; box-sizing: border-box;
+}
+.activate-input:focus { border-color: #b8922a; outline: none; }
+.activate-error { font-size: 11px; color: #e05252; margin: 0; }
+.activate-dialog-actions { display: flex; gap: 8px; }
+.btn-activate-confirm {
+  flex: 1; background: #b8922a; color: #fff; font-weight: 600; font-size: 12px;
+  border: none; border-radius: 5px; padding: 8px; cursor: pointer;
+}
+.btn-activate-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-activate-confirm:not(:disabled):hover { background: #c9a030; }
+.btn-activate-cancel {
+  background: #1e1e22; color: #888890; font-size: 12px;
+  border: 1px solid #2c2c30; border-radius: 5px; padding: 8px 12px; cursor: pointer;
+}
+.btn-activate-cancel:hover { color: #e8e8ec; }
+.license-deactivate-wrap { padding: 12px 0 4px; }
+.btn-deactivate {
+  background: transparent; color: #444448; font-size: 11px;
+  border: none; cursor: pointer; padding: 0; text-decoration: underline;
+}
+.btn-deactivate:hover { color: #e05252; }
 "#;

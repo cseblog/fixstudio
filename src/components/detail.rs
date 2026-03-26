@@ -70,7 +70,6 @@ fn copy_js(text: &str) -> String {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-/// Renders the Detail panel (right side).
 #[component]
 pub fn detail_panel(
     detail_msg: Option<FixMessage>,

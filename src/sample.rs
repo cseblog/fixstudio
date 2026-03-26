@@ -47,9 +47,10 @@ const FIXT_LOGON_MESSAGES: &[&str] = &[
 pub fn sample_data(spec: &str) -> String {
     let bs = begin_string(spec);
     if spec == "FIXT11" {
-        let mut lines: Vec<String> = FIXT_LOGON_MESSAGES.iter().map(|s| s.to_string()).collect();
-        lines.extend(BASE_MESSAGES[2..].iter().map(|m| m.replace("8={{8}}|", "8=FIXT.1.1|")));
-        lines.join("\n")
+        FIXT_LOGON_MESSAGES.iter().map(|s| s.to_string())
+            .chain(BASE_MESSAGES[2..].iter().map(|m| m.replace("8={{8}}|", "8=FIXT.1.1|")))
+            .collect::<Vec<_>>()
+            .join("\n")
     } else {
         BASE_MESSAGES.iter().map(|m| m.replace("{{8}}", bs)).collect::<Vec<_>>().join("\n")
     }
