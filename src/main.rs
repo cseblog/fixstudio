@@ -1,5 +1,7 @@
 mod app;
 mod components;
+mod license;
+mod loader;
 mod dictionary;
 mod export;
 mod fill_quality;
@@ -9,6 +11,7 @@ mod sample;
 mod session_health;
 mod session_summary;
 mod style;
+mod types;
 mod validator;
 
 use dioxus_desktop::{launch::launch, Config, WindowBuilder};

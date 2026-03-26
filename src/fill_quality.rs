@@ -177,8 +177,9 @@ fn handle_execution_report(msg: &FixMessage, orders: &mut HashMap<String, OrderC
         ctx.fill_count   += 1;
         ctx.last_fill_us  = Some(er_us);
         let cum_qty: f64  = tag_val(msg, 14).parse().unwrap_or(0.0);
-        let avg_px: f64   = if !tag_val(msg, 6).is_empty() {
-            tag_val(msg, 6).parse().unwrap_or(0.0)
+        let avg_px_str    = tag_val(msg, 6);
+        let avg_px: f64   = if !avg_px_str.is_empty() {
+            avg_px_str.parse().unwrap_or(0.0)
         } else {
             tag_val(msg, 31).parse().unwrap_or(0.0)
         };
@@ -261,7 +262,7 @@ fn build_scorecard_row(
     let mut ack_latencies   : Vec<f64> = Vec::new();
     let mut fill_latencies  : Vec<f64> = Vec::new();
 
-    for &idx in indices.iter() {
+    for &idx in indices {
         let order = &orders[idx];
         total_order_qty += order.order_qty;
         total_cum_qty   += order.cum_qty;

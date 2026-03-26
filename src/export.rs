@@ -16,7 +16,7 @@ pub fn now_tag() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-        let (year, month, day, hour, min, sec) = unix_secs_to_utc(secs);
+    let (year, month, day, hour, min, sec) = unix_secs_to_utc(secs);
     format!("{year:04}{month:02}{day:02}_{hour:02}{min:02}{sec:02}")
 }
 

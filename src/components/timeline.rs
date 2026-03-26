@@ -48,7 +48,6 @@ fn format_duration(us: u64) -> String {
     }
 }
 
-/// Renders the Timeline panel (left side).
 #[component]
 pub fn timeline_panel(
     messages: Signal<Vec<FixMessage>>,
@@ -67,13 +66,11 @@ pub fn timeline_panel(
 
     let mut display_limit = use_signal(|| INITIAL_DISPLAY);
 
-    // ── One-time JS scroll listener ──────────────────────────────────────────
-    // Reads NO reactive signals → runs exactly once on mount.
-    // Installs a native browser scroll listener on #timeline-scroll.
-    // When within 200 px of the bottom AND .cap-notice sentinel is present,
-    // JS calls dioxus.send(true). Rust increments display_limit.
+    // Installs a scroll listener on #timeline-scroll once on mount.
+    // When within 200px of the bottom and the .cap-notice sentinel exists,
+    // JS sends true → Rust increments display_limit.
     use_effect(move || {
-        let mut dl = display_limit.clone();
+        let mut dl = display_limit;
         spawn(async move {
             let mut e = eval(r#"
                 (function() {
@@ -108,8 +105,7 @@ pub fn timeline_panel(
         });
     });
 
-    // ── Reset on filter / dataset change ────────────────────────────────────
-    // Reads filter signals + message count → re-runs whenever they change.
+    // Reset display_limit and scroll position whenever filters or data change.
     use_effect(move || {
         f_time.read();
         f_time_op.read();
@@ -124,18 +120,15 @@ pub fn timeline_panel(
         eval("var el = document.getElementById('timeline-scroll'); if (el) el.scrollTop = 0;");
     });
 
-    // ── Memoized filter ──────────────────────────────────────────────────────
-    // Re-computes ONLY when a filter signal, skip_heartbeats, or messages change.
-    // Crucially, scrolling (display_limit changes) does NOT trigger a re-scan —
-    // the cached Vec<usize> is reused, making scroll completely free.
+    // Memoized: re-computes only when filters, skip_heartbeats, or messages change.
+    // Scrolling (display_limit changes) does NOT trigger a re-scan.
     let timeline_indices = use_memo(move || -> Vec<usize> {
         let skip_hb = *skip_heartbeats.read();
         let msgs    = messages.read();
-        // Combine operator + value into the format time_match expects:
-        //   "="  → plain value (substring match)
-        //   ">=" / "<=" → prefixed, e.g. ">=2024-01-02 10:00:00"
         let ft_val = f_time.read().clone();
         let ft_op  = f_time_op.read().clone();
+        // Combine operator + value into the format time_match expects:
+        //   "="  → plain substring match; ">="/"<=" → prefixed range query
         let ft_raw = if ft_op == "=" || ft_val.is_empty() {
             ft_val
         } else {
@@ -163,18 +156,13 @@ pub fn timeline_panel(
             })
             .map(|(i, _)| i)
             .collect();
-        // Newest first — ISO timestamps sort lexicographically so this is correct.
         indices.sort_unstable_by(|&a, &b| msgs[b].time.cmp(&msgs[a].time));
         indices
     });
 
-    // ── Render-time state ────────────────────────────────────────────────────
     let msgs = messages.read();
     let sel  = *selected_idx.read();
 
-    // Filter values for input bindings and has_filter check.
-    // No lowercasing needed here — has_filter only tests emptiness, and the
-    // input value= attributes bind to the raw signal directly.
     let ft_val = f_time.read().clone();
     let ft_op  = f_time_op.read().clone();
 
@@ -185,7 +173,6 @@ pub fn timeline_panel(
         || !f_clord.read().is_empty()
         || !f_detail.read().is_empty();
 
-    // Cached result from the memo — free if filters/messages haven't changed.
     let indices     = timeline_indices.read();
     let total_count = indices.len();
     let display_end = (*display_limit.read()).min(total_count);
@@ -195,7 +182,6 @@ pub fn timeline_panel(
         div { class: "panel-timeline",
             div { class: "panel-header",
                 div { class: "panel-title",
-                    // h2 { "Timeline" }
                     if let Some((count, us)) = *parse_stats.read() {
                         span { class: "parse-stats", "Parsed {count} messages in {format_duration(us)}" }
                     }
@@ -331,7 +317,6 @@ pub fn timeline_panel(
                             else { "No messages parsed yet." }
                         }
                     }
-                    // Sentinel: JS checks for this element before sending load-more.
                     if has_more {
                         div { class: "cap-notice", "Scroll down to load more…" }
                     }

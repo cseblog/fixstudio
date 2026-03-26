@@ -32,6 +32,7 @@ rayon = "1.10"
 rfd = "0.15"
 tao = "0.34"
 open = "5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # ---------------------------------------------------------------------------
 # Platform-specific dependencies
