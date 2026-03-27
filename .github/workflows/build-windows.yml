@@ -67,15 +67,18 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: AiFixParser-window
+          name: AiFixParser-windows
           path: release/
 
-      - name: Rename installer
+      - name: Rename and zip installer
         run: |
           EXE=$(find release -name "*-setup.exe" | head -1)
-          cp "$EXE" AiFixParser-window.exe
+          cp "$EXE" AiFixParser-windows.exe
+          zip AiFixParser-windows.zip AiFixParser-windows.exe
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: AiFixParser-window.exe
+          files: |
+            AiFixParser-windows.exe
+            AiFixParser-windows.zip
