@@ -4,7 +4,7 @@ use dioxus::document::eval;
 use crate::license::{clear_license, instance_name, save_license, validate_license, StoredLicense};
 use crate::types::ViewMode;
 
-const CHECKOUT_URL: &str = "https://whop.com/checkout/plan_BPY1swl4kIKvQ";
+const CHECKOUT_URL: &str = "https://whop.com/checkout/plan_HggsqwuvlHbIu";
 
 /// Right-side Pro features panel with license activation.
 #[component]
