@@ -51,7 +51,7 @@ jobs:
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AiFixParser-window
+          name: AiFixParser-windows
           path: ${{ steps.find_exe.outputs.path }}
           retention-days: 30
 
