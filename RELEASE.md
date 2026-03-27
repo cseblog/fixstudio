@@ -59,3 +59,9 @@ Then distribute the stapled DMG — users can install without the "damaged" erro
 
 
 "A developer debugging tool that parses and inspects FIX protocol log files — similar to Wireshark for network packets. It is not a trading platform, does not execute trades, and does not connect to any exchange."
+
+
+
+
+
+
