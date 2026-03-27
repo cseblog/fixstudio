@@ -51,7 +51,7 @@ jobs:
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AIFixParser-windows
+          name: AiFixParser-window
           path: ${{ steps.find_exe.outputs.path }}
           retention-days: 30
 
@@ -67,15 +67,15 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: AIFixParser-windows
+          name: AiFixParser-window
           path: release/
 
       - name: Rename installer
         run: |
           EXE=$(find release -name "*-setup.exe" | head -1)
-          cp "$EXE" AIFixParser-windows.exe
+          cp "$EXE" AiFixParser-window.exe
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: AIFixParser-windows.exe
+          files: AiFixParser-window.exe
