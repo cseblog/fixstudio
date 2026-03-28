@@ -1,7 +1,7 @@
 //! FIX 4.4 test-data generator — produces ~1,000,000 realistic FX trading messages.
 //!
 //! Run:  cargo run --release --bin gen_fix
-//! Output: fix_test_1m.log  (~180-220 MB, pipe-delimited, one message per line)
+//! Output: fix_test_1m.log  (~180-220 MB, SOH-delimited, one message per line)
 //!
 //! Workflows modelled (per session, across 8 client/server pairs):
 //!   • RFQ → Quote → NOS(Previously-Quoted) → ExecRpt(New) → ExecRpt(Fill)
@@ -153,13 +153,15 @@ const SETTL_DATE: &str = "20240319";
 /// Build a fully framed FIX 4.4 message from body fields.
 ///
 /// `body_fields` contains everything from tag 35 onwards (with trailing `|`).
-/// Returns the complete pipe-delimited message with correct tag-9 and tag-10.
+/// Pipe separators are replaced with the real FIX SOH delimiter (0x01).
+/// Returns a complete SOH-delimited message with correct tag-9 and tag-10.
 fn build(body_fields: &str) -> String {
-    let body_len = body_fields.len();
-    let header   = format!("8=FIX.4.4|9={}|", body_len);
-    let checksum: u32 = header.bytes().chain(body_fields.bytes())
+    let body: String = body_fields.replace('|', "\x01");
+    let body_len = body.len();
+    let header   = format!("8=FIX.4.4\x019={}\x01", body_len);
+    let checksum: u32 = header.bytes().chain(body.bytes())
         .map(|b| b as u32).sum::<u32>() % 256;
-    format!("{}{}10={:03}|", header, body_fields, checksum)
+    format!("{}{}10={:03}\x01", header, body, checksum)
 }
 
 /// Collect a complete message into the time-sorted buffer.
