@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crate::model::FixMessage;
-use crate::parser::{parse_all, parse_all_simd, parse_all_simd_bytes};
+use crate::parser::parse_all_simd_bytes;
 
 pub struct FileLoadResult {
     pub name: String,
@@ -31,20 +31,12 @@ pub async fn pick_and_load_file() -> Option<FileLoadResult> {
     {
         Ok(mmap) => {
             let soh = mmap.iter().take(4096).any(|&b| b == 0x01);
-            let msgs = if soh {
-                parse_all_simd_bytes(&mmap)
-            } else {
-                let s = String::from_utf8_lossy(&mmap);
-                parse_all(&s)
-            };
-            (msgs, soh)
+            (parse_all_simd_bytes(&mmap), soh)
         }
         Err(_) => {
             let bytes = file.read().await;
             let soh = bytes.iter().take(4096).any(|&b| b == 0x01);
-            let s = String::from_utf8_lossy(&bytes);
-            let msgs = if soh { parse_all_simd(&s) } else { parse_all(&s) };
-            (msgs, soh)
+            (parse_all_simd_bytes(&bytes), soh)
         }
     };
     let parse_us = t.elapsed().as_micros() as u64;
@@ -81,13 +73,7 @@ pub async fn pick_and_load_folder() -> Option<FolderLoadResult> {
                         Ok(mmap) => {
                             let has_fix = mmap.windows(5).any(|w| w == b"8=FIX");
                             if !has_fix { continue; }
-                            let soh = mmap.iter().take(4096).any(|&b| b == 0x01);
-                            if soh {
-                                parse_all_simd_bytes(&mmap)
-                            } else {
-                                let s = String::from_utf8_lossy(&mmap);
-                                parse_all(&s)
-                            }
+                            parse_all_simd_bytes(&mmap)
                         }
                         Err(_) => continue,
                     };

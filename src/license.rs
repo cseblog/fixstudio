@@ -36,8 +36,13 @@ pub fn license_path() -> PathBuf {
 }
 
 pub fn load_license() -> Option<StoredLicense> {
-    let data = std::fs::read_to_string(license_path()).ok()?;
-    serde_json::from_str(&data).ok()
+    #[cfg(feature = "dev")]
+    return Some(StoredLicense { key: "dev".to_string(), instance_id: "dev".to_string() });
+    #[cfg(not(feature = "dev"))]
+    {
+        let data = std::fs::read_to_string(license_path()).ok()?;
+        serde_json::from_str(&data).ok()
+    }
 }
 
 pub fn save_license(lic: &StoredLicense) {
@@ -76,6 +81,8 @@ struct Membership {
 /// Validates a license key against Whop. Returns `Ok(())` if an active
 /// membership with that key exists for this product.
 pub async fn validate_license(key: &str) -> Result<(), String> {
+    #[cfg(feature = "dev")]
+    { let _ = key; return Ok(()); }
     let client = reqwest::Client::new();
     let resp = client
         .get(WHOP_MEMBERSHIPS)

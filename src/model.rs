@@ -3,28 +3,80 @@ use compact_str::CompactString;
 /// A single parsed FIX message with its extracted header fields.
 #[derive(Clone, Default, PartialEq)]
 pub struct FixMessage {
-    pub fields: Vec<FixField>,
-    pub time: CompactString,
-    pub sender: CompactString,
-    pub target: CompactString,
-    pub msg_type_raw: CompactString,
+    /// Flat byte buffer containing all field values, concatenated in parse order.
+    ///
+    /// Kelley DOD principle: "use indexes instead of pointers."
+    /// Each `FixField` stores a `(u32, u16)` offset+length into this arena rather
+    /// than an owned `CompactString`. This shrinks `FixField` from 32 bytes → 8 bytes
+    /// — a 4× reduction in field-iteration memory bandwidth.
+    pub arena:          Vec<u8>,
+    pub fields:         Vec<FixField>,
+    pub time:           CompactString,
+    pub sender:         CompactString,
+    pub target:         CompactString,
+    pub msg_type_raw:   CompactString,
     pub msg_type_label: &'static str,
-    pub cl_ord_id: CompactString,
-    pub quote_id: CompactString,
-    pub quote_req_id: CompactString,
-    pub side: CompactString,
-    pub order_qty: CompactString,
-    pub symbol: CompactString,
-    pub text: CompactString,
+    pub cl_ord_id:      CompactString,
+    pub quote_id:       CompactString,
+    pub quote_req_id:   CompactString,
+    pub side:           CompactString,
+    pub order_qty:      CompactString,
+    pub symbol:         CompactString,
+    pub text:           CompactString,
 }
 
-/// A single tag=value pair.
-/// `tag` is stored as `u16` (the numeric FIX tag number) to avoid a
-/// `CompactString` heap/inline construction per field — reduces FixField
-/// from 48 bytes to 32 bytes and eliminates 15M+ string constructions for
-/// a 1M-message parse.
+impl FixMessage {
+    /// Append `value` bytes to the arena and push a new [`FixField`].
+    ///
+    /// Use this wherever `fields.push(FixField { tag, value: … })` was written.
+    #[allow(dead_code)]
+    pub fn push_field(&mut self, tag: u16, value: &str) {
+        let value_start = self.arena.len() as u32;
+        self.arena.extend_from_slice(value.as_bytes());
+        let value_len = value.len() as u16;
+        self.fields.push(FixField { tag, value_len, value_start });
+    }
+
+    /// Replace the value of the first field with `tag` by appending `value` to
+    /// the arena. Old arena bytes are not reclaimed (arena is append-only).
+    #[allow(dead_code)]
+    pub fn set_field_value(&mut self, tag: u16, value: &str) {
+        if let Some(idx) = self.fields.iter().position(|f| f.tag == tag) {
+            let value_start = self.arena.len() as u32;
+            self.arena.extend_from_slice(value.as_bytes());
+            let value_len = value.len() as u16;
+            self.fields[idx].value_start = value_start;
+            self.fields[idx].value_len   = value_len;
+        }
+    }
+}
+
+/// A single tag=value pair stored as arena offsets.
+///
+/// Memory layout (field order chosen for zero padding):
+///   offset 0: tag         (u16, 2 bytes)
+///   offset 2: value_len   (u16, 2 bytes)
+///   offset 4: value_start (u32, 4 bytes)
+///   total: 8 bytes — vs 32 bytes for the old CompactString design (4× smaller).
+///
+/// At 20 fields/message × 1M messages this saves ~480 MB of field storage and
+/// halves the number of cache lines touched when scanning a message's fields.
 #[derive(Clone, PartialEq)]
 pub struct FixField {
-    pub tag: u16,
-    pub value: CompactString,
+    pub tag:         u16,
+    pub value_len:   u16,
+    pub value_start: u32,
+}
+
+impl FixField {
+    /// Borrow the field value as `&str` from the parent message's arena.
+    ///
+    /// Pass `&msg.arena` where `msg` is the `FixMessage` this field belongs to.
+    /// FIX protocol is 7-bit ASCII, so the byte slice is always valid UTF-8.
+    #[inline]
+    pub fn value_in<'a>(&self, arena: &'a [u8]) -> &'a str {
+        let slice = &arena[self.value_start as usize..][..self.value_len as usize];
+        // SAFETY: FIX protocol fields are 7-bit ASCII, which is valid UTF-8.
+        unsafe { std::str::from_utf8_unchecked(slice) }
+    }
 }

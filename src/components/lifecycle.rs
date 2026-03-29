@@ -16,7 +16,7 @@ use crate::model::FixMessage;
 // ─── Helper: tag value lookup ─────────────────────────────────────────────────
 
 fn tag_val<'a>(msg: &'a FixMessage, tag: u16) -> &'a str {
-    msg.fields.iter().find(|f| f.tag == tag).map(|f| f.value.as_str()).unwrap_or("")
+    msg.fields.iter().find(|f| f.tag == tag).map(|f| f.value_in(&msg.arena)).unwrap_or("")
 }
 
 // ─── Time helpers ─────────────────────────────────────────────────────────────

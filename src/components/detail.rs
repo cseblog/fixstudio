@@ -21,11 +21,12 @@ fn build_raw_text(msg: &FixMessage) -> String {
         } else {
             field.tag.to_string()
         };
-        let val_desc = value_description(field.tag, &field.value);
+        let val = field.value_in(&msg.arena);
+        let val_desc = value_description(field.tag, val);
         if val_desc.is_empty() {
-            lines.push(format!("  {}: {}", name, field.value));
+            lines.push(format!("  {}: {}", name, val));
         } else {
-            lines.push(format!("  {}: {} [{}]", name, field.value, val_desc));
+            lines.push(format!("  {}: {} [{}]", name, val, val_desc));
         }
     }
     lines.join("\n")
@@ -42,13 +43,14 @@ fn json_escape(s: &str) -> String {
 /// Serialise all fields (skip_common not applied — JSON is a full export).
 fn build_json_text(msg: &FixMessage) -> String {
     let entries: Vec<String> = msg.fields.iter().map(|f| {
+        let val = f.value_in(&msg.arena);
         let mut e = format!(
             "  {{\"tag\": \"{}\", \"name\": \"{}\", \"value\": \"{}\"",
             f.tag,
             json_escape(tag_description(f.tag)),
-            json_escape(&f.value),
+            json_escape(val),
         );
-        let val_desc = value_description(f.tag, &f.value);
+        let val_desc = value_description(f.tag, val);
         if !val_desc.is_empty() {
             e.push_str(&format!(", \"decoded\": \"{}\"", json_escape(&val_desc)));
         }
@@ -139,8 +141,8 @@ pub fn detail_panel(
                                         div { class: "tbl-row tbl-detail-row",
                                             span { class: "tag-num", "{field.tag}" }
                                             span { span { class: "badge {tag_badge_class(field.tag)}", "{tag_description(field.tag)}" } }
-                                            span { "{field.value}" }
-                                            span { "{value_description(field.tag, &field.value)}" }
+                                            span { "{field.value_in(&msg.arena)}" }
+                                            span { "{value_description(field.tag, field.value_in(&msg.arena))}" }
                                         }
                                     }
                                 }

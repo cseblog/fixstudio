@@ -7,4 +7,5 @@ pub mod export;
 pub mod model;
 pub mod parser;
 pub mod sample;
+pub mod simd;
 pub mod validator;
