@@ -1,4 +1,16 @@
-# parser.rs — Data Flow
+# parser.rs — Data Flow  ⚠️ STALE — see docs/parser.md
+
+> **This file is outdated.** It describes a previous version of the parser. Specifically:
+>
+> - `parse_all_simd(&str)` **no longer exists** — it was removed when `parse_single` was unified to call `parse_single_simd` directly.
+> - `FixField.value` as `CompactString` **no longer exists** — replaced by the arena + offset design (`value_start: u32`, `value_len: u16`).
+> - The "parallel chunk alignment" description is superseded by the ownership-region parallel scan (Phase 8 in the blog).
+>
+> See [`docs/parser.md`](parser.md) for the current design.
+
+---
+
+## parser.rs — Data Flow
 
 ## Entry Points
 
