@@ -269,10 +269,13 @@ unsafe fn simd_parse_neon(raw: &[u8], msg: &mut FixMessage) {
 
     let soh_vec  = vdupq_n_u8(0x01);
     let pipe_vec = vdupq_n_u8(b'|');
-    // Per-lane powers-of-two: lane k gets weight 2^k.
-    // In little-endian u64: byte 0 = lane 0 = 0x01, …, byte 7 = lane 7 = 0x80.
-    let weights_lo = vcreate_u8(0x8040201008040201_u64); // lanes 0-7:  [1,2,4,8,16,32,64,128]
-    let weights_hi = vcreate_u8(0x8040201008040201_u64); // lanes 8-15: same weights
+    // Per-lane powers-of-two used to collapse an 8-lane mask to a single byte.
+    // Lane k gets weight 2^k: in little-endian u64 byte 0 = 0x01, byte 7 = 0x80.
+    // The same weight pattern applies to both the low (lanes 0-7) and high (lanes 8-15)
+    // halves because vaddv_u8 operates on 8 lanes independently for each half.
+    const LANE_WEIGHTS: u64 = 0x8040201008040201;
+    let weights_lo = vcreate_u8(LANE_WEIGHTS);
+    let weights_hi = vcreate_u8(LANE_WEIGHTS);
 
     let byte_count  = raw.len();
     let chunk_count = byte_count / 16;
@@ -512,5 +515,53 @@ mod tests {
         assert_eq!(msgs[0].msg_type_raw, "8");
         assert_eq!(msgs[0].sender, "EXEC");
         assert_eq!(msgs[0].symbol, "AAPL");
+    }
+
+    // ── Negative / boundary tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_all_empty_string() {
+        assert!(parse_all("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_all_simd_bytes_empty() {
+        assert!(parse_all_simd_bytes(b"").is_empty());
+    }
+
+    #[test]
+    fn test_parse_all_whitespace_only() {
+        // A string of only whitespace should yield no messages.
+        assert!(parse_all("   \n  ").is_empty());
+    }
+
+    #[test]
+    fn test_token_without_equals_is_skipped() {
+        // "GARBAGE" contains no '=' — apply_token must return early without panic.
+        let input = b"8=FIX.4.4|GARBAGE|35=A|10=001|";
+        let msgs = parse_all_simd_bytes(input);
+        assert_eq!(msgs.len(), 1);
+        // The GARBAGE token is silently skipped; the valid fields are parsed.
+        assert_eq!(msgs[0].msg_type_raw, "A");
+    }
+
+    #[test]
+    fn test_truncated_message_no_panic() {
+        // A message that ends mid-field must not panic.
+        let input = b"8=FIX.4.4|9=61|35=";
+        let msgs = parse_all_simd_bytes(input);
+        assert_eq!(msgs.len(), 1);
+        // The truncated tag-35 token has an empty value — msg_type_raw is empty.
+        assert_eq!(msgs[0].msg_type_raw, "");
+    }
+
+    #[test]
+    fn test_delimiter_only_input() {
+        // Input with nothing but delimiters produces a message with no fields.
+        let input = b"||||";
+        let msgs = parse_all_simd_bytes(input);
+        // No "8=FIX" boundary → treated as a single degenerate message.
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].fields.is_empty());
     }
 }

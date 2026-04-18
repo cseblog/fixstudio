@@ -76,9 +76,17 @@ fn copy_js(text: &str) -> String {
 pub fn detail_panel(
     detail_msg: Option<FixMessage>,
     skip_common: Signal<bool>,
+    selected_idx: Signal<Option<usize>>,
 ) -> Element {
-    let mut view   = use_signal(|| VIEW_TABLE);
-    let mut copied = use_signal(|| false);
+    let mut view         = use_signal(|| VIEW_TABLE);
+    let mut copied       = use_signal(|| false);
+    let mut table_filter = use_signal(String::new);
+
+    // Reset "Copied!" state whenever the selected message changes.
+    use_effect(move || {
+        let _ = selected_idx.read();
+        copied.set(false);
+    });
 
     // Only build text for the active tab — no point computing both up front.
     let view_now  = *view.read();
@@ -126,6 +134,15 @@ pub fn detail_panel(
             // ── Table view ──
             if *view.read() == VIEW_TABLE {
                 div { class: "table-wrap",
+                    div { class: "detail-filter-row",
+                        input {
+                            class: "detail-filter-input",
+                            r#type: "text",
+                            placeholder: "Filter by tag, name, value…",
+                            value: "{table_filter}",
+                            oninput: move |e| table_filter.set(e.value()),
+                        }
+                    }
                     div { class: "tbl-header tbl-detail-row",
                         span { "Tag" }
                         span { "Tag Description" }
@@ -135,9 +152,19 @@ pub fn detail_panel(
                     div { class: "tbl-body",
                         if let Some(ref msg) = detail_msg {
                             {
-                                let skip = *skip_common.read();
+                                let skip   = *skip_common.read();
+                                let filter = table_filter.read().to_lowercase();
                                 rsx! {
-                                    for field in msg.fields.iter().filter(|f| !(skip && is_common_tag(f.tag))) {
+                                    for field in msg.fields.iter().filter(|f| {
+                                        if skip && is_common_tag(f.tag) { return false; }
+                                        if filter.is_empty() { return true; }
+                                        let val      = f.value_in(&msg.arena);
+                                        let val_desc = value_description(f.tag, val);
+                                        f.tag.to_string().contains(filter.as_str())
+                                        || tag_description(f.tag).to_lowercase().contains(filter.as_str())
+                                        || val.to_lowercase().contains(filter.as_str())
+                                        || val_desc.to_lowercase().contains(filter.as_str())
+                                    }) {
                                         div { class: "tbl-row tbl-detail-row",
                                             span { class: "tag-num", "{field.tag}" }
                                             span { span { class: "badge {tag_badge_class(field.tag)}", "{tag_description(field.tag)}" } }

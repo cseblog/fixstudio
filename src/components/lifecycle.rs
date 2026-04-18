@@ -737,7 +737,6 @@ enum SortCol { Time, RfqQuote, QuoteNos, NosEr, NosErFill, Duration }
 pub fn lifecycle_panel(
     messages: Signal<Vec<FixMessage>>,
     selected_idx: Signal<Option<usize>>,
-    pro: bool,
 ) -> Element {
     // ── Signals ──
     let mut filter_sym:    Signal<String> = use_signal(String::new);
@@ -913,7 +912,7 @@ pub fn lifecycle_panel(
                 div { class: "panel-title",
                     span { class: "parse-stats", "{header_meta}" }
                 }
-                if pro && total_chains > 0 {
+                if total_chains > 0 {
                     button {
                         class: "btn-export-csv",
                         onclick: move |_| {

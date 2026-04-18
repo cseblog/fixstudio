@@ -54,7 +54,6 @@ pub fn timeline_panel(
     selected_idx: Signal<Option<usize>>,
     skip_heartbeats: Signal<bool>,
     parse_stats: Signal<Option<(usize, u64)>>,
-    pro: bool,
 ) -> Element {
     let mut f_time    = use_signal(String::new);
     let mut f_time_op = use_signal(|| String::from("="));  // "=" | ">=" | "<="
@@ -192,7 +191,7 @@ pub fn timeline_panel(
                     }
                 }
                 div { class: "header-actions",
-                    if pro && total_count > 0 {
+                    if total_count > 0 {
                         button {
                             class: "btn-export-csv",
                             onclick: move |_| {

@@ -6,14 +6,14 @@ use crate::parser::parse_all_simd_bytes;
 pub struct FileLoadResult {
     pub name: String,
     pub messages: Vec<FixMessage>,
-    pub parse_us: u64,
+    pub parse_us: u128,
     pub is_soh: bool,
 }
 
 pub struct FolderLoadResult {
     pub folder_name: String,
     pub messages: Vec<FixMessage>,
-    pub parse_us: u64,
+    pub parse_us: u128,
     pub file_names: Vec<String>,
 }
 
@@ -39,7 +39,7 @@ pub async fn pick_and_load_file() -> Option<FileLoadResult> {
             (parse_all_simd_bytes(&bytes), soh)
         }
     };
-    let parse_us = t.elapsed().as_micros() as u64;
+    let parse_us = t.elapsed().as_micros();
     Some(FileLoadResult { name, messages, parse_us, is_soh })
 }
 
@@ -54,40 +54,54 @@ pub async fn pick_and_load_folder() -> Option<FolderLoadResult> {
     let mut dir_stack = vec![root.clone()];
     let mut dirs_seen = 0_usize;
     while let Some(dir) = dir_stack.pop() {
-        assert!(dirs_seen <= MAX_DIRS);
+        // Assert before incrementing: dirs_seen < MAX_DIRS means we have not
+        // yet consumed the last permitted slot. Firing here (not after) gives
+        // a meaningful panic site rather than a silent break-past-limit.
+        assert!(dirs_seen < MAX_DIRS,
+            "directory scan exceeded MAX_DIRS={} at {:?}", MAX_DIRS, dir);
         dirs_seen += 1;
-        if dirs_seen > MAX_DIRS { break; }
-        if let Ok(rd) = std::fs::read_dir(&dir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    dir_stack.push(p);
-                } else if p.extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| fix_exts.contains(&e))
-                    .unwrap_or(false)
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                eprintln!("loader: cannot read dir {:?}: {}", dir, e);
+                continue;
+            }
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                dir_stack.push(p);
+            } else if p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| fix_exts.contains(&e))
+                .unwrap_or(false)
+            {
+                let mmap = match std::fs::File::open(&p)
+                    .and_then(|f| unsafe { memmap2::Mmap::map(&f) })
                 {
-                    let msgs = match std::fs::File::open(&p)
-                        .and_then(|f| unsafe { memmap2::Mmap::map(&f) })
-                    {
-                        Ok(mmap) => {
-                            let has_fix = mmap.windows(5).any(|w| w == b"8=FIX");
-                            if !has_fix { continue; }
-                            parse_all_simd_bytes(&mmap)
-                        }
-                        Err(_) => continue,
-                    };
-                    if msgs.is_empty() { continue; }
-                    let rel = p.strip_prefix(&root).unwrap_or(&p)
-                        .to_string_lossy().into_owned();
-                    file_names.push(format!("{rel} ({} msgs)", msgs.len()));
-                    all_msgs.extend(msgs);
-                }
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("loader: cannot mmap {:?}: {}", p, e);
+                        continue;
+                    }
+                };
+                // Bounded marker check: FIX files start with "8=FIX" in the
+                // first 64 bytes — scanning the full file wastes memory bandwidth.
+                let has_fix = mmap.get(..64.min(mmap.len()))
+                    .map(|head| head.windows(5).any(|w| w == b"8=FIX"))
+                    .unwrap_or(false);
+                if !has_fix { continue; }
+                let msgs = parse_all_simd_bytes(&mmap);
+                if msgs.is_empty() { continue; }
+                let rel = p.strip_prefix(&root).unwrap_or(&p)
+                    .to_string_lossy().into_owned();
+                file_names.push(format!("{rel} ({} msgs)", msgs.len()));
+                all_msgs.extend(msgs);
             }
         }
     }
     file_names.sort();
-    let parse_us = t.elapsed().as_micros() as u64;
+    let parse_us = t.elapsed().as_micros();
     let folder_name = root.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("folder")
