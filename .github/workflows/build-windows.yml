@@ -36,7 +36,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install Dioxus CLI
-        run: cargo binstall dioxus-cli --version "^0.7" -y
+        run: cargo binstall dioxus-cli --version "0.7.3" -y
 
       - name: Build Windows bundle
         run: dx bundle --release --platform desktop
