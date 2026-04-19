@@ -46,6 +46,11 @@ jobs:
         shell: bash
         run: |
           EXE=$(find target/dx -path "*/nsis/*-setup.exe" | head -1)
+          if [ -z "$EXE" ]; then
+            echo "ERROR: no *-setup.exe found under target/dx" >&2
+            find target/dx || true
+            exit 1
+          fi
           echo "path=$EXE" >> "$GITHUB_OUTPUT"
 
       - name: Upload Windows artifact
