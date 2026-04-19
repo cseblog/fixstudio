@@ -51,7 +51,7 @@ struct OverviewData {
 }
 
 #[component]
-pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
+pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
     let mut active_tab           = use_signal(|| OverviewTab::Summary);
     let sort_col                 = use_signal(|| SortCol::Orders);
     let sort_asc                 = use_signal(|| false);
@@ -117,26 +117,24 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>, pro: bool) -> Element {
                         }
                     }
                 }
-                if pro {
-                    button {
-                        class: "btn-export-csv",
-                        onclick: move |_| {
-                            let snap: Vec<FixMessage> = messages.read().clone();
-                            spawn(async move {
-                                let tag = now_tag();
-                                if let Some(file) = rfd::AsyncFileDialog::new()
-                                    .set_file_name(&format!("session_overview_{tag}.csv"))
-                                    .add_filter("CSV", &["csv"])
-                                    .save_file()
-                                    .await
-                                {
-                                    let csv = messages_to_csv(&snap);
-                                    let _ = std::fs::write(file.path(), csv.as_bytes());
-                                }
-                            });
-                        },
-                        "Export CSV"
-                    }
+                button {
+                    class: "btn-export-csv",
+                    onclick: move |_| {
+                        let snap: Vec<FixMessage> = messages.read().clone();
+                        spawn(async move {
+                            let tag = now_tag();
+                            if let Some(file) = rfd::AsyncFileDialog::new()
+                                .set_file_name(&format!("session_overview_{tag}.csv"))
+                                .add_filter("CSV", &["csv"])
+                                .save_file()
+                                .await
+                            {
+                                let csv = messages_to_csv(&snap);
+                                let _ = std::fs::write(file.path(), csv.as_bytes());
+                            }
+                        });
+                    },
+                    "Export CSV"
                 }
             }
 

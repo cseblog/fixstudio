@@ -1,14 +1,26 @@
 use std::borrow::Cow;
 
 use compact_str::{CompactString, format_compact};
-use memchr::{memchr_iter, memmem};
-use memchr::memchr3;
+use memchr::{memchr3, memmem};
 use rayon::prelude::*;
 
 use crate::dictionary::{msg_type_label, side_label};
 use crate::model::{FixField, FixMessage};
 
-/// Normalize delimiters: SOH (0x01), \x01, ^A -> pipe.
+// ── Tuning constants ──────────────────────────────────────────────────────────
+
+/// Conservative estimate of average FIX message size in bytes (SOH-delimited).
+/// Used only to pre-size the output Vec — undershooting is fine; it just reallocates.
+const AVG_MSG_BYTES: usize = 140;
+
+/// Conservative estimate for the pipe-delimited (str) path, which has slightly
+/// longer fields due to no SOH byte saved.
+const AVG_MSG_BYTES_STR: usize = 160;
+
+/// Typical number of fields per FIX message; used to pre-size `fields` Vec.
+const AVG_FIELDS_PER_MSG: usize = 24;
+
+/// Normalize delimiters: SOH (0x01), \x01, ^A → pipe.
 /// Returns a borrowed slice when no special delimiters are present (zero allocation).
 fn normalize_delimiters(input: &str) -> Cow<'_, str> {
     if memchr3(0x01, b'\\', b'^', input.as_bytes()).is_none() {
@@ -32,55 +44,72 @@ fn normalize_delimiters(input: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// Split `input` on "8=FIX" boundaries using SIMD substring search.
-fn message_slices(input: &str) -> Vec<&str> {
-    let bytes = input.as_bytes();
-    let capacity = (bytes.len() / 160).max(4);
-    let mut msgs = Vec::with_capacity(capacity);
-    let mut start = 0;
-    let mut found = false;
+/// Threshold above which the boundary scan is parallelised across rayon workers.
+/// Below this, the serial memmem scan is faster than spawning rayon tasks.
+const PARALLEL_SCAN_MIN_BYTES: usize = 2 * 1024 * 1024; // 2 MB
 
-    for pos in memmem::find_iter(bytes, b"8=FIX") {
-        if found {
-            let s = input[start..pos].trim();
-            if !s.is_empty() { msgs.push(s); }
+/// Split raw bytes on "8=FIX" boundaries.
+///
+/// Returns a `Vec<u32>` of start offsets rather than fat `&[u8]` pointers (16 bytes each).
+/// At 4 bytes per entry, the Vec is 4× smaller — better L1 cache utilization when
+/// distributing slices across rayon workers.
+///
+/// For inputs ≥ `PARALLEL_SCAN_MIN_BYTES`, the memmem scan itself runs in parallel
+/// across rayon workers — each worker scans its own chunk plus a 4-byte overlap,
+/// then discards any marker that belongs to the next worker's range. The chunks are
+/// processed in index order so the resulting Vec is already sorted; no sort needed.
+fn message_start_offsets(input: &[u8]) -> Vec<u32> {
+    let thread_count = rayon::current_num_threads().max(1);
+
+    if input.len() < PARALLEL_SCAN_MIN_BYTES || thread_count == 1 {
+        // Serial path — no rayon overhead for small inputs.
+        let capacity = (input.len() / AVG_MSG_BYTES).max(4);
+        let mut offsets = Vec::with_capacity(capacity);
+        for pos in memmem::find_iter(input, b"8=FIX") {
+            offsets.push(pos as u32);
         }
-        start = pos;
-        found = true;
+        return offsets;
     }
-    if found {
-        let s = input[start..].trim();
-        if !s.is_empty() { msgs.push(s); }
-    }
-    msgs
-}
 
-/// Split raw bytes on "8=FIX" boundaries — works directly on `&[u8]` (mmap-friendly).
-fn message_slices_bytes(input: &[u8]) -> Vec<&[u8]> {
-    let capacity = (input.len() / 140).max(4);
-    let mut msgs = Vec::with_capacity(capacity);
-    let mut start = 0usize;
-    let mut found = false;
+    // Parallel path.
+    // "8=FIX" is 5 bytes → a marker can start at most 4 bytes before a chunk boundary.
+    // Each worker scans [own_start .. own_end + 4] but only keeps markers in
+    // [own_start .. own_end), so markers are never double-counted.
+    const OVERLAP: usize = 4;
+    let chunk_size = (input.len() + thread_count - 1) / thread_count;
+    let msgs_per_chunk = (chunk_size / AVG_MSG_BYTES).max(4);
 
-    for pos in memmem::find_iter(input, b"8=FIX") {
-        if found {
-            let s = trim_bytes(&input[start..pos]);
-            if !s.is_empty() { msgs.push(s); }
+    let per_chunk: Vec<Vec<u32>> = (0..thread_count).into_par_iter().map(|i| {
+        let own_start = i * chunk_size;
+        let own_end   = ((i + 1) * chunk_size).min(input.len());
+        let scan_end  = (own_end + OVERLAP).min(input.len());
+
+        let chunk = &input[own_start..scan_end];
+        let mut v   = Vec::with_capacity(msgs_per_chunk);
+        for pos in memmem::find_iter(chunk, b"8=FIX") {
+            let abs = own_start + pos;
+            // Last worker claims everything up to input.len().
+            if abs < own_end || i + 1 == thread_count {
+                v.push(abs as u32);
+            }
         }
-        start = pos;
-        found = true;
+        v
+    }).collect();
+
+    // Chunks are in index order → result is already sorted; just flatten.
+    let total = per_chunk.iter().map(|v| v.len()).sum();
+    let mut offsets = Vec::with_capacity(total);
+    for chunk in per_chunk {
+        offsets.extend_from_slice(&chunk);
     }
-    if found {
-        let s = trim_bytes(&input[start..]);
-        if !s.is_empty() { msgs.push(s); }
-    }
-    msgs
+    offsets
 }
 
 /// Parse a raw input string that may contain multiple FIX messages.
+/// Normalizes SOH/^A/\x01 delimiters to pipe before parsing.
 pub fn parse_all(input: &str) -> Vec<FixMessage> {
     let normalized = normalize_delimiters(input);
-    let slices = message_slices(&normalized);
+    let slices = str_message_slices(&normalized);
     if slices.is_empty() {
         if normalized.trim().is_empty() { vec![] } else { vec![parse_single(&normalized)] }
     } else {
@@ -88,114 +117,99 @@ pub fn parse_all(input: &str) -> Vec<FixMessage> {
     }
 }
 
-// ── AVX2 / NEON / SIMD path ───────────────────────────────────────────────────
-
-/// Like [`parse_all`] but skips the normalise step — handles both SOH and pipe
-/// delimiters without allocating a normalised copy of the input.
-pub fn parse_all_simd(input: &str) -> Vec<FixMessage> {
-    let slices = message_slices(input);
-    if slices.is_empty() {
-        if input.trim().is_empty() {
-            vec![]
-        } else {
-            vec![parse_single_simd(input.as_bytes())]
-        }
-    } else if slices.len() == 1 {
-        vec![parse_single_simd(slices[0].as_bytes())]
-    } else {
-        let n = rayon::current_num_threads().max(1);
-        let chunk_size = (slices.len() + n - 1) / n;
-        slices
-            .par_chunks(chunk_size)
-            .flat_map_iter(|chunk| chunk.iter().map(|s| parse_single_simd(s.as_bytes())))
-            .collect()
-    }
-}
-
-/// Like [`parse_all_simd`] but accepts raw bytes — the preferred hot path for
-/// memory-mapped file loading (zero copy from the OS page cache).
-///
-/// **Parallel boundary detection**: instead of one serial memmem scan over the
-/// whole file followed by parallel parse, we split on "8=FIX" alignment points
-/// and have each thread independently scan *and* parse its slice.  This hides
-/// the O(input.len()) boundary-scan cost behind the parallel parse.
-pub fn parse_all_simd_bytes(input: &[u8]) -> Vec<FixMessage> {
-    let n = rayon::current_num_threads().max(1);
-
-    // Small inputs: single-threaded is cheaper (no boundary-finding overhead).
-    if n == 1 || input.len() < 512 * 1024 {
-        let slices = message_slices_bytes(input);
-        return match slices.len() {
-            0 => if input.iter().all(|b| b.is_ascii_whitespace()) { vec![] }
-                 else { vec![parse_single_simd(input)] },
-            1 => vec![parse_single_simd(slices[0])],
-            _ => slices.iter().map(|&s| parse_single_simd(s)).collect(),
-        };
-    }
-
-    // Use 16× the thread count for fine-grained work-stealing and load-balance.
-    let num_chunks  = n * 16;
-    let chunk_size  = (input.len() + num_chunks - 1) / num_chunks;
-    let mut starts: Vec<usize> = std::iter::once(0usize)
-        .chain((1..num_chunks).filter_map(|i| {
-            let nominal = i * chunk_size;
-            if nominal >= input.len() { return None; }
-            memmem::find(&input[nominal..], b"8=FIX").map(|p| nominal + p)
-        }))
-        .collect();
-    starts.dedup();
-    starts.push(input.len()); // sentinel
-
-    // Each thread scans+parses its chunk in one pass — no intermediate Vec<&[u8]>.
-    // flat_map_iter keeps output in-order (par_windows is indexed parallel iter).
-    starts.par_windows(2)
-        .flat_map_iter(|w| parse_chunk(&input[w[0]..w[1]]))
-        .collect()
-}
-
-/// Scan a byte slice for "8=FIX" boundaries and parse each message inline,
-/// yielding `FixMessage` items without building an intermediate `Vec<&[u8]>`.
-fn parse_chunk(chunk: &[u8]) -> Vec<FixMessage> {
-    let capacity = (chunk.len() / 140).max(4);
-    let mut out = Vec::with_capacity(capacity);
-    let mut start = 0usize;
+/// Split a pipe-delimited `&str` on "8=FIX" boundaries.
+fn str_message_slices(input: &str) -> Vec<&str> {
+    let bytes = input.as_bytes();
+    let capacity = (bytes.len() / AVG_MSG_BYTES_STR).max(4);
+    let mut msgs = Vec::with_capacity(capacity);
+    let mut start = 0;
     let mut found = false;
 
-    for pos in memmem::find_iter(chunk, b"8=FIX") {
+    for pos in memmem::find_iter(bytes, b"8=FIX") {
         if found {
-            let s = trim_bytes(&chunk[start..pos]);
-            if !s.is_empty() { out.push(parse_single_simd(s)); }
+            let slice = input[start..pos].trim();
+            if !slice.is_empty() { msgs.push(slice); }
         }
         start = pos;
         found = true;
     }
     if found {
-        let s = trim_bytes(&chunk[start..]);
-        if !s.is_empty() { out.push(parse_single_simd(s)); }
+        let slice = input[start..].trim();
+        if !slice.is_empty() { msgs.push(slice); }
     }
-    out
+    msgs
 }
+
+// ── SIMD path ─────────────────────────────────────────────────────────────────
+
+/// Preferred hot path for memory-mapped file loading (zero copy from the OS page cache).
+/// Handles both SOH and pipe delimiters without normalizing or copying the input.
+///
+/// Strategy: one serial `memmem` boundary scan → parallel parse.
+/// memmem over the full input is fast (~2 GiB/s) and not the bottleneck; the per-message
+/// SIMD parse is. A single serial scan followed by even distribution across rayon workers
+/// (via `par_chunks`) is faster than parallel boundary detection, which causes each worker
+/// to scan its chunk twice — once to align and once inside `parse_chunk`.
+pub fn parse_all_simd_bytes(input: &[u8]) -> Vec<FixMessage> {
+    let mut offsets = message_start_offsets(input);
+
+    if offsets.is_empty() {
+        return if input.iter().all(|b| b.is_ascii_whitespace()) { vec![] }
+               else { vec![parse_single_simd(input)] };
+    }
+
+    // Append sentinel so every window [offsets[i], offsets[i+1]] is a complete slice.
+    offsets.push(input.len() as u32);
+    debug_assert!(*offsets.last().unwrap() == input.len() as u32);
+
+    if offsets.len() == 2 {
+        return vec![parse_single_simd(&input[offsets[0] as usize..])];
+    }
+
+    // par_windows(2) over u32 offsets: each window defines one message slice.
+    // 4-byte offsets vs 16-byte fat pointers = 4× smaller Vec, better L1 utilization.
+    offsets
+        .par_windows(2)
+        .map(|w| parse_single_simd(&input[w[0] as usize..w[1] as usize]))
+        .collect()
+}
+
 
 /// Parse a single FIX message from raw bytes.
 /// Dispatches to: AVX2 (x86_64) → NEON (aarch64) → scalar fallback.
 fn parse_single_simd(raw: &[u8]) -> FixMessage {
     let mut msg = FixMessage {
-        fields: Vec::with_capacity(24),
+        fields: Vec::with_capacity(AVG_FIELDS_PER_MSG),
+        // Copy raw bytes as the arena in one memcpy. apply_token then computes
+        // value offsets directly from (start + eq + 1), with no per-field
+        // extend_from_slice calls in the hot loop.
+        arena:  raw.to_vec(),
         ..Default::default()
     };
-    #[cfg(target_arch = "x86_64")]
-    if is_x86_feature_detected!("avx2") {
-        unsafe { simd_parse_avx2(raw, &mut msg) };
-        return msg;
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        unsafe { simd_parse_neon(raw, &mut msg) };
-        return msg;
-    }
-    #[allow(unreachable_code)]
-    simd_parse_scalar(raw, &mut msg);
+    fill_message(raw, &mut msg);
     msg
+}
+
+/// Arch-specific dispatch: fills `msg` from `raw` using the best available path.
+/// Keeping dispatch in one function (with no branching in the arch impls) follows
+/// "push ifs up" — each arch impl is a pure, branchless worker.
+#[cfg(target_arch = "x86_64")]
+fn fill_message(raw: &[u8], msg: &mut FixMessage) {
+    if is_x86_feature_detected!("avx2") {
+        unsafe { simd_parse_avx2(raw, msg) };
+    } else {
+        simd_parse_scalar(raw, msg);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn fill_message(raw: &[u8], msg: &mut FixMessage) {
+    unsafe { simd_parse_neon(raw, msg) };
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn fill_message(raw: &[u8], msg: &mut FixMessage) {
+    simd_parse_scalar(raw, msg);
 }
 
 // ── x86_64 AVX2 path ─────────────────────────────────────────────────────────
@@ -207,18 +221,18 @@ unsafe fn simd_parse_avx2(raw: &[u8], msg: &mut FixMessage) {
 
     let soh_vec  = _mm256_set1_epi8(0x01_i8);
     let pipe_vec = _mm256_set1_epi8(b'|' as i8);
-    let n      = raw.len();
-    let chunks = n / 32;
-    let mut start = 0usize;
+    let byte_count  = raw.len();
+    let chunk_count = byte_count / 32;
+    let mut start = 0;
 
-    for i in 0..chunks {
-        let chunk = _mm256_loadu_si256(raw.as_ptr().add(i * 32) as *const __m256i);
+    for chunk_index in 0..chunk_count {
+        let chunk = _mm256_loadu_si256(raw.as_ptr().add(chunk_index * 32) as *const __m256i);
         let any = _mm256_or_si256(
             _mm256_cmpeq_epi8(chunk, soh_vec),
             _mm256_cmpeq_epi8(chunk, pipe_vec),
         );
         let mut mask = _mm256_movemask_epi8(any) as u32;
-        let base = i * 32;
+        let base = chunk_index * 32;
         while mask != 0 {
             let end = base + mask.trailing_zeros() as usize;
             apply_token(raw, start, end, msg);
@@ -226,14 +240,15 @@ unsafe fn simd_parse_avx2(raw: &[u8], msg: &mut FixMessage) {
             mask &= mask - 1;
         }
     }
-    for i in (chunks * 32)..n {
-        if raw[i] == 0x01 || raw[i] == b'|' {
+    // Scalar tail: handle remaining bytes that didn't fill a full 32-byte chunk.
+    for i in (chunk_count * 32)..byte_count {
+        if is_delimiter(raw[i]) {
             apply_token(raw, start, i, msg);
             start = i + 1;
         }
     }
-    if start < n {
-        apply_token(raw, start, n, msg);
+    if start < byte_count {
+        apply_token(raw, start, byte_count, msg);
     }
 }
 
@@ -254,81 +269,92 @@ unsafe fn simd_parse_neon(raw: &[u8], msg: &mut FixMessage) {
 
     let soh_vec  = vdupq_n_u8(0x01);
     let pipe_vec = vdupq_n_u8(b'|');
-    // Per-lane powers-of-two: lane k gets weight 2^k.
-    // In little-endian u64: byte 0 = lane 0 = 0x01, …, byte 7 = lane 7 = 0x80.
-    let weights_lo = vcreate_u8(0x8040201008040201_u64); // [1,2,4,8,16,32,64,128]
-    let weights_hi = vcreate_u8(0x8040201008040201_u64); // same for lanes 8-15
+    // Per-lane powers-of-two used to collapse an 8-lane mask to a single byte.
+    // Lane k gets weight 2^k: in little-endian u64 byte 0 = 0x01, byte 7 = 0x80.
+    // The same weight pattern applies to both the low (lanes 0-7) and high (lanes 8-15)
+    // halves because vaddv_u8 operates on 8 lanes independently for each half.
+    const LANE_WEIGHTS: u64 = 0x8040201008040201;
+    let weights_lo = vcreate_u8(LANE_WEIGHTS);
+    let weights_hi = vcreate_u8(LANE_WEIGHTS);
 
-    let n      = raw.len();
-    let chunks = n / 16;
-    let mut start = 0usize;
+    let byte_count  = raw.len();
+    let chunk_count = byte_count / 16;
+    let mut start = 0;
 
-    for i in 0..chunks {
-        let chunk = vld1q_u8(raw.as_ptr().add(i * 16));
+    for chunk_index in 0..chunk_count {
+        let chunk = vld1q_u8(raw.as_ptr().add(chunk_index * 16));
         let any = vorrq_u8(
             vceqq_u8(chunk, soh_vec),
             vceqq_u8(chunk, pipe_vec),
         );
 
-        // Quick rejection: if no byte matches, skip.
-        if vmaxvq_u8(any) == 0 { continue; }
-
-        // Build a 16-bit bitmask (bit i = delimiter at byte i).
-        let lo_nibble = vget_low_u8(any);
-        let hi_nibble = vget_high_u8(any);
-        let lo_bits = vaddv_u8(vand_u8(lo_nibble, weights_lo)) as u16;
-        let hi_bits = (vaddv_u8(vand_u8(hi_nibble, weights_hi)) as u16) << 8;
+        // Build a 16-bit bitmask (bit i = 1 means byte i is a delimiter).
+        // No quick-rejection: FIX messages average 1 delimiter per ~10 bytes so nearly
+        // every 16-byte chunk has at least one — the vmaxvq check would almost always
+        // fall through and costs an extra instruction + branch per chunk.
+        let lo_half = vget_low_u8(any);
+        let hi_half = vget_high_u8(any);
+        let lo_bits = vaddv_u8(vand_u8(lo_half, weights_lo)) as u16;
+        let hi_bits = (vaddv_u8(vand_u8(hi_half, weights_hi)) as u16) << 8;
         let mut mask: u16 = lo_bits | hi_bits;
 
-        let base = i * 16;
+        let base = chunk_index * 16;
         while mask != 0 {
-            let bit = mask.trailing_zeros() as usize;
-            let end = base + bit;
+            let end = base + mask.trailing_zeros() as usize;
             apply_token(raw, start, end, msg);
             start = end + 1;
             mask &= mask - 1;
         }
     }
-    // Scalar tail (< 16 bytes remaining).
-    for i in (chunks * 16)..n {
-        if raw[i] == 0x01 || raw[i] == b'|' {
+    // Scalar tail: handle remaining bytes that didn't fill a full 16-byte chunk.
+    for i in (chunk_count * 16)..byte_count {
+        if is_delimiter(raw[i]) {
             apply_token(raw, start, i, msg);
             start = i + 1;
         }
     }
-    if start < n {
-        apply_token(raw, start, n, msg);
+    if start < byte_count {
+        apply_token(raw, start, byte_count, msg);
     }
 }
 
-/// Scalar fallback for non-x86_64 / non-aarch64 targets.
+/// Returns true if `byte` is a FIX field delimiter (SOH or pipe).
+#[inline(always)]
+fn is_delimiter(byte: u8) -> bool {
+    byte == 0x01 || byte == b'|'
+}
+
+/// Scalar fallback: used on unknown targets and on x86_64 without AVX2 at runtime.
+#[cfg(not(target_arch = "aarch64"))]
 fn simd_parse_scalar(raw: &[u8], msg: &mut FixMessage) {
-    let n = raw.len();
+    let byte_count = raw.len();
     let mut start = 0;
-    for (i, &b) in raw.iter().enumerate() {
-        if b == 0x01 || b == b'|' {
+    for (i, &byte) in raw.iter().enumerate() {
+        if is_delimiter(byte) {
             apply_token(raw, start, i, msg);
             start = i + 1;
         }
     }
-    if start < n {
-        apply_token(raw, start, n, msg);
+    if start < byte_count {
+        apply_token(raw, start, byte_count, msg);
     }
 }
 
 /// Extract one `tag=value` token and update `msg`.
 ///
 /// Hot-path design decisions:
-/// - **#4**: `tag_to_u16` converts the ASCII tag to u16 → integer jump table (no memcmp).
-/// - **#5**: no `trim_bytes` — FIX log files never have whitespace inside tokens.
-/// - **unchecked UTF-8**: FIX is pure ASCII; skipping validation removes 2 scans per token.
+/// - `tag_to_u16` converts the ASCII tag to u16 → integer jump table (no string comparison).
+/// - No `trim_bytes` inside tokens — FIX log files never have whitespace within a field.
+/// - Unchecked UTF-8: FIX is pure ASCII; skipping validation removes two scans per token.
 #[inline(always)]
 fn apply_token(raw: &[u8], start: usize, end: usize, msg: &mut FixMessage) {
+    debug_assert!(start <= raw.len());
+    debug_assert!(end   <= raw.len());
     if end <= start { return; }
     let token = &raw[start..end];
 
-    // FIX tags are 1–4 ASCII digits; = appears at index 1, 2, 3, or 4.
-    let eq = match (token.get(1), token.get(2), token.get(3), token.get(4)) {
+    // FIX tags are 1–4 ASCII digits; '=' appears at index 1, 2, 3, or 4.
+    let eq_index = match (token.get(1), token.get(2), token.get(3), token.get(4)) {
         (Some(&b'='), ..)          => 1,
         (_, Some(&b'='), ..)       => 2,
         (_, _, Some(&b'='), ..)    => 3,
@@ -336,19 +362,22 @@ fn apply_token(raw: &[u8], start: usize, end: usize, msg: &mut FixMessage) {
         _                          => return,
     };
 
-    let tag_b = &token[..eq];
-    let val_b = &token[eq + 1..];
+    debug_assert!(eq_index < token.len());
+    let tag_b = &token[..eq_index];
+    let val_b = &token[eq_index + 1..];
 
     // SAFETY: FIX protocol is 7-bit ASCII throughout.
-    let value   = unsafe { std::str::from_utf8_unchecked(val_b) };
+    let value = unsafe { std::str::from_utf8_unchecked(val_b) };
 
-    // #4: integer tag → jump table; also stored directly in FixField (no string alloc).
     let tag_num = tag_to_u16(tag_b);
 
-    msg.fields.push(FixField {
-        tag:   tag_num,
-        value: CompactString::from(value),
-    });
+    // The arena already holds a verbatim copy of `raw` (set in parse_single_simd).
+    // Value offset = absolute position within raw = token_start + eq_index + 1.
+    // No per-field extend_from_slice — all value bytes are already present.
+    let value_start = (start + eq_index + 1) as u32;
+    let value_len   = val_b.len() as u16;
+
+    msg.fields.push(FixField { tag: tag_num, value_len, value_start });
 
     match tag_num {
         52  => msg.time         = extract_time(value),
@@ -379,28 +408,21 @@ fn apply_token(raw: &[u8], start: usize, end: usize, msg: &mut FixMessage) {
 }
 
 /// Convert a 1–4 byte ASCII-digit FIX tag to `u16`.
-/// Slice-pattern match compiles to a branch tree with no loop.
+/// Slice-pattern match compiles to a branch tree with no loop or string allocation.
 #[inline(always)]
-fn tag_to_u16(b: &[u8]) -> u16 {
-    match b {
-        [a]          => (a - b'0') as u16,
-        [a, b]       => (a - b'0') as u16 * 10   + (b - b'0') as u16,
-        [a, b, c]    => (a - b'0') as u16 * 100  + (b - b'0') as u16 * 10  + (c - b'0') as u16,
-        [a, b, c, d] => (a - b'0') as u16 * 1000 + (b - b'0') as u16 * 100 + (c - b'0') as u16 * 10 + (d - b'0') as u16,
-        _            => 0,
+fn tag_to_u16(digits: &[u8]) -> u16 {
+    #[inline(always)]
+    fn d(byte: u8) -> u16 { (byte - b'0') as u16 }
+    match digits {
+        [a]             => d(*a),
+        [a, b]          => d(*a) * 10   + d(*b),
+        [a, b, c]       => d(*a) * 100  + d(*b) * 10  + d(*c),
+        [a, b, c, e]    => d(*a) * 1000 + d(*b) * 100 + d(*c) * 10 + d(*e),
+        _               => 0,
     }
 }
 
-/// Trim ASCII whitespace from both ends of a byte slice without allocation.
-/// Used only in the message_slices boundary functions and the scalar parse path.
-#[inline]
-fn trim_bytes(b: &[u8]) -> &[u8] {
-    let s = b.iter().position(|x| !x.is_ascii_whitespace()).unwrap_or(b.len());
-    let e = b.iter().rposition(|x| !x.is_ascii_whitespace()).map(|i| i + 1).unwrap_or(0);
-    if s < e { &b[s..e] } else { &[] }
-}
-
-// ── Scalar path ───────────────────────────────────────────────────────────────
+// ── Validation entry point ────────────────────────────────────────────────────
 
 /// Parse a single FIX message from raw bytes (pipe or SOH delimited).
 /// Used by the validator for single-message debugger mode.
@@ -408,56 +430,16 @@ pub fn parse_single_for_validation(raw: &[u8]) -> FixMessage {
     parse_single_simd(raw)
 }
 
-/// Parse a single FIX message string into a [`FixMessage`].
+/// Parse a single pipe-delimited FIX message string into a [`FixMessage`].
+/// Used only by `parse_all` (the normalized string path).
+///
+/// Delegates to `parse_single_simd` so that both the str path and the
+/// bytes path share the same NEON/AVX2 hot loop and the pre-copy arena trick.
+/// `parse_single_simd` already handles both SOH and pipe delimiters, and
+/// the input here is already pipe-normalised, so the semantics are identical.
+#[inline]
 fn parse_single(raw: &str) -> FixMessage {
-    let mut msg = FixMessage {
-        fields: Vec::with_capacity(24),
-        ..Default::default()
-    };
-
-    let bytes = raw.as_bytes();
-    let mut start = 0;
-
-    for end in memchr_iter(b'|', bytes).chain(std::iter::once(bytes.len())) {
-        let token = raw[start..end].trim();
-        start = end + 1;
-        if token.is_empty() { continue; }
-        let Some((tag, value)) = token.split_once('=') else { continue };
-        let tag_num: u16 = tag.bytes().fold(0u16, |a, b| a * 10 + (b - b'0') as u16);
-
-        msg.fields.push(FixField {
-            tag: tag_num,
-            value: CompactString::from(value),
-        });
-
-        match tag {
-            "52"  => msg.time         = extract_time(value),
-            "49"  => msg.sender       = CompactString::from(value),
-            "56"  => msg.target       = CompactString::from(value),
-            "35"  => {
-                msg.msg_type_raw   = CompactString::from(value);
-                msg.msg_type_label = msg_type_label(value);
-            }
-            "11"  => msg.cl_ord_id    = CompactString::from(value),
-            "117" => msg.quote_id     = CompactString::from(value),
-            "131" => msg.quote_req_id = CompactString::from(value),
-            "54"  => msg.side         = CompactString::from(side_label(value)),
-            "38"  => msg.order_qty    = CompactString::from(value),
-            "55"  => msg.symbol      = CompactString::from(value),
-            "58"  => msg.text        = CompactString::from(value),
-            "150" => {
-                msg.msg_type_label = match value {
-                    "F" | "2" => "ER FILL",
-                    "1"       => "ER PARTIAL",
-                    "4" | "C" => "ER CANCELED",
-                    "8"       => "Reject",
-                    _         => msg.msg_type_label,
-                };
-            }
-            _ => {}
-        }
-    }
-    msg
+    parse_single_simd(raw.as_bytes())
 }
 
 /// Format SendingTime (tag 52): YYYYMMDD-HH:MM:SS → YYYY-MM-DD HH:MM:SS
@@ -533,5 +515,53 @@ mod tests {
         assert_eq!(msgs[0].msg_type_raw, "8");
         assert_eq!(msgs[0].sender, "EXEC");
         assert_eq!(msgs[0].symbol, "AAPL");
+    }
+
+    // ── Negative / boundary tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_all_empty_string() {
+        assert!(parse_all("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_all_simd_bytes_empty() {
+        assert!(parse_all_simd_bytes(b"").is_empty());
+    }
+
+    #[test]
+    fn test_parse_all_whitespace_only() {
+        // A string of only whitespace should yield no messages.
+        assert!(parse_all("   \n  ").is_empty());
+    }
+
+    #[test]
+    fn test_token_without_equals_is_skipped() {
+        // "GARBAGE" contains no '=' — apply_token must return early without panic.
+        let input = b"8=FIX.4.4|GARBAGE|35=A|10=001|";
+        let msgs = parse_all_simd_bytes(input);
+        assert_eq!(msgs.len(), 1);
+        // The GARBAGE token is silently skipped; the valid fields are parsed.
+        assert_eq!(msgs[0].msg_type_raw, "A");
+    }
+
+    #[test]
+    fn test_truncated_message_no_panic() {
+        // A message that ends mid-field must not panic.
+        let input = b"8=FIX.4.4|9=61|35=";
+        let msgs = parse_all_simd_bytes(input);
+        assert_eq!(msgs.len(), 1);
+        // The truncated tag-35 token has an empty value — msg_type_raw is empty.
+        assert_eq!(msgs[0].msg_type_raw, "");
+    }
+
+    #[test]
+    fn test_delimiter_only_input() {
+        // Input with nothing but delimiters produces a message with no fields.
+        let input = b"||||";
+        let msgs = parse_all_simd_bytes(input);
+        // No "8=FIX" boundary → treated as a single degenerate message.
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].fields.is_empty());
     }
 }

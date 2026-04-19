@@ -224,7 +224,7 @@ fn version_introduced(tag: u16) -> Option<&'static str> {
 /// Extract the BeginString version from a parsed message's first field.
 fn begin_string(msg: &FixMessage) -> Option<&str> {
     msg.fields.first().and_then(|f| {
-        if f.tag == 8 { Some(f.value.as_str()) } else { None }
+        if f.tag == 8 { Some(f.value_in(&msg.arena)) } else { None }
     })
 }
 
@@ -264,14 +264,15 @@ fn check_required_body_tags(msg: &FixMessage, report: &mut ValidationReport) {
 
 fn check_enum_values(msg: &FixMessage, report: &mut ValidationReport) {
     for field in &msg.fields {
-        if !is_valid_enum(field.tag, field.value.as_str()) {
+        let val = field.value_in(&msg.arena);
+        if !is_valid_enum(field.tag, val) {
             report.issues.push(Issue {
                 severity: Severity::Error,
                 tag: Some(field.tag),
                 code: "INVALID_ENUM",
                 message: format!(
                     "Tag {} ({}): invalid value {:?}",
-                    field.tag, tag_name(field.tag), field.value.as_str()
+                    field.tag, tag_name(field.tag), val
                 ),
                 fix_hint: Some(enum_hint(field.tag).to_string()),
             });
@@ -326,7 +327,7 @@ fn check_duplicate_tags(msg: &FixMessage, report: &mut ValidationReport) {
 
 fn check_conditional_tags(msg: &FixMessage, report: &mut ValidationReport) {
     let get = |tag: u16| -> Option<&str> {
-        msg.fields.iter().find(|f| f.tag == tag).map(|f| f.value.as_str())
+        msg.fields.iter().find(|f| f.tag == tag).map(|f| f.value_in(&msg.arena))
     };
 
     // Price required when OrdType = Limit (2)
@@ -418,11 +419,11 @@ fn check_consistency(msg: &FixMessage, report: &mut ValidationReport) {
 
     let get_f64 = |tag: u16| -> Option<f64> {
         msg.fields.iter().find(|f| f.tag == tag)
-            .and_then(|f| f.value.as_str().parse::<f64>().ok())
+            .and_then(|f| f.value_in(&msg.arena).parse::<f64>().ok())
     };
 
     // LeavesQty + CumQty = OrderQty when ExecType = F (Trade)
-    let exec_type = msg.fields.iter().find(|f| f.tag == 150).map(|f| f.value.as_str());
+    let exec_type = msg.fields.iter().find(|f| f.tag == 150).map(|f| f.value_in(&msg.arena));
     if exec_type == Some("F") {
         if let (Some(leaves), Some(cum), Some(ord)) =
             (get_f64(151), get_f64(14), get_f64(38))
@@ -444,7 +445,7 @@ fn check_consistency(msg: &FixMessage, report: &mut ValidationReport) {
     }
 
     // OrdStatus = Filled (2) → LeavesQty must be 0
-    let ord_status = msg.fields.iter().find(|f| f.tag == 39).map(|f| f.value.as_str());
+    let ord_status = msg.fields.iter().find(|f| f.tag == 39).map(|f| f.value_in(&msg.arena));
     if ord_status == Some("2") {
         if let Some(leaves) = get_f64(151) {
             if leaves != 0.0 {
@@ -464,7 +465,8 @@ fn check_consistency(msg: &FixMessage, report: &mut ValidationReport) {
 
     // MsgSeqNum must be numeric and > 0
     if let Some(seq) = msg.fields.iter().find(|f| f.tag == 34) {
-        match seq.value.as_str().parse::<u64>() {
+        let seq_str = seq.value_in(&msg.arena);
+        match seq_str.parse::<u64>() {
             Ok(0) => report.issues.push(Issue {
                 severity: Severity::Error,
                 tag: Some(34),
@@ -476,7 +478,7 @@ fn check_consistency(msg: &FixMessage, report: &mut ValidationReport) {
                 severity: Severity::Error,
                 tag: Some(34),
                 code: "INVALID_SEQNUM",
-                message: format!("MsgSeqNum(34) = {:?} is not a valid integer", seq.value.as_str()),
+                message: format!("MsgSeqNum(34) = {:?} is not a valid integer", seq_str),
                 fix_hint: None,
             }),
             _ => {}
@@ -552,7 +554,7 @@ fn check_checksum(raw: &[u8], msg: &FixMessage, report: &mut ValidationReport) {
 
     let found_str = msg.fields.iter()
         .find(|f| f.tag == 10)
-        .map(|f| f.value.as_str().to_string())
+        .map(|f| f.value_in(&msg.arena).to_string())
         .unwrap_or_default();
 
     let ok = found_str == expected_str;
@@ -597,7 +599,7 @@ fn check_body_length(raw: &[u8], msg: &FixMessage, report: &mut ValidationReport
 
     let found = msg.fields.iter()
         .find(|f| f.tag == 9)
-        .and_then(|f| f.value.as_str().parse::<u32>().ok())
+        .and_then(|f| f.value_in(&msg.arena).parse::<u32>().ok())
         .unwrap_or(0);
 
     let ok = found == counted;
@@ -714,7 +716,7 @@ fn parse_for_validation(raw: &[u8]) -> FixMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{FixField, FixMessage};
+    use crate::model::FixMessage;
     use compact_str::CompactString;
 
     fn make_nos() -> FixMessage {
@@ -728,7 +730,7 @@ mod tests {
             (11, "ORD001"), (21, "1"), (38, "1000000"),
             (40, "2"), (44, "1.0850"), (54, "1"), (55, "EURUSD"), (60, "20240101-12:00:00"),
         ] {
-            msg.fields.push(FixField { tag: t, value: CompactString::from(v) });
+            msg.push_field(t, v);
         }
         msg
     }
@@ -750,7 +752,7 @@ mod tests {
     #[test]
     fn invalid_side_enum() {
         let mut msg = make_nos();
-        msg.fields.iter_mut().find(|f| f.tag == 54).unwrap().value = CompactString::from("X");
+        msg.set_field_value(54, "X");
         let report = validate_fields(&msg);
         assert!(report.issues.iter().any(|i| i.tag == Some(54) && i.code == "INVALID_ENUM"));
     }
@@ -766,7 +768,7 @@ mod tests {
     #[test]
     fn duplicate_tag_warning() {
         let mut msg = make_nos();
-        msg.fields.push(FixField { tag: 55, value: CompactString::from("GBPUSD") });
+        msg.push_field(55, "GBPUSD");
         let report = validate_fields(&msg);
         assert!(report.issues.iter().any(|i| i.tag == Some(55) && i.code == "DUPLICATE_TAG"));
     }
@@ -774,7 +776,7 @@ mod tests {
     #[test]
     fn custom_tag_warning() {
         let mut msg = make_nos();
-        msg.fields.push(FixField { tag: 9001, value: CompactString::from("INTERNAL") });
+        msg.push_field(9001, "INTERNAL");
         let report = validate_fields(&msg);
         assert!(report.issues.iter().any(|i| i.tag == Some(9001) && i.code == "CUSTOM_TAG"));
     }

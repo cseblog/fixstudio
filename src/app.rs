@@ -11,7 +11,6 @@ use crate::components::overview::overview_panel;
 use crate::components::premium_panel::premium_panel;
 use crate::components::timeline::timeline_panel;
 use crate::components::validator_view::validator_panel;
-use crate::license::load_license;
 use crate::loader::{pick_and_load_file, pick_and_load_folder};
 use crate::model::FixMessage;
 use crate::parser::parse_all;
@@ -99,9 +98,6 @@ pub fn app() -> Element {
     let mut update_status: Signal<UpdateStatus>   = use_signal(|| UpdateStatus::Idle);
     let mut view_mode                             = use_signal(|| ViewMode::Timeline);
 
-    // ── License / Pro state ──
-    let is_pro = use_signal(|| load_license().is_some());
-
     // ── Panel layout state ──
     let right_panel_width: Signal<f64> = use_signal(|| 200.0_f64);
     let left_panel_collapsed           = use_signal(|| false);
@@ -184,7 +180,7 @@ pub fn app() -> Element {
             loading.set(true);
             if let Some(r) = pick_and_load_file().await {
                 let count     = r.messages.len();
-                let ms        = r.parse_us;
+                let ms        = r.parse_us as u64;
                 let delimiter = if r.is_soh { "soh" } else { "pipe" };
                 parse_stats.set(Some((count, ms)));
                 offload_replace(&mut messages, r.messages);
@@ -210,7 +206,7 @@ pub fn app() -> Element {
             loading.set(true);
             if let Some(r) = pick_and_load_folder().await {
                 let count = r.messages.len();
-                let ms    = r.parse_us;
+                let ms    = r.parse_us as u64;
                 parse_stats.set(Some((count, ms)));
                 offload_replace(&mut messages, r.messages);
                 selected_idx.set(None);
@@ -292,17 +288,11 @@ pub fn app() -> Element {
         && file_name.read().is_none()
         && !*loading.read();
     let has_messages    = !messages.read().is_empty();
-    let pro             = *is_pro.read();
     let in_lifecycle    = *view_mode.read() == ViewMode::Lifecycle;
     let in_overview     = *view_mode.read() == ViewMode::Overview;
     let in_validator    = *view_mode.read() == ViewMode::Validator;
     let left_collapsed  = *left_panel_collapsed.read();
     let right_collapsed = *right_panel_collapsed.read();
-
-    // Fall back to Timeline when license deactivated while on a Pro tab.
-    if !pro && (in_lifecycle || in_overview || in_validator) {
-        view_mode.set(ViewMode::Timeline);
-    }
 
     rsx! {
         style { {CSS} }
@@ -433,34 +423,32 @@ pub fn app() -> Element {
                                     onclick: move |_| view_mode.set(ViewMode::Timeline),
                                     "Timeline"
                                 }
-                                if pro {
-                                    button {
-                                        class: if in_lifecycle {
-                                            "panel-tab panel-tab-active"
-                                        } else {
-                                            "panel-tab"
-                                        },
-                                        onclick: move |_| view_mode.set(ViewMode::Lifecycle),
-                                        "Latency Analysis"
-                                    }
-                                    button {
-                                        class: if in_overview {
-                                            "panel-tab panel-tab-active"
-                                        } else {
-                                            "panel-tab"
-                                        },
-                                        onclick: move |_| view_mode.set(ViewMode::Overview),
-                                        "Session Analysis"
-                                    }
-                                    button {
-                                        class: if in_validator {
-                                            "panel-tab panel-tab-active"
-                                        } else {
-                                            "panel-tab"
-                                        },
-                                        onclick: move |_| view_mode.set(ViewMode::Validator),
-                                        "FIX Validator"
-                                    }
+                                button {
+                                    class: if in_lifecycle {
+                                        "panel-tab panel-tab-active"
+                                    } else {
+                                        "panel-tab"
+                                    },
+                                    onclick: move |_| view_mode.set(ViewMode::Lifecycle),
+                                    "Latency Analysis"
+                                }
+                                button {
+                                    class: if in_overview {
+                                        "panel-tab panel-tab-active"
+                                    } else {
+                                        "panel-tab"
+                                    },
+                                    onclick: move |_| view_mode.set(ViewMode::Overview),
+                                    "Session Analysis"
+                                }
+                                button {
+                                    class: if in_validator {
+                                        "panel-tab panel-tab-active"
+                                    } else {
+                                        "panel-tab"
+                                    },
+                                    onclick: move |_| view_mode.set(ViewMode::Validator),
+                                    "FIX Validator"
                                 }
                             }
                         }
@@ -468,12 +456,11 @@ pub fn app() -> Element {
                         if in_validator {
                             validator_panel { messages: messages }
                         } else if in_overview {
-                            overview_panel { messages: messages, pro: pro }
+                            overview_panel { messages: messages }
                         } else if in_lifecycle {
                             lifecycle_panel {
                                 messages: messages,
                                 selected_idx: selected_idx,
-                                pro: pro,
                             }
                         } else {
                             div { class: "panels",
@@ -482,11 +469,11 @@ pub fn app() -> Element {
                                     selected_idx: selected_idx,
                                     skip_heartbeats: skip_heartbeats,
                                     parse_stats: parse_stats,
-                                    pro: pro,
                                 }
                                 detail_panel {
                                     detail_msg: detail_msg,
                                     skip_common: skip_common,
+                                    selected_idx: selected_idx,
                                 }
                             }
                         }
@@ -533,7 +520,6 @@ pub fn app() -> Element {
 
                 // Right: premium panel component
                 premium_panel {
-                    is_pro: is_pro,
                     has_messages: has_messages,
                     view_mode: view_mode,
                     right_panel_collapsed: right_panel_collapsed,

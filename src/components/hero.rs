@@ -20,7 +20,7 @@ pub fn Hero() -> Element {
                 }
                 setTimeout(function() {
                     animCounter('hero-msg-count',  1000000, 1600);
-                    animCounter('hero-parse-ms',   150,     1200);
+                    animCounter('hero-parse-ms',   100,     1200);
                     animCounter('hero-throughput', 631,     1000);
                 }, 150);
             })();
@@ -60,7 +60,7 @@ pub fn Hero() -> Element {
             div { class: "hero-demo",
                 div { class: "hero-demo-label",
                     span { "Simulating 1,000,000 FIX message parse…" }
-                    span { class: "hero-demo-time", "150 ms" }
+                    span { class: "hero-demo-time", "100 ms" }
                 }
                 div { class: "hero-bar-track",
                     div { class: "hero-bar-fill" }

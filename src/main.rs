@@ -1,6 +1,5 @@
 mod app;
 mod components;
-mod license;
 mod loader;
 mod dictionary;
 mod export;

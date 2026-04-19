@@ -12,9 +12,9 @@
   --text:       #dddde3;
   --text-mid:   #888890;
   --text-dim:   #444448;
-  --amber:      #b8922a;
-  --amber-hi:   #c9a030;
-  --amber-dim:  rgba(184,146,42,0.12);
+  --green:      #9ec93d;
+  --green-hi:   #55c94a;
+  --green-dim:  rgba(158,201,61,0.12);
   --green:      #3d8f5a;
   --red:        #963232;
   --radius:     6px;
@@ -32,7 +32,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-a { color: var(--amber); text-decoration: none; }
+a { color: var(--green); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* ── Layout helpers ── */
@@ -57,7 +57,7 @@ a:hover { text-decoration: underline; }
 .btn-sm { padding: 8px 18px; font-size: 13px; }
 .btn-lg { padding: 16px 36px; font-size: 17px; }
 .btn-primary {
-  background: var(--amber);
+  background: var(--green);
   color: #fff;
   font-weight: 600;
 }
@@ -70,10 +70,10 @@ a:hover { text-decoration: underline; }
 .btn-ghost:hover { border-color: var(--border-hi); color: var(--text); text-decoration: none; }
 .btn-outline {
   background: transparent;
-  color: var(--amber);
-  border: 1px solid rgba(184,146,42,0.4);
+  color: var(--green);
+  border: 1px solid rgba(158,201,61,0.4);
 }
-.btn-outline:hover { background: var(--amber-dim); text-decoration: none; }
+.btn-outline:hover { background: var(--green-dim); text-decoration: none; }
 
 /* ── Nav ── */
 .nav {
@@ -100,7 +100,7 @@ a:hover { text-decoration: underline; }
   font-weight: 700;
   color: var(--text);
 }
-.logo:hover { text-decoration: none; color: var(--amber); }
+.logo:hover { text-decoration: none; color: var(--green); }
 .logo-icon { width: 24px; height: 24px; vertical-align: middle; margin-right: 6px; border-radius: 4px; }
 .nav-links { display: flex; align-items: center; gap: 24px; }
 .nav-links a { color: var(--text); font-size: 14px; font-weight: 500; }
@@ -134,9 +134,9 @@ a:hover { text-decoration: underline; }
   border-radius: 4px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--amber);
-  background: var(--amber-dim);
-  border: 1px solid rgba(184,146,42,0.25);
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid rgba(158,201,61,0.25);
   margin-bottom: 28px;
 }
 .hero-badge strong { color: var(--green); font-style: normal; }
@@ -148,7 +148,7 @@ a:hover { text-decoration: underline; }
   margin-bottom: 20px;
 }
 .accent-text {
-  color: var(--amber);
+  color: var(--green);
 }
 .hero-sub {
   font-size: 18px;
@@ -209,7 +209,7 @@ a:hover { text-decoration: underline; }
 }
 .dot { width: 12px; height: 12px; border-radius: 50%; }
 .dot-red    { background: #963232; }
-.dot-yellow { background: #9e7a28; }
+.dot-yellow { background: #b49898; }
 .dot-green  { background: #3d8f5a; }
 .window-title { margin-left: 12px; font-size: 13px; color: var(--text-dim); font-weight: 500; }
 .window-content { padding: 0; overflow: hidden; }
@@ -239,7 +239,7 @@ a:hover { text-decoration: underline; }
   transition: border-color 0.15s;
   color: var(--text);
 }
-.download-card:hover { border-color: var(--amber); text-decoration: none; }
+.download-card:hover { border-color: var(--green); text-decoration: none; }
 .download-icon { font-size: 44px; margin-bottom: 16px; }
 .download-card h3 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
 .download-card p { font-size: 14px; color: var(--text-mid); margin-bottom: 20px; line-height: 1.6; }
@@ -263,7 +263,7 @@ a:hover { text-decoration: underline; }
 }
 .tech-item strong {
   font-size: 18px;
-  color: var(--amber);
+  color: var(--green);
   display: block;
   margin-bottom: 6px;
 }
@@ -278,7 +278,7 @@ a:hover { text-decoration: underline; }
 .footer p { font-size: 14px; color: var(--text-mid); }
 .footer p + p { margin-top: 6px; }
 .footer-muted { color: var(--text-dim); font-size: 13px; }
-.footer a { color: var(--amber); }
+.footer a { color: var(--green); }
 
 /* ── Performance stat strip ─────────────────────────────────────────────── */
 .perf-strip {
@@ -299,7 +299,7 @@ a:hover { text-decoration: underline; }
 .perf-card:hover { border-color: var(--border-hi); }
 .perf-card-center {
   padding: 26px 40px;
-  border-color: rgba(184,146,42,0.35);
+  border-color: rgba(158,201,61,0.35);
 }
 .perf-val {
   font-size: 36px;
@@ -310,7 +310,7 @@ a:hover { text-decoration: underline; }
   margin-bottom: 10px;
   color: var(--text);
 }
-.perf-card-center .perf-val { font-size: 44px; color: var(--amber); }
+.perf-card-center .perf-val { font-size: 44px; color: var(--green); }
 .perf-card-green  .perf-val { color: var(--text); }
 .perf-card-mid .perf-val { color: var(--text); }
 .perf-card-cyan   .perf-val { color: var(--text); }
@@ -328,7 +328,7 @@ a:hover { text-decoration: underline; }
   color: var(--text-mid);
   margin-bottom: 8px;
 }
-.perf-bar-tag { color: var(--amber); font-weight: 700; }
+.perf-bar-tag { color: var(--green); font-weight: 700; }
 .perf-bar-track {
   height: 5px;
   border-radius: 3px;
@@ -339,7 +339,7 @@ a:hover { text-decoration: underline; }
 .perf-bar-fill {
   height: 100%;
   border-radius: 3px;
-  background: var(--amber);
+  background: var(--green);
   transform: scaleX(0);
   transform-origin: left;
   animation: perf-bar-grow 1.65s 0.85s cubic-bezier(0.22, 1, 0.36, 1) forwards;
@@ -438,7 +438,7 @@ a:hover { text-decoration: underline; }
   position: relative;
 }
 .pricing-card-pro {
-  border-color: #b8922a;
+  border-color: #9ec93d;
   background: #17150d;
 }
 .pricing-tier-badge {
@@ -446,7 +446,7 @@ a:hover { text-decoration: underline; }
   top: -12px;
   left: 50%;
   transform: translateX(-50%);
-  background: #b8922a;
+  background: #9ec93d;
   color: #fff;
   font-size: 11px;
   font-weight: 700;
@@ -460,7 +460,7 @@ a:hover { text-decoration: underline; }
   font-weight: 700;
   color: #e8e8ec;
 }
-.pricing-tier-label-pro { color: #b8922a; }
+.pricing-tier-label-pro { color: #9ec93d; }
 .pricing-price {
   display: flex;
   align-items: baseline;
@@ -501,9 +501,9 @@ a:hover { text-decoration: underline; }
 .coming-chip {
   font-size: 10px;
   font-weight: 600;
-  background: rgba(184,146,42,0.15);
-  color: #b8922a;
-  border: 1px solid rgba(184,146,42,0.3);
+  background: rgba(158,201,61,0.15);
+  color: #9ec93d;
+  border: 1px solid rgba(158,201,61,0.3);
   padding: 1px 7px;
   border-radius: 10px;
   letter-spacing: 0.3px;
