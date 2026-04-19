@@ -1,6 +1,6 @@
 # How We Parse 1 Million FIX Messages in Under 100ms
 
-*A story of SIMD, wrong assumptions, a type change that changed everything, and a video about the Zig compiler.*
+*A story of SIMD, wrong assumptions, a type change that changed everything, a video about the Zig compiler, and what happened when we looked at the small-input case.*
 
 ---
 
@@ -520,7 +520,7 @@ The single-message `parse_all_pipe` benchmark now shows 279ns — nearly matchin
 
 ---
 
-## Phase 10 — The Memory Bandwidth Ceiling
+## Phase 10 — The Memory Bandwidth Ceiling (analysis)
 
 After Phase 9 we took stock. The 1M benchmark was holding steady at **~87ms** (within noise of the 85ms we'd measured earlier — Criterion noise on 10 samples with a complex parallel workload is ±3–5%). The 100k parse_all_pipe came down to 10.4ms. Progress.
 
@@ -578,6 +578,91 @@ Perfect parallelism on a memory-allocation-heavy workload over 10 cores is never
 
 ---
 
+## Phase 11 — The Small-Input Tax
+
+After Phase 10's analysis, we looked at the paste path from a different angle. The `message_start_offsets` function introduced in Phase 8 always used the parallel rayon path — even for tiny inputs. For the 1M benchmark that was the right call, but what about someone pasting 50 messages into the UI?
+
+A 50-message snippet is maybe 8 KB. `PARALLEL_SCAN_MIN_BYTES` wasn't a concept yet — every call to `parse_all_simd_bytes`, no matter how small the input, paid the full rayon overhead: wake sleeping workers from their thread pool, distribute an 8 KB slice (1 chunk per worker on 10 cores means 9 workers get essentially nothing), collect results. The rayon bookkeeping alone is tens of microseconds.
+
+### Fix: Adaptive Serial/Parallel Threshold
+
+```rust
+/// Threshold above which the boundary scan is parallelised across rayon workers.
+/// Below this, the serial memmem scan is faster than spawning rayon tasks.
+const PARALLEL_SCAN_MIN_BYTES: usize = 2 * 1024 * 1024; // 2 MB
+
+fn message_start_offsets(input: &[u8]) -> Vec<u32> {
+    let thread_count = rayon::current_num_threads().max(1);
+
+    if input.len() < PARALLEL_SCAN_MIN_BYTES || thread_count == 1 {
+        // Serial path — no rayon overhead for small inputs.
+        let capacity = (input.len() / AVG_MSG_BYTES).max(4);
+        let mut offsets = Vec::with_capacity(capacity);
+        for pos in memmem::find_iter(input, b"8=FIX") {
+            offsets.push(pos as u32);
+        }
+        return offsets;
+    }
+
+    // Parallel path (as before) ...
+}
+```
+
+The threshold is 2 MB. The serial memmem scan runs at ~10 GB/s — scanning 2 MB takes ~200 µs, well below the rayon spawn overhead. Above 2 MB there are enough messages to justify distributing across cores. Below 2 MB, the serial path wins unconditionally.
+
+The 1M benchmark file is 195 MB — not affected. But any call from a small file or paste path now skips rayon entirely.
+
+**Lesson #16: Parallel primitives have a fixed setup cost.** For rayon, that cost is on the order of tens of microseconds for waking workers and distributing tasks. Any input that can be processed serially in less time than that cost should stay serial. Use a threshold — measure where the crossover is, pick a conservative value below it, and put it in a named constant so the intent is clear.
+
+---
+
+## Phase 12 — Eliminating the Magic Number and Hardening the NEON Path
+
+The last `parser.rs` change was small but worth documenting: two inline copies of `0x8040201008040201` in `simd_parse_neon` — one for `weights_lo`, one for `weights_hi`.
+
+```rust
+// Before — duplicated inline.
+let weights_lo = vcreate_u8(0x8040201008040201_u64); // lanes 0-7:  [1,2,4,8,16,32,64,128]
+let weights_hi = vcreate_u8(0x8040201008040201_u64); // lanes 8-15: same weights
+```
+
+These must always be identical. The NEON movemask emulation depends on both halves using the same powers-of-two weights — if they ever diverge (copy-paste drift, a hasty fix), the bitmask for the high 8 lanes becomes garbage and the parser silently produces wrong field offsets.
+
+```rust
+// After — one definition, impossible to drift.
+const LANE_WEIGHTS: u64 = 0x8040201008040201;
+let weights_lo = vcreate_u8(LANE_WEIGHTS);
+let weights_hi = vcreate_u8(LANE_WEIGHTS);
+```
+
+We also added a suite of negative and boundary tests that were missing:
+
+```rust
+#[test]
+fn test_token_without_equals_is_skipped() {
+    // "GARBAGE" contains no '=' — apply_token must return early without panic.
+    let input = b"8=FIX.4.4|GARBAGE|35=A|10=001|";
+    let msgs = parse_all_simd_bytes(input);
+    assert_eq!(msgs[0].msg_type_raw, "A");  // valid fields still parsed
+}
+
+#[test]
+fn test_truncated_message_no_panic() {
+    // A message that ends mid-field must not panic.
+    let input = b"8=FIX.4.4|9=61|35=";
+    let msgs = parse_all_simd_bytes(input);
+    assert_eq!(msgs[0].msg_type_raw, "");  // empty value, no crash
+}
+```
+
+These tests document the parser's error-tolerance contract: malformed tokens are skipped silently, truncated messages produce partial results without panicking. Before this, these invariants were assumed but untested — any future refactor of `apply_token` could break them invisibly.
+
+**Lesson #17: Two copies of a magic constant are one defect waiting to happen.** Name it. The original duplication went unnoticed because the numbers looked identical in hex. A named constant makes the identity explicit and enforced by the compiler.
+
+**Lesson #18: Negative tests document contracts, not just correctness.** The real-world FIX corpus contains truncated messages (session drops), corrupt frames (network errors), and ambiguous tokens (vendor extensions). Tests that assert "this doesn't crash" are as valuable as tests that assert "this returns X".
+
+---
+
 ## Final Results
 
 All optimizations stacked, on a 195 MB SOH-delimited file of 1M FIX 4.4 messages:
@@ -604,6 +689,8 @@ The optimizations in sequence:
 | 8 | **Arena pre-copy (one memcpy, zero per-field writes)** | **−16ms** |
 | 9 | **Parallel memmem boundary scan** | **−16ms** |
 | 10 | **Unified str path via `parse_single_simd`** | −3.2ms on 100k str path |
+| 11 | **Adaptive serial/parallel threshold (`PARALLEL_SCAN_MIN_BYTES`)** | negligible on 1M; eliminates rayon overhead for small inputs |
+| 12 | **`LANE_WEIGHTS` constant; negative boundary tests** | correctness + maintainability |
 
 ---
 
@@ -653,6 +740,15 @@ Benchmark numbers and first-run app numbers are different problems. Thread pools
 
 **15. The SSD floor is real too.**
 195 MB at ~5 GB/s NVMe = ~39ms of unavoidable I/O on a cold read. No software optimization can parse bytes that haven't arrived. Cold-load time will always be warm-load time + I/O time.
+
+**16. Parallel primitives have a fixed setup cost.**
+Rayon workers need to wake, be assigned work, and synchronize results — a cost on the order of tens of microseconds regardless of input size. Any workload that can complete serially faster than that overhead should stay serial. Measure the crossover point, pick a threshold just below it, and name it.
+
+**17. Two copies of a magic constant are one defect waiting to happen.**
+The NEON movemask emulation uses `0x8040201008040201` for both halves of the 128-bit register. Both must always be identical — they encode the same mathematical property. A named constant makes that identity enforced by the compiler rather than assumed by the reader.
+
+**18. Negative tests document contracts, not just correctness.**
+Tests that assert "this doesn't crash" are as valuable as tests that assert "this returns X". The parser's tolerance for truncated messages and malformed tokens was implicit; making it explicit in tests means future refactors can't silently break it.
 
 ---
 
