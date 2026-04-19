@@ -12,7 +12,7 @@ fn tag_val<'a>(msg: &'a FixMessage, tag: u16) -> &'a str {
     msg.fields
         .iter()
         .find(|f| f.tag == tag)
-        .map(|f| f.value.as_str())
+        .map(|f| f.value_in(&msg.arena))
         .unwrap_or("")
 }
 

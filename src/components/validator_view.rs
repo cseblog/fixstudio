@@ -86,7 +86,7 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
         let msg = parse_single_for_validation(&bytes);
         let fields: Vec<(u16, String)> = msg.fields
             .iter()
-            .map(|f| (f.tag, f.value.to_string()))
+            .map(|f| (f.tag, f.value_in(&msg.arena).to_string()))
             .collect();
         parsed_fields.set(fields);
         report.set(Some(r));
@@ -98,16 +98,16 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
         if let Some(msg) = msgs.get(idx) {
             let raw: String = msg.fields
                 .iter()
-                .map(|f| format!("{}={}|", f.tag, f.value))
+                .map(|f| format!("{}={}|", f.tag, f.value_in(&msg.arena)))
                 .collect();
             drop(msgs);
             let bytes: Vec<u8> = raw.bytes().collect();
             raw_input.set(raw);
             let r = validate_raw(&bytes);
-            let fields: Vec<(u16, String)> = parse_single_for_validation(&bytes)
-                .fields
+            let reparsed = parse_single_for_validation(&bytes);
+            let fields: Vec<(u16, String)> = reparsed.fields
                 .iter()
-                .map(|f| (f.tag, f.value.to_string()))
+                .map(|f| (f.tag, f.value_in(&reparsed.arena).to_string()))
                 .collect();
             parsed_fields.set(fields);
             report.set(Some(r));

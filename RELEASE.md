@@ -62,6 +62,15 @@ Then distribute the stapled DMG — users can install without the "damaged" erro
 
 
 
+Todo: 
+- Rewrite the blog
+- Re-test it all
+- Break parser and benchmark into aifixparser repo
+- Share blog and aifixparser 
+- Make the parser as a lib
+
+
+
 
 
 

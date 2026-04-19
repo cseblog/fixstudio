@@ -36,8 +36,7 @@
     "description": "Free desktop FIX protocol parser and log analyzer. Parse FIX 4.2, FIX 4.4 and FIX 5.0 messages instantly. 100% offline.",
     "screenshot": "https://aifixparser.com/screenshot.png",
     "offers": [
-      { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD" },
-      { "@type": "Offer", "name": "Pro", "price": "9.9", "priceCurrency": "USD", "billingIncrement": "P1M" }
+      { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD" }
     ],
     "publisher": {
       "@type": "Organization",
@@ -158,7 +157,6 @@
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="#demo">Demo</a>
-        <a href="#pricing">Pricing</a>
         <a href="#faq">FAQ</a>
         <a href="#download" class="btn btn-sm btn-primary">Download</a>
       </div>
@@ -168,7 +166,7 @@
   <!-- ── Hero ── -->
   <section class="hero" id="download">
     <div class="hero-inner">
-      <span class="hero-badge">Free &middot; 100% Offline &middot; macOS &amp; Windows &middot; <strong>⚡ Parse 1M messages in 150ms</strong></span>
+      <span class="hero-badge">Free &middot; 100% Offline &middot; macOS &amp; Windows &middot; <strong>⚡ Parse 1M messages in 100ms</strong></span>
       <h1>FIX Protocol Parser<br/><span class="accent-text">for developers &amp; traders.</span></h1>
       <p class="hero-sub">
         Parse, inspect and debug FIX 4.2, FIX 4.4 and FIX 5.0 messages instantly on your desktop.
@@ -250,47 +248,22 @@
     </div>
   </section>
 
-  <!-- ── Pricing ── -->
-  <section id="pricing" class="features pricing-section">
-    <div class="section-inner">
-      <h2>Simple, transparent pricing</h2>
-      <p class="section-sub">Start free. Upgrade when you need advanced diagnostics.</p>
-      <div class="pricing-grid">
-
-        <!-- Free tier -->
-        <div class="pricing-card">
-          <div class="pricing-tier-label">Free</div>
-          <div class="pricing-price"><span class="pricing-amount">$0</span><span class="pricing-period">/ forever</span></div>
-          <p class="pricing-desc">Everything you need to parse and debug FIX logs — no sign-up, no limits.</p>
-          <ul class="pricing-features">
-            <li>✓ Parse FIX 4.2, 4.4 &amp; 5.0</li>
-            <li>✓ Message timeline &amp; tag inspector</li>
-            <li>✓ CSV export</li>
-            <li>✓ 100% offline — data never leaves your machine</li>
-          </ul>
-          <a href="#download" class="btn btn-ghost pricing-btn">Download Free</a>
-        </div>
-
-        <!-- Pro tier -->
-        <div class="pricing-card pricing-card-pro">
-          <div class="pricing-tier-badge">Most popular</div>
-          <div class="pricing-tier-label pricing-tier-label-pro">Pro</div>
-          <div class="pricing-price"><span class="pricing-amount">$9.9</span><span class="pricing-period">/ month</span></div>
-          <p class="pricing-desc">Advanced session diagnostics and AI-powered insights for production FIX environments.</p>
-          <ul class="pricing-features">
-            <li>✓ Everything in Free</li>
-            <li>✓ Trade lifecycle reconstruction</li>
-            <li>✓ FIX message validator</li>
-            <li>✓ Session Health — 7 detection rules</li>
-            <li>✓ Fill quality scorecard</li>
-            <li>✓ Session summary &amp; analytics</li>
-            <li>✓ Order flow &amp; pattern detection <span class="coming-chip">Soon</span></li>
-            <li>✓ AI FIX Builder <span class="coming-chip">Soon</span></li>
-          </ul>
-          <a href="https://whop.com/checkout/plan_HggsqwuvlHbIu" class="btn btn-primary pricing-btn" target="_blank" rel="noopener">Get Pro</a>
-        </div>
-
-      </div>
+  <!-- ── Free callout ── -->
+  <section class="features pricing-section">
+    <div class="section-inner" style="text-align:center;">
+      <h2>100% free — no subscription, no limits</h2>
+      <p class="section-sub">All features are included. No sign-up, no license key, no account required.</p>
+      <ul class="pricing-features" style="display:inline-block;text-align:left;margin:1.5rem auto;">
+        <li>✓ Parse FIX 4.2, 4.4 &amp; 5.0</li>
+        <li>✓ Message timeline &amp; tag inspector</li>
+        <li>✓ Trade lifecycle &amp; latency analysis</li>
+        <li>✓ FIX message validator</li>
+        <li>✓ Session health diagnostics &amp; fill quality scorecard</li>
+        <li>✓ CSV export</li>
+        <li>✓ 100% offline — data never leaves your machine</li>
+      </ul>
+      <br/>
+      <a href="#download" class="btn btn-primary pricing-btn">Download Free</a>
     </div>
   </section>
 
@@ -304,9 +277,9 @@
         <div class="feature-card feature-card-speed">
           <div class="feature-icon">🚀</div>
           <div>
-            <h3>Parse 1,000,000 FIX Messages in 150ms</h3>
-            <p>Built in native Rust, FIX Studio blasts through 135&nbsp;MB of log data in under 150ms &mdash; that&rsquo;s 631&nbsp;MiB/s of streaming throughput. Load a million-message production dump and get results before your coffee cools. No other FIX viewer comes close.</p>
-            <span class="feature-speed-chip">⚡ Criterion-verified &nbsp;&middot;&nbsp; 1,000,000 msgs &nbsp;&middot;&nbsp; 150ms &nbsp;&middot;&nbsp; 631 MiB/s</span>
+            <h3>Parse 1,000,000 FIX Messages in 100ms</h3>
+            <p>Built in native Rust, FIX Studio blasts through 135&nbsp;MB of log data in under 100ms &mdash; that&rsquo;s 631&nbsp;MiB/s of streaming throughput. Load a million-message production dump and get results before your coffee cools. No other FIX viewer comes close.</p>
+            <span class="feature-speed-chip">⚡ Criterion-verified &nbsp;&middot;&nbsp; 1,000,000 msgs &nbsp;&middot;&nbsp; 100ms &nbsp;&middot;&nbsp; 631 MiB/s</span>
           </div>
         </div>
         <div class="feature-card">
@@ -429,8 +402,8 @@
       /* Start counters after a short delay (hero is immediately visible) */
       setTimeout(function() {
         var els      = document.querySelectorAll('.perf-count');
-        var targets  = [1000000, 150, 631];
-        var durs     = [1800, 1400, 1100];
+        var targets  = [1000000, 100, 631];
+        var durs     = [1400, 1000, 1100];
         els.forEach(function(el, i) { animCounter(el, targets[i], durs[i]); });
       }, 350);
 
