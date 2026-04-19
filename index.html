@@ -402,8 +402,8 @@
       /* Start counters after a short delay (hero is immediately visible) */
       setTimeout(function() {
         var els      = document.querySelectorAll('.perf-count');
-        var targets  = [1000000, 150, 631];
-        var durs     = [1800, 1400, 1100];
+        var targets  = [1000000, 100, 631];
+        var durs     = [1400, 1000, 1100];
         els.forEach(function(el, i) { animCounter(el, targets[i], durs[i]); });
       }, 350);
 
