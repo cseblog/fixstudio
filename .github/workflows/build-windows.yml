@@ -41,13 +41,13 @@ jobs:
       - name: Build Windows bundle
         run: dx bundle --release --platform desktop
 
-      - name: Locate NSIS installer
+      - name: Locate Windows executable
         id: find_exe
         shell: bash
         run: |
-          EXE=$(find target/dx -path "*/nsis/*-setup.exe" | head -1)
+          EXE=$(find target/dx -path "*/bundle/windows/*.exe" | head -1)
           if [ -z "$EXE" ]; then
-            echo "ERROR: no *-setup.exe found under target/dx" >&2
+            echo "ERROR: no .exe found under target/dx/*/bundle/windows/" >&2
             find target/dx || true
             exit 1
           fi
@@ -75,9 +75,9 @@ jobs:
           name: AiFixParser-windows
           path: release/
 
-      - name: Rename and zip installer
+      - name: Rename and zip executable
         run: |
-          EXE=$(find release -name "*-setup.exe" | head -1)
+          EXE=$(find release -name "*.exe" | head -1)
           cp "$EXE" AiFixParser-windows.exe
           zip AiFixParser-windows.zip AiFixParser-windows.exe
 
