@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AiFixParser — Marketing Assets</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #09090c; color: #e2e2e4; font-family: 'Plus Jakarta Sans', sans-serif; overflow-x: hidden; }
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+input { outline: none; }
+button { outline: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+/* ── TOKENS ─────────────────────────────────────── */
+const BG   = '#0e0a0a';
+const SURF = '#160f0f';
+const SURF2= '#1e1414';
+const BDR  = 'rgba(255,255,255,0.07)';
+const TEXT = '#ede8e8';
+const DIM  = '#6b5f5f';
+const CYAN = '#9ec93d';   // lime-green primary accent
+const GRN  = '#55c94a';   // pure green
+const BLU  = '#b49898';   // muted rose
+const PRP  = '#b284ae';   // mauve
+const YLW  = '#c9a63d';   // warm gold
+const RED  = '#c96060';   // muted red
+const ORG  = '#c98a4a';   // warm orange
+const MONO = "'JetBrains Mono', monospace";
+const SANS = "'Plus Jakarta Sans', sans-serif";
+
+/* ── MESSAGE BADGE COLORS ───────────────────────── */
+const MC = {
+  'ER FILL':         '#55c94a',
+  'ER PARTIAL':      '#c98a4a',
+  'ExecutionReport': '#b49898',
+  'NewOrderSingle':  '#9ec93d',
+  'Quote':           '#c9a63d',
+  'QuoteRequest':    '#b284ae',
+  'Logout':          '#c96060',
+  'Logon':           '#55c94a',
+  'Heartbeat':       '#4a3535',
+  'OrderCancelReq':  '#c98a4a',
+};
+
+/* ── DATA ───────────────────────────────────────── */
+const MSGS = [
+  { time:'14:47:30.490', s:'FXECN',  t:'CITIFX', type:'Logout',          id:'',           detail:'Acknowledged'    },
+  { time:'14:47:30.840', s:'CITIFX', t:'FXECN',  type:'Logout',          id:'',           detail:'End of trading'  },
+  { time:'14:47:30.595', s:'FXECN',  t:'CITIFX', type:'ER FILL',         id:'C000029735', detail:'SELL 8000'       },
+  { time:'14:47:30.577', s:'CITIFX', t:'FXECN',  type:'ExecutionReport', id:'C000029734', detail:'BUY 8001'        },
+  { time:'14:47:30.570', s:'FXECN',  t:'CITIFX', type:'NewOrderSingle',  id:'C000029733', detail:'SELL 15000'      },
+  { time:'14:47:29.993', s:'CITIFX', t:'FXECN',  type:'Quote',           id:'QR000182174',detail:'USD/CHF 2M'      },
+  { time:'14:47:29.893', s:'FXECN',  t:'CITIFX', type:'QuoteRequest',    id:'QR000182174',detail:'SELL'            },
+  { time:'14:47:29.560', s:'CITIFX', t:'FXECN',  type:'ER FILL',         id:'C000029732', detail:'BUY 15000'       },
+  { time:'14:47:29.520', s:'FXECN',  t:'CITIFX', type:'Quote',           id:'QT000182174',detail:'EUR/USD'         },
+  { time:'14:47:29.390', s:'CITIFX', t:'FXECN',  type:'NewOrderSingle',  id:'C000029731', detail:'BUY 10000'       },
+  { time:'14:47:29.039', s:'FXECN',  t:'CITIFX', type:'Quote',           id:'QT000182173',detail:'EUR/USD'         },
+  { time:'14:47:28.797', s:'CITIFX', t:'FXECN',  type:'ER FILL',         id:'C000029730', detail:'BUY 15000'       },
+  { time:'14:47:28.795', s:'FXECN',  t:'CITIFX', type:'ER PARTIAL',      id:'C000029730', detail:'BUY 8000'        },
+  { time:'14:47:28.770', s:'CITIFX', t:'FXECN',  type:'ExecutionReport', id:'C000029730', detail:'BUY 15000'       },
+  { time:'14:47:28.754', s:'FXECN',  t:'CITIFX', type:'NewOrderSingle',  id:'C000029730', detail:'BUY 15000'       },
+  { time:'14:47:27.994', s:'CITIFX', t:'FXECN',  type:'Quote',           id:'QT000182172',detail:'GBP/USD'         },
+  { time:'14:47:27.005', s:'FXECN',  t:'CITIFX', type:'QuoteRequest',    id:'QR000182172',detail:'BUY 15000'       },
+  { time:'14:47:26.866', s:'CITIFX', t:'FXECN',  type:'NewOrderSingle',  id:'C000029729', detail:'SELL 20000'      },
+];
+
+const TAGS = [
+  { tag:8,   name:'BeginString',  value:'FIX.4.4',                  desc:''             },
+  { tag:9,   name:'BodyLength',   value:'121',                       desc:''             },
+  { tag:35,  name:'MsgType',      value:'R',                         desc:'QuoteRequest' },
+  { tag:34,  name:'MsgSeqNum',    value:'46640',                     desc:''             },
+  { tag:49,  name:'SenderCompID', value:'CITIFX',                    desc:''             },
+  { tag:52,  name:'SendingTime',  value:'20240315-14:47:29.863428',  desc:''             },
+  { tag:56,  name:'TargetCompID', value:'FXECN',                     desc:''             },
+  { tag:131, name:'QuoteReqID',   value:'QR00018174',                desc:''             },
+  { tag:146, name:'NoRelatedSym', value:'1',                         desc:''             },
+  { tag:55,  name:'Symbol',       value:'USD/CHF',                   desc:''             },
+  { tag:38,  name:'OrderQty',     value:'9000000',                   desc:''             },
+  { tag:54,  name:'Side',         value:'2',                         desc:'SELL'         },
+  { tag:64,  name:'SettlDate',    value:'20240319',                  desc:''             },
+  { tag:10,  name:'CheckSum',     value:'223',                       desc:''             },
+];
+
+const NOS_TAGS = [
+  { tag:8,  name:'BeginString',  value:'FIX.4.4',                  desc:''                              },
+  { tag:9,  name:'BodyLength',   value:'187',                       desc:''                              },
+  { tag:35, name:'MsgType',      value:'D',                         desc:'NewOrderSingle'                },
+  { tag:34, name:'MsgSeqNum',    value:'46621',                     desc:''                              },
+  { tag:49, name:'SenderCompID', value:'CITIFX',                    desc:''                              },
+  { tag:52, name:'SendingTime',  value:'20240315-14:47:29.390',     desc:''                              },
+  { tag:56, name:'TargetCompID', value:'FXECN',                     desc:''                              },
+  { tag:11, name:'ClOrdID',      value:'C000029731',                desc:''                              },
+  { tag:21, name:'HandlInst',    value:'1',                         desc:'AutomatedExecNoIntervention'   },
+  { tag:55, name:'Symbol',       value:'EUR/USD',                   desc:''                              },
+  { tag:54, name:'Side',         value:'1',                         desc:'BUY'                           },
+  { tag:60, name:'TransactTime', value:'20240315-14:47:29.389',     desc:''                              },
+  { tag:38, name:'OrderQty',     value:'10000000',                  desc:''                              },
+  { tag:40, name:'OrdType',      value:'1',                         desc:'Market'                        },
+  { tag:44, name:'Price',        value:'1.08324',                   desc:''                              },
+  { tag:59, name:'TimeInForce',  value:'4',                         desc:'FillOrKill'                    },
+  { tag:10, name:'CheckSum',     value:'187',                       desc:''                              },
+];
+
+/* ══════════════════════════════════════════════════
+   APP ICON
+══════════════════════════════════════════════════ */
+function AppIcon({ size = 512 }) {
+  const uid = `ic${size}`;
+  return (
+    <svg width={size} height={size} viewBox="0 0 1000 1000"
+      style={{ display:'block', borderRadius: size * 0.225 }}>
+      <defs>
+        <clipPath id={`${uid}clip`}>
+          <rect width="1000" height="1000" rx="225"/>
+        </clipPath>
+        <radialGradient id={`${uid}bg`} cx="32%" cy="20%" r="75%">
+          <stop offset="0%"   stopColor="#3a1f1f"/>
+          <stop offset="50%"  stopColor="#1a0d0d"/>
+          <stop offset="100%" stopColor="#090404"/>
+        </radialGradient>
+        <radialGradient id={`${uid}gbl`} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#9ec93d" stopOpacity="0.22"/>
+          <stop offset="100%" stopColor="#9ec93d" stopOpacity="0"/>
+        </radialGradient>
+        <linearGradient id={`${uid}wg`} x1="15%" y1="0%" x2="85%" y2="100%">
+          <stop offset="0%"   stopColor="#d8f0b0"/>
+          <stop offset="55%"  stopColor="#9ec93d"/>
+          <stop offset="100%" stopColor="#6f9e25"/>
+        </linearGradient>
+        <linearGradient id={`${uid}shine`} x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%"   stopColor="rgba(255,255,255,0.13)"/>
+          <stop offset="45%"  stopColor="rgba(255,255,255,0.02)"/>
+          <stop offset="100%" stopColor="rgba(0,0,0,0.08)"/>
+        </linearGradient>
+        <filter id={`${uid}glow`} x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="25" result="blur"/>
+          <feFlood floodColor="#00d4ff" floodOpacity="0.55" result="col"/>
+          <feComposite in="col" in2="blur" operator="in" result="glw"/>
+          <feMerge><feMergeNode in="glw"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id={`${uid}softglow`} x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="40" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <g clipPath={`url(#${uid}clip)`}>
+        {/* BG */}
+        <rect width="1000" height="1000" fill={`url(#${uid}bg)`}/>
+
+        {/* Subtle grid */}
+        {Array.from({length:18},(_,i)=>(
+          <line key={`h${i}`} x1="0" y1={i*60} x2="1000" y2={i*60}
+            stroke="rgba(255,255,255,0.022)" strokeWidth="1"/>
+        ))}
+        {Array.from({length:18},(_,i)=>(
+          <line key={`v${i}`} x1={i*60} y1="0" x2={i*60} y2="1000"
+            stroke="rgba(255,255,255,0.022)" strokeWidth="1"/>
+        ))}
+
+        {/* Glow blob behind wrench */}
+        <ellipse cx="430" cy="440" rx="320" ry="320"
+          fill={`url(#${uid}gbl)`} filter={`url(#${uid}softglow)`}/>
+
+        {/* Background FIX tags — ghosted */}
+        <text x="60"  y="185" fontFamily={MONO} fontSize="30" fill="#00d4ff" opacity="0.11" fontWeight="700">8=FIX.4.4</text>
+        <text x="580" y="138" fontFamily={MONO} fontSize="26" fill="#a855f7" opacity="0.09">35=D</text>
+        <text x="60"  y="830" fontFamily={MONO} fontSize="24" fill="#60a5fa" opacity="0.09">49=CITIFX</text>
+        <text x="580" y="880" fontFamily={MONO} fontSize="24" fill="#22c55e" opacity="0.09">54=1 BUY</text>
+        <text x="700" y="500" fontFamily={MONO} fontSize="22" fill="#00d4ff" opacity="0.07">100ms</text>
+
+        {/* Wrench — tilted -32° around center 500,500 */}
+        <g transform="rotate(-32, 500, 500)" filter={`url(#${uid}glow)`}>
+          {/*
+            Open-end wrench path (in 1000×1000 space, before rotation):
+            Head: wide bar at top (y=140..300), with jaw notch cut from left (x=265..420, y=185..255)
+            Handle: narrow bar (x=445..555, y=300..870) with rounded bottom
+          */}
+          <path
+            fillRule="evenodd"
+            d="
+              M 265,140 L 735,140 L 735,300
+              L 555,300 L 555,870
+              Q 500,920 445,870
+              L 445,300 L 265,300
+              L 265,255 L 420,255 L 420,185 L 265,185
+              Z
+            "
+            fill={`url(#${uid}wg)`}
+          />
+        </g>
+
+        {/* "35=D" text positioned inside the jaw (rotated with wrench) */}
+        <g transform="rotate(-32, 500, 500)">
+          <text x="275" y="242" fontFamily={MONO} fontSize="34"
+            fill="#00d4ff" fontWeight="700" opacity="0.85">35=D</text>
+        </g>
+
+        {/* Top shine overlay */}
+        <rect width="1000" height="1000" fill={`url(#${uid}shine)`}/>
+
+        {/* Bottom-edge vignette */}
+        <rect y="650" width="1000" height="350"
+          fill="url(#bottomvig)" opacity="1"/>
+        <defs>
+          <linearGradient id="bottomvig" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="rgba(0,0,0,0)"/>
+            <stop offset="100%" stopColor="rgba(0,0,0,0.35)"/>
+          </linearGradient>
+        </defs>
+      </g>
+    </svg>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   DARK macOS WINDOW CHROME
+══════════════════════════════════════════════════ */
+function DarkWin({ children, scale = 0.5, W = 1280, H = 800 }) {
+  const btnBase = {
+    background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)',
+    borderRadius:6, padding:'5px 12px', fontSize:12, color:'#aaa',
+    cursor:'pointer', fontFamily:SANS, fontWeight:500,
+  };
+  return (
+    <div style={{ width:W*scale, height:H*scale, borderRadius:12*scale, overflow:'hidden', position:'relative',
+      boxShadow:'0 40px 120px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.09)' }}>
+      <div style={{ width:W, height:H, transform:`scale(${scale})`, transformOrigin:'top left',
+        background:'#1a1b1e', display:'flex', flexDirection:'column', overflow:'hidden' }}>
+        {/* Title bar */}
+        <div style={{ height:44, background:'#232527', display:'flex', alignItems:'center',
+          padding:'0 16px', gap:8, borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
+          <div style={{ display:'flex', gap:8 }}>
+            {['#ff6059','#febc2e','#28c840'].map(c=>(
+              <div key={c} style={{ width:14, height:14, borderRadius:'50%', background:c,
+                boxShadow:`0 0 6px ${c}66` }}/>
+            ))}
+          </div>
+          <div style={{ flex:1, textAlign:'center', fontSize:13, color:'#666', fontWeight:500,
+            fontFamily:SANS, marginRight:80 }}>AI FIX Parser</div>
+          <span style={{ fontSize:11, color:'#3a3b42', fontFamily:MONO }}>v1.0.0</span>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* shared button style */
+const BS = {
+  background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)',
+  borderRadius:6, padding:'5px 12px', fontSize:12, color:'#aaa',
+  cursor:'pointer', fontFamily:SANS, fontWeight:500,
+};
+const BSBlue = { ...BS, background:'rgba(0,122,255,0.14)', borderColor:'rgba(0,122,255,0.3)', color:'#4f9eff' };
+
+/* ── Shared toolbar row ── */
+function Toolbar() {
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px',
+      background:'#202327', borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+      <button style={BS}>Clear</button>
+      <button style={BSBlue}>Load file</button>
+      <button style={BS}>Load folder</button>
+      <button style={BS}>Sample</button>
+      <div style={{ width:1, height:16, background:'rgba(255,255,255,0.1)', margin:'0 4px' }}/>
+      {['FIX40','FIX41','FIX42','FIX43','FIX44','FIX50','FIXT11'].map(v=>(
+        <button key={v} style={{ ...BS, color:v==='FIX44'?'#22c55e':'#555', padding:'5px 8px', fontSize:11 }}>{v}</button>
+      ))}
+    </div>
+  );
+}
+
+/* ── Shared tab row ── */
+function TabRow({ active = 0 }) {
+  const tabs = ['Timeline','Latency Analysis','Session Analysis','FIX Validator'];
+  return (
+    <div style={{ display:'flex', alignItems:'center', padding:'0 14px',
+      background:'#1a1b1e', borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+      {tabs.map((tab,i)=>(
+        <div key={tab} style={{ padding:'9px 16px', fontSize:12, fontWeight:i===active?600:400,
+          fontFamily:SANS, color:i===active?'#e8e8eb':'#484950',
+          borderBottom:i===active?`2px solid ${CYAN}`:'2px solid transparent' }}>{tab}</div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Shared message list ── */
+function MsgList({ sel, onSel, slim = false }) {
+  return (
+    <div style={{ width:slim?310:530, display:'flex', flexDirection:'column',
+      borderRight:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+      {/* Headers */}
+      <div style={{ display:'flex', padding:'5px 8px', background:'#1e2026',
+        fontSize:10, color:DIM, fontFamily:SANS, flexShrink:0 }}>
+        <div style={{ width:slim?0:115, display:slim?'none':'block' }}>Time</div>
+        {!slim && <div style={{ width:62 }}>Sender</div>}
+        {!slim && <div style={{ width:62 }}>Target</div>}
+        <div style={{ flex:1 }}>Message</div>
+        <div style={{ width:110 }}>ID / Detail</div>
+      </div>
+      {/* Rows */}
+      <div style={{ flex:1, overflowY:'auto' }}>
+        {MSGS.slice(0,slim?16:14).map((msg,i)=>(
+          <div key={i} onClick={()=>onSel(i)} style={{
+            display:'flex', alignItems:'center', padding:'3px 8px', cursor:'pointer',
+            background:sel===i?'rgba(0,212,255,0.055)':i%2===0?'transparent':'rgba(255,255,255,0.013)',
+            borderLeft:sel===i?`2px solid ${CYAN}`:'2px solid transparent',
+            fontSize:11, fontFamily:MONO,
+          }}>
+            {!slim && <div style={{ width:115, color:'#3f4048', fontSize:10 }}>2024-03-15 {msg.time}</div>}
+            {!slim && <div style={{ width:62, color:'#b496f4' }}>{msg.s}</div>}
+            {!slim && <div style={{ width:62, color:'#5de0f4' }}>{msg.t}</div>}
+            {slim && (
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:9, color:'#3f4048' }}>2024-03-15 {msg.time}</div>
+                <span style={{ color:MC[msg.type]||'#aaa', fontWeight:600, fontSize:11 }}>{msg.type}</span>
+              </div>
+            )}
+            {!slim && (
+              <div style={{ flex:1, overflow:'hidden' }}>
+                <span style={{ color:MC[msg.type]||'#aaa', fontWeight:600 }}>{msg.type}</span>
+              </div>
+            )}
+            <div style={{ width:110, color:'#3f4048', overflow:'hidden', textOverflow:'ellipsis',
+              whiteSpace:'nowrap', fontSize:10 }}>{msg.id||msg.detail}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Tag inspector panel ── */
+function TagPanel({ tags = TAGS, activeTab = 'Table', title = 'Detail', msgType = null }) {
+  return (
+    <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+      <div style={{ padding:'9px 18px', background:'#202327',
+        borderBottom:'1px solid rgba(255,255,255,0.06)', display:'flex', alignItems:'center', flexShrink:0 }}>
+        <span style={{ fontSize:13, fontWeight:700, color:TEXT, fontFamily:SANS }}>{title}</span>
+        {msgType && <span style={{ marginLeft:10, fontSize:10, padding:'2px 8px', borderRadius:4,
+          background:'rgba(56,189,248,0.12)', color:'#38bdf8', fontFamily:SANS, fontWeight:600 }}>{msgType}</span>}
+        {msgType && <span style={{ marginLeft:6, fontSize:10, padding:'2px 8px', borderRadius:4,
+          background:'rgba(34,197,94,0.1)', color:GRN, fontFamily:SANS }}>✓ Valid</span>}
+        <div style={{ flex:1 }}/>
+        <span style={{ fontSize:10, color:'#3a3b42', fontFamily:SANS }}>Skip common fields</span>
+      </div>
+      {/* Sub-tabs */}
+      <div style={{ display:'flex', padding:'0 16px', background:'#1a1b1e',
+        borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+        {['Table','Raw Text','JSON'].map((t,i)=>(
+          <div key={t} style={{ padding:'7px 12px', fontSize:11, fontFamily:SANS,
+            fontWeight:i===0?600:400, color:i===0?TEXT:'#484950',
+            borderBottom:i===0?`2px solid ${CYAN}`:'2px solid transparent' }}>{t}</div>
+        ))}
+        <div style={{ flex:1 }}/>
+        <input placeholder="Filter by tag, name, value…" style={{ background:'rgba(255,255,255,0.04)',
+          border:'1px solid rgba(255,255,255,0.07)', borderRadius:4, padding:'3px 10px',
+          fontSize:10, color:'#666', width:220, fontFamily:SANS, marginBottom:4 }}/>
+      </div>
+      {/* Table */}
+      <div style={{ flex:1, overflowY:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+          <thead>
+            <tr style={{ background:'#1e2026', color:DIM, fontFamily:SANS }}>
+              {['Tag','Tag Description','Value','Value Description'].map(h=>(
+                <th key={h} style={{ padding:'5px 14px', textAlign:'left', fontWeight:600,
+                  fontSize:10, letterSpacing:'0.4px', whiteSpace:'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {tags.map((tag,i)=>(
+              <tr key={i} style={{ background:i%2===0?'transparent':'rgba(255,255,255,0.016)',
+                borderBottom:'1px solid rgba(255,255,255,0.028)' }}>
+                <td style={{ padding:'4px 14px', color:'#484950', fontFamily:MONO, fontWeight:600 }}>{tag.tag}</td>
+                <td style={{ padding:'4px 14px', color:'#a78bfa', fontFamily:MONO }}>{tag.name}</td>
+                <td style={{ padding:'4px 14px', color:'#5de0f4', fontFamily:MONO, fontWeight:600 }}>{tag.value}</td>
+                <td style={{ padding:'4px 14px', color:'#888', fontFamily:SANS }}>{tag.desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ── Features sidebar ── */
+function FeaturesSidebar() {
+  const features = [
+    { name:'Timeline',          status:'Active', desc:'Browse and inspect every FIX message.',                    btn:'View Timeline →'  },
+    { name:'Latency Analysis',  status:'Active', desc:'Reconstruct full order chains from RFQ to fill.',          btn:'View Lifecycle →' },
+    { name:'Session Analysis',  status:'Active', desc:'Fill quality scorecard, session health diagnostics.',      btn:'View Report →'    },
+    { name:'FIX Validator',     status:'Active', desc:'Validate messages against FIX spec, checksums & rules.',   btn:'Open Validator →' },
+    { name:'Order Flow & AI',   status:'Soon',   desc:'Detect wash, VWAP, iceberg & spoofing patterns.'                                 },
+    { name:'AI FIX Builder',    status:'Soon',   desc:'Generate FIX engine client or server code.'                                      },
+  ];
+  return (
+    <div style={{ width:210, background:'#202327', borderLeft:'1px solid rgba(255,255,255,0.06)',
+      padding:'14px 10px', overflowY:'auto', flexShrink:0 }}>
+      <div style={{ fontSize:9, color:'#363740', fontWeight:700, letterSpacing:2,
+        marginBottom:12, fontFamily:SANS }}>FEATURES</div>
+      {features.map((f,i)=>(
+        <div key={i} style={{ marginBottom:12, paddingBottom:12,
+          borderBottom:'1px solid rgba(255,255,255,0.05)' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
+            <span style={{ color:TEXT, fontWeight:600, fontSize:11, fontFamily:SANS }}>{f.name}</span>
+            <span style={{ fontSize:8, padding:'1px 5px', borderRadius:3, fontFamily:SANS, fontWeight:700,
+              background:f.status==='Active'?'rgba(34,197,94,0.12)':'rgba(168,85,247,0.12)',
+              color:f.status==='Active'?GRN:PRP }}>{f.status}</span>
+          </div>
+          <div style={{ color:'#444', fontSize:10, lineHeight:1.5, fontFamily:SANS, marginBottom:f.btn?5:0 }}>{f.desc}</div>
+          {f.btn && (
+            <button style={{ fontSize:9, padding:'2px 8px', background:'rgba(0,212,255,0.08)',
+              border:'1px solid rgba(0,212,255,0.22)', borderRadius:3, color:CYAN,
+              cursor:'pointer', fontFamily:SANS }}>{f.btn}</button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   SCREENSHOT 1 — Timeline View
+══════════════════════════════════════════════════ */
+function SS1() {
+  const [sel, setSel] = useState(2);
+  return (
+    <DarkWin>
+      <Toolbar/>
+      {/* Tabs + stats bar */}
+      <div style={{ display:'flex', alignItems:'center', padding:'0 14px',
+        background:'#1a1b1e', borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+        {['Timeline','Latency Analysis','Session Analysis','FIX Validator'].map((tab,i)=>(
+          <div key={tab} style={{ padding:'9px 16px', fontSize:12, fontWeight:i===0?600:400,
+            fontFamily:SANS, color:i===0?TEXT:'#484950',
+            borderBottom:i===0?`2px solid ${CYAN}`:'2px solid transparent' }}>{tab}</div>
+        ))}
+        <div style={{ flex:1 }}/>
+        <span style={{ fontSize:11, color:'#3a3b42', fontFamily:MONO }}>
+          Parsed 1,000,000 messages in 209.2ms
+        </span>
+        <button style={{ ...BS, marginLeft:12, padding:'4px 10px', fontSize:11 }}>Export CSV</button>
+        <label style={{ display:'flex', alignItems:'center', gap:5, marginLeft:14, cursor:'pointer' }}>
+          <div style={{ width:30, height:16, borderRadius:8, background:GRN, position:'relative' }}>
+            <div style={{ position:'absolute', right:2, top:2, width:12, height:12,
+              borderRadius:'50%', background:'#fff' }}/>
+          </div>
+          <span style={{ fontSize:10, color:'#484950', fontFamily:SANS }}>Skip heartbeats</span>
+        </label>
+      </div>
+      {/* Body */}
+      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+        <MsgList sel={sel} onSel={setSel}/>
+        <TagPanel/>
+        <FeaturesSidebar/>
+      </div>
+    </DarkWin>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   SCREENSHOT 2 — Tag Inspector (focused)
+══════════════════════════════════════════════════ */
+function SS2() {
+  const [sel, setSel] = useState(9);
+  return (
+    <DarkWin>
+      <Toolbar/>
+      <TabRow active={0}/>
+      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+        <MsgList sel={sel} onSel={setSel} slim/>
+        {/* Wide tag panel */}
+        <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+          {/* Decoded raw preview bar */}
+          <div style={{ padding:'10px 20px', background:'#202327',
+            borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+              <span style={{ fontSize:14, fontWeight:700, color:TEXT, fontFamily:SANS }}>NewOrderSingle</span>
+              <span style={{ fontSize:10, padding:'2px 8px', borderRadius:4,
+                background:'rgba(56,189,248,0.12)', color:'#38bdf8', fontFamily:SANS, fontWeight:600 }}>MsgType: D</span>
+              <span style={{ fontSize:10, padding:'2px 8px', borderRadius:4,
+                background:'rgba(34,197,94,0.1)', color:GRN, fontFamily:SANS }}>✓ Valid</span>
+              <div style={{ flex:1 }}/>
+              <span style={{ fontSize:11, color:'#3a3b42', fontFamily:MONO }}>C000029731</span>
+            </div>
+            <div style={{ fontFamily:MONO, fontSize:11, color:'#484950', lineHeight:1.7 }}>
+              {'8=FIX.4.4'}
+              <span style={{ color:'rgba(255,255,255,0.1)' }}>{' | '}</span>
+              {'9=187'}
+              <span style={{ color:'rgba(255,255,255,0.1)' }}>{' | '}</span>
+              <span style={{ color:'#38bdf8' }}>{'35=D'}</span>
+              <span style={{ color:'rgba(255,255,255,0.1)' }}>{' | '}</span>
+              {'49=CITIFX'}
+              <span style={{ color:'rgba(255,255,255,0.1)' }}>{' | '}</span>
+              <span style={{ color:'#5de0f4' }}>{'55=EUR/USD'}</span>
+              <span style={{ color:'rgba(255,255,255,0.1)' }}>{' | '}</span>
+              <span style={{ color:GRN }}>{'54=1 (BUY)'}</span>
+              <span style={{ color:'rgba(255,255,255,0.1)' }}>{' | '}</span>
+              <span style={{ color:'#a78bfa' }}>{'38=10000000'}</span>
+              <span style={{ color:'rgba(255,255,255,0.1)' }}>{' | '}</span>
+              {'44=1.08324'}
+            </div>
+          </div>
+          <TagPanel tags={NOS_TAGS} title="Tag Inspector"/>
+        </div>
+      </div>
+    </DarkWin>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   SCREENSHOT 3 — Latency Analysis
+══════════════════════════════════════════════════ */
+function SS3() {
+  const orders = [
+    { id:'C000029730', sym:'EUR/USD', side:'BUY',  qty:'15,000,000', st:'FILLED',  rfq:'28.754', ack:'28.770', fill:'28.797', lat:'43ms',  fq:'100%' },
+    { id:'C000029731', sym:'EUR/USD', side:'BUY',  qty:'10,000,000', st:'FILLED',  rfq:'29.390', ack:'29.560', fill:'29.560', lat:'170ms', fq:'100%' },
+    { id:'C000029732', sym:'USD/CHF', side:'SELL', qty:'9,000,000',  st:'PARTIAL', rfq:'29.893', ack:'29.993', fill:'30.595', lat:'702ms', fq:'67%'  },
+    { id:'C000029733', sym:'GBP/USD', side:'SELL', qty:'15,000,000', st:'PENDING', rfq:'30.570', ack:'—',      fill:'—',      lat:'—',    fq:'—'    },
+    { id:'C000029734', sym:'EUR/GBP', side:'BUY',  qty:'8,000,000',  st:'FILLED',  rfq:'30.577', ack:'30.577', fill:'30.595', lat:'18ms',  fq:'100%' },
+    { id:'C000029735', sym:'USD/JPY', side:'SELL', qty:'20,000,000', st:'FILLED',  rfq:'31.100', ack:'31.115', fill:'31.180', lat:'80ms',  fq:'100%' },
+    { id:'C000029736', sym:'AUD/USD', side:'BUY',  qty:'5,000,000',  st:'FILLED',  rfq:'31.450', ack:'31.460', fill:'31.510', lat:'60ms',  fq:'100%' },
+  ];
+  const latCol = (l) => l==='—'?'#363740':parseInt(l)<50?GRN:parseInt(l)<200?YLW:ORG;
+  const stConf = { FILLED:{bg:'rgba(34,197,94,0.1)',c:GRN}, PARTIAL:{bg:'rgba(249,115,22,0.1)',c:ORG}, PENDING:{bg:'rgba(96,165,250,0.1)',c:BLU} };
+  return (
+    <DarkWin>
+      <Toolbar/>
+      <TabRow active={1}/>
+      {/* KPI bar */}
+      <div style={{ display:'flex', gap:0, background:'#18191f',
+        borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+        {[{l:'Orders',v:'7'},{l:'Filled',v:'5'},{l:'Partial',v:'1'},{l:'Avg Latency',v:'155ms'},{l:'Best Fill',v:'18ms'},{l:'Fill Rate',v:'85.7%'},{l:'Throughput',v:'631 MiB/s'}].map((s,i)=>(
+          <div key={s.l} style={{ flex:1, textAlign:'center', padding:'12px 8px',
+            borderRight:i<6?'1px solid rgba(255,255,255,0.05)':'none' }}>
+            <div style={{ fontSize:18, fontWeight:800, color:TEXT, fontFamily:MONO }}>{s.v}</div>
+            <div style={{ fontSize:9, color:'#444', fontFamily:SANS, marginTop:2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ flex:1, overflowY:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+          <thead style={{ position:'sticky', top:0, background:'#1e2026', zIndex:1 }}>
+            <tr style={{ color:DIM, fontFamily:SANS }}>
+              {['Order ID','Symbol','Side','Qty','Status','RFQ','ACK','Fill','Latency','Fill Quality'].map(h=>(
+                <th key={h} style={{ padding:'6px 14px', textAlign:'left', fontWeight:600,
+                  fontSize:10, letterSpacing:'0.4px', whiteSpace:'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((o,i)=>(
+              <tr key={i} style={{ borderBottom:'1px solid rgba(255,255,255,0.04)',
+                background:i%2===0?'transparent':'rgba(255,255,255,0.014)' }}>
+                <td style={{ padding:'7px 14px', fontFamily:MONO, color:BLU, fontSize:11 }}>{o.id}</td>
+                <td style={{ padding:'7px 14px', fontFamily:MONO, color:TEXT }}>{o.sym}</td>
+                <td style={{ padding:'7px 14px', fontFamily:MONO, color:o.side==='BUY'?GRN:RED, fontWeight:700 }}>{o.side}</td>
+                <td style={{ padding:'7px 14px', fontFamily:MONO, color:'#666' }}>{o.qty}</td>
+                <td style={{ padding:'7px 14px' }}>
+                  <span style={{ fontSize:10, padding:'2px 8px', borderRadius:3, fontFamily:SANS,
+                    fontWeight:600, background:(stConf[o.st]||{}).bg, color:(stConf[o.st]||{}).c }}>{o.st}</span>
+                </td>
+                <td style={{ padding:'7px 14px', fontFamily:MONO, color:'#484950', fontSize:10 }}>14:47:{o.rfq}</td>
+                <td style={{ padding:'7px 14px', fontFamily:MONO, color:'#484950', fontSize:10 }}>{o.ack==='—'?'—':'14:47:'+o.ack}</td>
+                <td style={{ padding:'7px 14px', fontFamily:MONO, color:'#484950', fontSize:10 }}>{o.fill==='—'?'—':'14:47:'+o.fill}</td>
+                <td style={{ padding:'7px 14px', fontFamily:MONO, color:latCol(o.lat), fontWeight:700, fontSize:13 }}>{o.lat}</td>
+                <td style={{ padding:'7px 14px', fontFamily:MONO,
+                  color:o.fq==='100%'?GRN:o.fq==='—'?'#363740':ORG, fontWeight:700 }}>{o.fq}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </DarkWin>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   SCREENSHOT 4 — FIX Validator
+══════════════════════════════════════════════════ */
+function SS4() {
+  const issues = [
+    { sev:'error', tag:38,  name:'OrderQty',          msg:'Required field missing in NewOrderSingle (MsgType=D)',              id:'C000029720' },
+    { sev:'error', tag:10,  name:'CheckSum',           msg:'Checksum mismatch — expected 148, got 149',                        id:'C000029721' },
+    { sev:'warn',  tag:59,  name:'TimeInForce',        msg:'Value "6" not valid for FIX 4.4 (valid: 0,1,2,3,4,5)',             id:'C000029725' },
+    { sev:'warn',  tag:54,  name:'Side',               msg:'Unexpected Side value "9" in ExecutionReport (MsgType=8)',         id:'C000029726' },
+    { sev:'info',  tag:115, name:'OnBehalfOfCompID',   msg:'Non-standard tag — confirm counterparty support',                  id:'C000029730' },
+    { sev:'pass',  tag:35,  name:'MsgType',            msg:'All MsgType values valid across 1,000,000 messages',               id:'—'          },
+    { sev:'pass',  tag:49,  name:'SenderCompID',       msg:'SenderCompID consistent across all session messages',              id:'—'          },
+    { sev:'pass',  tag:52,  name:'SendingTime',        msg:'SendingTime monotonically increasing — no clock drift detected',   id:'—'          },
+    { sev:'pass',  tag:34,  name:'MsgSeqNum',          msg:'Sequence numbers contiguous, no gaps or resets',                   id:'—'          },
+  ];
+  const sevConf = { error:{c:'#ef4444',bg:'rgba(239,68,68,0.13)'}, warn:{c:ORG,bg:'rgba(249,115,22,0.12)'}, info:{c:BLU,bg:'rgba(96,165,250,0.12)'}, pass:{c:GRN,bg:'rgba(34,197,94,0.12)'} };
+  const pillText = { error:'ERR', warn:'WARN', info:'INFO', pass:'PASS' };
+  return (
+    <DarkWin>
+      <Toolbar/>
+      <div style={{ display:'flex', alignItems:'center', padding:'0 14px',
+        background:'#1a1b1e', borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+        {['Timeline','Latency Analysis','Session Analysis','FIX Validator'].map((tab,i)=>(
+          <div key={tab} style={{ padding:'9px 16px', fontSize:12, fontWeight:i===3?600:400,
+            fontFamily:SANS, color:i===3?TEXT:'#484950',
+            borderBottom:i===3?`2px solid ${CYAN}`:'2px solid transparent' }}>{tab}</div>
+        ))}
+        <div style={{ flex:1 }}/>
+        <button style={{ ...BSBlue, background:'rgba(0,212,255,0.1)', borderColor:'rgba(0,212,255,0.3)',
+          color:CYAN, fontWeight:700 }}>▶ Run Validation</button>
+      </div>
+      {/* Summary */}
+      <div style={{ display:'flex', gap:10, padding:'12px 20px', background:'#18191f',
+        borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+        {[{l:'2 Errors',sev:'error'},{l:'2 Warnings',sev:'warn'},{l:'1 Info',sev:'info'},{l:'4 Passed',sev:'pass'}].map(p=>(
+          <div key={p.l} style={{ padding:'4px 14px', borderRadius:20,
+            background:sevConf[p.sev].bg, border:`1px solid ${sevConf[p.sev].c}44`,
+            color:sevConf[p.sev].c, fontSize:12, fontWeight:700, fontFamily:SANS }}>{p.l}</div>
+        ))}
+        <div style={{ flex:1 }}/>
+        <span style={{ fontSize:11, color:'#3a3b42', fontFamily:MONO, alignSelf:'center' }}>
+          FIX 4.4 · 1,000,000 messages validated
+        </span>
+      </div>
+      <div style={{ flex:1, overflowY:'auto' }}>
+        {issues.map((iss,i)=>(
+          <div key={i} style={{ display:'flex', alignItems:'flex-start', padding:'11px 20px',
+            borderBottom:'1px solid rgba(255,255,255,0.04)',
+            background:i%2===0?'transparent':'rgba(255,255,255,0.01)',
+            borderLeft:`3px solid ${sevConf[iss.sev].c}` }}>
+            <div style={{ width:52, flexShrink:0 }}>
+              <span style={{ fontSize:9, padding:'2px 6px', borderRadius:3, fontFamily:SANS,
+                fontWeight:700, background:sevConf[iss.sev].bg, color:sevConf[iss.sev].c,
+                textTransform:'uppercase' }}>{pillText[iss.sev]}</span>
+            </div>
+            <div style={{ width:44, flexShrink:0, fontFamily:MONO, fontSize:11, color:'#484950' }}>T:{iss.tag}</div>
+            <div style={{ width:180, flexShrink:0, fontFamily:MONO, color:'#a78bfa', fontSize:11 }}>{iss.name}</div>
+            <div style={{ flex:1, fontSize:11, color:'#999', fontFamily:SANS, lineHeight:1.55 }}>{iss.msg}</div>
+            <div style={{ width:110, flexShrink:0, fontFamily:MONO, color:'#363740',
+              fontSize:10, textAlign:'right' }}>{iss.id}</div>
+          </div>
+        ))}
+      </div>
+    </DarkWin>
+  );
+}
+
+/* ── Screenshot marketing wrapper ── */
+function SSCard({ num, title, subtitle, screenshot, highlight, accent = CYAN }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:36 }}>
+      <div style={{ textAlign:'center' }}>
+        <div style={{ fontSize:11, fontWeight:700, color:accent, letterSpacing:3,
+          marginBottom:10, fontFamily:SANS, textTransform:'uppercase' }}>
+          Screenshot {String(num).padStart(2,'0')}
+        </div>
+        <h2 style={{ fontSize:34, fontWeight:800, color:TEXT, lineHeight:1.12,
+          marginBottom:10, fontFamily:SANS }}>{title}</h2>
+        <p style={{ fontSize:15, color:DIM, maxWidth:520, lineHeight:1.75, fontFamily:SANS }}>{subtitle}</p>
+      </div>
+      <div style={{ position:'relative' }}>
+        <div style={{ position:'absolute', inset:-60,
+          background:`radial-gradient(ellipse at 50% 65%, ${accent}14, transparent 68%)`,
+          borderRadius:80, pointerEvents:'none' }}/>
+        <div style={{ position:'relative' }}>{screenshot}</div>
+      </div>
+      {highlight && (
+        <div style={{ display:'flex', gap:8, alignItems:'center',
+          background:'rgba(255,255,255,0.035)', border:`1px solid rgba(255,255,255,0.07)`,
+          borderRadius:24, padding:'8px 22px' }}>
+          <div style={{ width:7, height:7, borderRadius:'50%', background:accent,
+            boxShadow:`0 0 10px ${accent}` }}/>
+          <span style={{ fontSize:12, color:'#666', fontFamily:MONO }}>{highlight}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   HERO BANNER — 1200 × 630
+══════════════════════════════════════════════════ */
+function HeroBanner() {
+  return (
+    <div style={{ width:1200, height:630, borderRadius:16, overflow:'hidden',
+      boxShadow:'0 0 0 1px rgba(255,255,255,0.08), 0 40px 120px rgba(0,0,0,0.7)',
+      position:'relative', background:'#060810', display:'flex' }}>
+
+      {/* Background grid */}
+      <svg style={{ position:'absolute', inset:0, opacity:0.18 }} width="1200" height="630">
+        {Array.from({length:22},(_,i)=><line key={'h'+i} x1="0" y1={i*30} x2="1200" y2={i*30} stroke={CYAN} strokeWidth="0.5"/>)}
+        {Array.from({length:41},(_,i)=><line key={'v'+i} x1={i*30} y1="0" x2={i*30} y2="630" stroke={CYAN} strokeWidth="0.5"/>)}
+      </svg>
+
+      {/* Glow blobs */}
+      <div style={{ position:'absolute', top:-120, left:-80, width:600, height:600,
+        background:`radial-gradient(circle, rgba(20,80,200,0.16), transparent 68%)`, borderRadius:'50%' }}/>
+      <div style={{ position:'absolute', bottom:-60, right:280, width:440, height:440,
+        background:`radial-gradient(circle, rgba(0,212,255,0.07), transparent 65%)`, borderRadius:'50%' }}/>
+
+      {/* Left content */}
+      <div style={{ width:500, padding:'52px 56px', display:'flex', flexDirection:'column',
+        justifyContent:'center', position:'relative', zIndex:2 }}>
+
+        {/* Wordmark */}
+        <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:34 }}>
+          <AppIcon size={52}/>
+          <div>
+            <div style={{ fontSize:18, fontWeight:800, color:TEXT, fontFamily:SANS, lineHeight:1 }}>
+              AI FIX Parser
+            </div>
+            <div style={{ fontSize:11, color:'#3a3b42', fontFamily:SANS, marginTop:3 }}>
+              aifixparser.com
+            </div>
+          </div>
+        </div>
+
+        {/* Headline */}
+        <h1 style={{ fontSize:48, fontWeight:800, lineHeight:1.06, marginBottom:14, fontFamily:SANS, color:TEXT }}>
+          Parse 1M FIX<br/>
+          <span style={{ color:CYAN }}>messages in 100ms.</span>
+        </h1>
+        <p style={{ fontSize:15, color:'#555', lineHeight:1.75, marginBottom:32, fontFamily:SANS }}>
+          Free · Offline · No sign-up · macOS &amp; Windows
+        </p>
+
+        {/* Stats */}
+        <div style={{ display:'flex', gap:28, marginBottom:28 }}>
+          {[{v:'631',u:'MiB/s',l:'Throughput'},{v:'<100',u:'ms',l:'1M messages'},{v:'150+',u:'tags',l:'Decoded'}].map(s=>(
+            <div key={s.l}>
+              <div style={{ display:'flex', alignItems:'baseline', gap:3 }}>
+                <span style={{ fontSize:26, fontWeight:800, color:CYAN, fontFamily:MONO }}>{s.v}</span>
+                <span style={{ fontSize:12, color:'#3a6a80', fontFamily:MONO }}>{s.u}</span>
+              </div>
+              <div style={{ fontSize:10, color:'#3a3b42', fontFamily:SANS, marginTop:2 }}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Platform badges */}
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          {['🍎 macOS','🪟 Windows','⚡ Native Rust','🔒 100% Offline'].map(b=>(
+            <div key={b} style={{ padding:'5px 12px', borderRadius:20,
+              background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.09)',
+              fontSize:11, color:'#666', fontFamily:SANS }}>{b}</div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right — app screenshot, perspective tilt */}
+      <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'flex-end',
+        paddingRight:32, position:'relative', zIndex:2, overflow:'hidden' }}>
+        <div style={{ transform:'perspective(1000px) rotateY(-10deg) rotateX(4deg) scale(0.96)',
+          transformOrigin:'right center', filter:'drop-shadow(0 30px 60px rgba(0,0,0,0.6))' }}>
+          <SS1/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   PRODUCT HUNT GRAPHICS
+══════════════════════════════════════════════════ */
+function ProductHuntSection() {
+  /* 240×240 thumbnail */
+  const Thumb = () => (
+    <div style={{ width:240, height:240, borderRadius:24, overflow:'hidden', position:'relative',
+      background:'linear-gradient(145deg, #0c1628, #050810)',
+      boxShadow:'0 20px 60px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.07)',
+      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:12 }}>
+      <div style={{ position:'absolute', top:-50, left:-50, width:200, height:200,
+        background:'radial-gradient(circle,rgba(0,212,255,0.14),transparent 65%)', borderRadius:'50%' }}/>
+      <AppIcon size={96}/>
+      <div style={{ textAlign:'center', position:'relative', zIndex:1 }}>
+        <div style={{ fontSize:14, fontWeight:800, color:TEXT, fontFamily:SANS }}>AI FIX Parser</div>
+        <div style={{ fontSize:10, color:DIM, fontFamily:SANS, marginTop:2 }}>FIX Protocol Debugger</div>
+      </div>
+    </div>
+  );
+
+  /* 1270×760 gallery card */
+  const Gallery = () => (
+    <div style={{ width:635, height:380, borderRadius:16, overflow:'hidden', position:'relative',
+      background:'linear-gradient(135deg, #070810 0%, #0c1525 50%, #050810 100%)',
+      boxShadow:'0 20px 60px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.07)',
+      display:'flex', flexDirection:'column', padding:'28px 32px', gap:18 }}>
+
+      <div style={{ position:'absolute', top:-60, right:-50, width:280, height:280,
+        background:`radial-gradient(circle,${CYAN}0d,transparent 65%)`, borderRadius:'50%' }}/>
+
+      {/* Header row */}
+      <div style={{ display:'flex', alignItems:'center', gap:12, zIndex:1 }}>
+        <AppIcon size={46}/>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:17, fontWeight:800, color:TEXT, fontFamily:SANS }}>AI FIX Parser</div>
+          <div style={{ fontSize:11, color:CYAN, fontFamily:SANS, marginTop:1 }}>Free FIX Protocol Parser &amp; Debugger</div>
+        </div>
+        <div style={{ display:'flex', gap:5 }}>
+          {['FIX 4.2','FIX 4.4','FIX 5.0'].map(v=>(
+            <span key={v} style={{ fontSize:9, padding:'2px 7px', borderRadius:10,
+              background:'rgba(34,197,94,0.1)', border:'1px solid rgba(34,197,94,0.22)',
+              color:GRN, fontFamily:SANS, fontWeight:700 }}>{v}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div style={{ display:'flex', gap:0, zIndex:1,
+        background:'rgba(255,255,255,0.025)', borderRadius:10,
+        border:'1px solid rgba(255,255,255,0.06)', overflow:'hidden' }}>
+        {[{v:'1M msgs',l:'under 100ms'},{v:'631 MiB/s',l:'throughput'},{v:'150+ tags',l:'decoded'},{v:'100%',l:'offline & free'}].map((s,i)=>(
+          <div key={s.l} style={{ flex:1, textAlign:'center', padding:'12px 8px',
+            borderRight:i<3?'1px solid rgba(255,255,255,0.05)':'none' }}>
+            <div style={{ fontSize:16, fontWeight:800, color:CYAN, fontFamily:MONO }}>{s.v}</div>
+            <div style={{ fontSize:9, color:'#444', fontFamily:SANS, marginTop:2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Features */}
+      <div style={{ display:'flex', gap:10, flexWrap:'wrap', zIndex:1 }}>
+        {['Parse 1M messages in 100ms','Message timeline & tag inspector','Trade lifecycle & latency analysis','FIX validator · CSV export','Works with QuickFIX & Artio FIX','macOS Apple Silicon · Windows x64'].map(f=>(
+          <div key={f} style={{ display:'flex', alignItems:'center', gap:5,
+            fontSize:10, color:'#888', fontFamily:SANS }}>
+            <span style={{ color:GRN }}>✓</span> {f}
+          </div>
+        ))}
+      </div>
+
+      {/* Bottom bar */}
+      <div style={{ marginTop:'auto', display:'flex', alignItems:'center', gap:10, zIndex:1 }}>
+        <div style={{ fontSize:10, color:'#3a3b42', fontFamily:MONO }}>aifixparser.com</div>
+        <div style={{ flex:1, height:1, background:'rgba(255,255,255,0.05)' }}/>
+        <div style={{ display:'flex', gap:6 }}>
+          {['🍎 macOS','🪟 Windows'].map(b=>(
+            <div key={b} style={{ padding:'3px 10px', borderRadius:12,
+              background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)',
+              fontSize:10, color:'#666', fontFamily:SANS }}>{b}</div>
+          ))}
+        </div>
+        <div style={{ padding:'5px 16px', borderRadius:20,
+          background:`rgba(0,212,255,0.12)`, border:`1px solid rgba(0,212,255,0.25)`,
+          fontSize:11, color:CYAN, fontFamily:SANS, fontWeight:700 }}>Free Download →</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ display:'flex', gap:40, alignItems:'flex-start', flexWrap:'wrap', justifyContent:'center' }}>
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12 }}>
+        <div style={{ fontSize:10, color:DIM, fontFamily:SANS, letterSpacing:2, textTransform:'uppercase' }}>
+          Thumbnail · 240×240
+        </div>
+        <Thumb/>
+      </div>
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12 }}>
+        <div style={{ fontSize:10, color:DIM, fontFamily:SANS, letterSpacing:2, textTransform:'uppercase' }}>
+          Gallery Image · 1270×760 (shown at 50%)
+        </div>
+        <Gallery/>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   ROOT APP
+══════════════════════════════════════════════════ */
+const SECTIONS = ['App Icon', 'Screenshots', 'Hero Banner', 'Product Hunt'];
+
+function App() {
+  const [tab, setTab] = useState(0);
+  const [tweaks, setTweaks] = useState(false);
+
+  useEffect(() => {
+    const handler = e => {
+      if (e.data?.type === '__activate_edit_mode')   setTweaks(true);
+      if (e.data?.type === '__deactivate_edit_mode') setTweaks(false);
+    };
+    window.addEventListener('message', handler);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  return (
+    <div style={{ minHeight:'100vh', background:BG }}>
+
+      {/* ── NAV ── */}
+      <div style={{ position:'sticky', top:0, zIndex:100,
+        background:'rgba(9,9,12,0.88)', backdropFilter:'blur(24px)',
+        borderBottom:`1px solid ${BDR}`,
+        display:'flex', alignItems:'center', padding:'0 32px', gap:2 }}>
+
+        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'13px 0', marginRight:20 }}>
+          <AppIcon size={26}/>
+          <span style={{ fontSize:13, fontWeight:700, color:TEXT, fontFamily:SANS }}>
+            AiFixParser
+          </span>
+          <span style={{ fontSize:11, color:'#363740', fontFamily:SANS }}>
+            · Marketing Assets
+          </span>
+        </div>
+
+        {SECTIONS.map((s,i) => (
+          <button key={s} onClick={() => setTab(i)} style={{
+            padding:'8px 16px', borderRadius:8, border:'none', cursor:'pointer',
+            fontFamily:SANS, fontWeight:600, fontSize:13,
+            background: tab===i ? 'rgba(0,212,255,0.1)' : 'transparent',
+            color: tab===i ? CYAN : DIM,
+            transition:'all 0.18s',
+          }}>{s}</button>
+        ))}
+      </div>
+
+      {/* ── CONTENT ── */}
+      <div style={{ padding:'64px 40px 100px', maxWidth:1400, margin:'0 auto' }}>
+
+        {tab === 0 && (
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:52 }}>
+            <div style={{ textAlign:'center' }}>
+              <h1 style={{ fontSize:42, fontWeight:800, color:TEXT, fontFamily:SANS, marginBottom:10 }}>App Icon</h1>
+              <p style={{ color:DIM, fontSize:15, fontFamily:SANS }}>
+                macOS Big Sur style · Wrench + FIX data motif · Deep navy palette
+              </p>
+            </div>
+            {/* Sizes */}
+            <div style={{ display:'flex', gap:40, alignItems:'flex-end', flexWrap:'wrap', justifyContent:'center' }}>
+              {[{s:512,label:'512px'},{s:256,label:'256px'},{s:128,label:'128px'},{s:64,label:'64px'},{s:32,label:'32px'}].map(({s,label})=>(
+                <div key={s} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:10 }}>
+                  <AppIcon size={s}/>
+                  <span style={{ fontSize:11, color:'#363740', fontFamily:MONO }}>{label}</span>
+                </div>
+              ))}
+            </div>
+            {/* Context previews */}
+            <div style={{ display:'flex', gap:28, flexWrap:'wrap', justifyContent:'center' }}>
+              {[
+                { bg:'#f4f4f2', label:'On light', textColor:'#aaa' },
+                { bg:'#1a1a1f', label:'On dark',  textColor:'#444', border:'1px solid rgba(255,255,255,0.06)' },
+                { bg:'linear-gradient(135deg,#5b5fc7,#312a6e)', label:'On gradient', textColor:'rgba(255,255,255,0.55)' },
+                { bg:'linear-gradient(135deg,#0f3460,#16213e)', label:'On navy', textColor:'rgba(255,255,255,0.4)' },
+              ].map(ctx => (
+                <div key={ctx.label} style={{ padding:36, borderRadius:20, background:ctx.bg,
+                  border:ctx.border||'none', display:'flex', flexDirection:'column',
+                  alignItems:'center', gap:8 }}>
+                  <AppIcon size={112}/>
+                  <span style={{ fontSize:11, color:ctx.textColor, fontFamily:SANS }}>{ctx.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === 1 && (
+          <div style={{ display:'flex', flexDirection:'column', gap:110 }}>
+            <div style={{ textAlign:'center' }}>
+              <h1 style={{ fontSize:42, fontWeight:800, color:TEXT, fontFamily:SANS, marginBottom:10 }}>App Store Screenshots</h1>
+              <p style={{ color:DIM, fontSize:15, fontFamily:SANS }}>
+                4 screenshots · Mac App Store format · 1280 × 800
+              </p>
+            </div>
+            <SSCard num={1}
+              title="Parse 1M FIX messages instantly."
+              subtitle="Load massive production log files in under 100ms. Built in native Rust — no other FIX viewer comes close to this throughput."
+              screenshot={<SS1/>}
+              highlight="Parsed 1,000,000 messages in 209.2ms · 631 MiB/s throughput"
+              accent={CYAN}
+            />
+            <SSCard num={2}
+              title="Decode every tag. Human-readable."
+              subtitle="Click any message to inspect all 150+ tag/value pairs with plain-English descriptions. Covers every FIX 4.2, 4.4 and 5.0 message type."
+              screenshot={<SS2/>}
+              highlight="150+ standard tags · NewOrderSingle · ExecutionReport · QuoteRequest"
+              accent={PRP}
+            />
+            <SSCard num={3}
+              title="Reconstruct the full trade lifecycle."
+              subtitle="Track every order from RFQ to fill. Measure end-to-end latency, identify partial fills, and surface session health issues in seconds."
+              screenshot={<SS3/>}
+              highlight="E2E latency · Fill quality scorecard · Order lifecycle · Latency heatmap"
+              accent={GRN}
+            />
+            <SSCard num={4}
+              title="Validate every message automatically."
+              subtitle="Catch missing required fields, invalid enum values, checksum errors and consistency violations — before they reach your counterparty."
+              screenshot={<SS4/>}
+              highlight="FIX spec compliant · Required tags · Enum validation · Checksum checks"
+              accent={ORG}
+            />
+          </div>
+        )}
+
+        {tab === 2 && (
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:44 }}>
+            <div style={{ textAlign:'center' }}>
+              <h1 style={{ fontSize:42, fontWeight:800, color:TEXT, fontFamily:SANS, marginBottom:10 }}>Hero Banner</h1>
+              <p style={{ color:DIM, fontSize:15, fontFamily:SANS }}>
+                Social card / OG image · 1200 × 630 · Also works as site hero
+              </p>
+            </div>
+            <HeroBanner/>
+          </div>
+        )}
+
+        {tab === 3 && (
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:44 }}>
+            <div style={{ textAlign:'center' }}>
+              <h1 style={{ fontSize:42, fontWeight:800, color:TEXT, fontFamily:SANS, marginBottom:10 }}>Product Hunt</h1>
+              <p style={{ color:DIM, fontSize:15, fontFamily:SANS }}>
+                240×240 thumbnail + 1270×760 gallery image (shown at 50%)
+              </p>
+            </div>
+            <ProductHuntSection/>
+          </div>
+        )}
+
+      </div>
+
+      {/* ── TWEAKS PANEL ── */}
+      {tweaks && (
+        <div style={{ position:'fixed', bottom:24, right:24, background:'#14151d',
+          border:'1px solid rgba(255,255,255,0.1)', borderRadius:16, padding:20,
+          width:220, zIndex:999, boxShadow:'0 24px 60px rgba(0,0,0,0.5)', fontFamily:SANS }}>
+          <div style={{ fontSize:13, fontWeight:700, color:TEXT, marginBottom:14 }}>Tweaks</div>
+          <div style={{ fontSize:10, color:DIM, marginBottom:8, textTransform:'uppercase', letterSpacing:1 }}>Jump to</div>
+          {SECTIONS.map((s,i) => (
+            <button key={s} onClick={() => setTab(i)} style={{
+              display:'block', width:'100%', textAlign:'left', padding:'7px 10px',
+              borderRadius:7, border:'none', cursor:'pointer', fontFamily:SANS,
+              fontSize:12, background: tab===i ? 'rgba(0,212,255,0.1)' : 'transparent',
+              color: tab===i ? CYAN : '#666', marginBottom:2,
+            }}>{s}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
