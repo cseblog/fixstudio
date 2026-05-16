@@ -7,7 +7,6 @@ use crate::model::FixMessage;
 // ── View mode constants ───────────────────────────────────────────────────────
 const VIEW_TABLE: u8 = 0;
 const VIEW_RAW:   u8 = 1;
-const VIEW_JSON:  u8 = 2;
 
 // ── Text builders ─────────────────────────────────────────────────────────────
 
@@ -32,35 +31,6 @@ fn build_raw_text(msg: &FixMessage) -> String {
     lines.join("\n")
 }
 
-fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-     .replace('"',  "\\\"")
-     .replace('\n', "\\n")
-     .replace('\r', "\\r")
-     .replace('\t', "\\t")
-}
-
-/// Serialise all fields (skip_common not applied — JSON is a full export).
-fn build_json_text(msg: &FixMessage) -> String {
-    let entries: Vec<String> = msg.fields.iter().map(|f| {
-        let val = f.value_in(&msg.arena);
-        let mut e = format!(
-            "  {{\"tag\": \"{}\", \"name\": \"{}\", \"value\": \"{}\"",
-            f.tag,
-            json_escape(tag_description(f.tag)),
-            json_escape(val),
-        );
-        let val_desc = value_description(f.tag, val);
-        if !val_desc.is_empty() {
-            e.push_str(&format!(", \"decoded\": \"{}\"", json_escape(&val_desc)));
-        }
-        e.push('}');
-        e
-    }).collect();
-
-    format!("[\n{}\n]", entries.join(",\n"))
-}
-
 // ── Copy helper ───────────────────────────────────────────────────────────────
 
 fn copy_js(text: &str) -> String {
@@ -77,10 +47,12 @@ pub fn detail_panel(
     detail_msg: Option<FixMessage>,
     skip_common: Signal<bool>,
     selected_idx: Signal<Option<usize>>,
+    // Per-tab Detail UI state — preserved across tab switches.
+    mut view_kind:    Signal<u8>,
+    mut table_filter: Signal<String>,
+    mut filter_open:  Signal<bool>,
 ) -> Element {
-    let mut view         = use_signal(|| VIEW_TABLE);
-    let mut copied       = use_signal(|| false);
-    let mut table_filter = use_signal(String::new);
+    let mut copied = use_signal(|| false);
 
     // Reset "Copied!" state whenever the selected message changes.
     use_effect(move || {
@@ -88,59 +60,59 @@ pub fn detail_panel(
         copied.set(false);
     });
 
-    // Only build text for the active tab — no point computing both up front.
-    let view_now  = *view.read();
-    let raw_text  = if view_now == VIEW_RAW  { detail_msg.as_ref().map(|m| build_raw_text(m))  } else { None };
-    let json_text = if view_now == VIEW_JSON { detail_msg.as_ref().map(|m| build_json_text(m)) } else { None };
+    // Only build text for the active view — no point computing if hidden.
+    let view_now  = *view_kind.read();
+    let raw_text  = if view_now == VIEW_RAW { detail_msg.as_ref().map(|m| build_raw_text(m)) } else { None };
 
     rsx! {
         div { class: "panel-detail",
-            // ── Header ──
-            div { class: "panel-header",
-                h2 { "Detail" }
-                div { class: "header-actions",
-                    label { class: "check-label",
-                        input {
-                            r#type: "checkbox",
-                            checked: *skip_common.read(),
-                            onchange: move |evt: Event<FormData>| skip_common.set(evt.checked()),
+            // ── Single inline strip: label · view tabs · filter · common ──
+            //   Mirrors the timeline's stats-strip so both panels share visual rhythm.
+            div { class: "stats-strip detail-strip",
+                span { class: "panel-tag", "Detail" }
+                if detail_msg.is_some() {
+                    div { class: "seg-tabs",
+                        button {
+                            class: if *view_kind.read() == VIEW_TABLE { "seg-tab seg-tab-active" } else { "seg-tab" },
+                            onclick: move |_| view_kind.set(VIEW_TABLE),
+                            "Table"
                         }
-                        " Skip common fields"
+                        button {
+                            class: if *view_kind.read() == VIEW_RAW { "seg-tab seg-tab-active" } else { "seg-tab" },
+                            onclick: move |_| { view_kind.set(VIEW_RAW); copied.set(false); },
+                            "Raw"
+                        }
                     }
                 }
-            }
-
-            // ── Tabs (only when a message is selected) ──
-            if detail_msg.is_some() {
-                div { class: "view-tabs",
+                div { class: "stats-spacer" }
+                if detail_msg.is_some() {
                     button {
-                        class: if *view.read() == VIEW_TABLE { "tab-btn tab-active" } else { "tab-btn" },
-                        onclick: move |_| view.set(VIEW_TABLE),
-                        "Table"
+                        class: if *filter_open.read() || !table_filter.read().is_empty() { "btn-icon btn-icon-on" } else { "btn-icon" },
+                        title: "Filter fields",
+                        onclick: move |_| { let v = !*filter_open.read(); filter_open.set(v); },
+                        "⏷ Filter"
                     }
-                    button {
-                        class: if *view.read() == VIEW_RAW { "tab-btn tab-active" } else { "tab-btn" },
-                        onclick: move |_| { view.set(VIEW_RAW); copied.set(false); },
-                        "Raw Text"
-                    }
-                    button {
-                        class: if *view.read() == VIEW_JSON { "tab-btn tab-active" } else { "tab-btn" },
-                        onclick: move |_| { view.set(VIEW_JSON); copied.set(false); },
-                        "JSON"
-                    }
+                }
+                button {
+                    class: if *skip_common.read() { "btn-icon btn-icon-on" } else { "btn-icon" },
+                    title: "Hide common fields (BeginString, BodyLength, Sender/Target, Time, Checksum…)",
+                    onclick: move |_| { let v = !*skip_common.read(); skip_common.set(v); },
+                    "⊘ Common"
                 }
             }
 
             // ── Table view ──
-            if *view.read() == VIEW_TABLE {
+            if *view_kind.read() == VIEW_TABLE {
                 div { class: "table-wrap",
-                    div { class: "detail-filter-row",
-                        input {
-                            class: "detail-filter-input",
-                            r#type: "text",
-                            placeholder: "Filter by tag, name, value…",
-                            value: "{table_filter}",
-                            oninput: move |e| table_filter.set(e.value()),
+                    if *filter_open.read() || !table_filter.read().is_empty() {
+                        div { class: "detail-filter-row",
+                            input {
+                                class: "detail-filter-input",
+                                r#type: "text",
+                                placeholder: "Filter by tag, name, value…",
+                                value: "{table_filter}",
+                                oninput: move |e| table_filter.set(e.value()),
+                            }
                         }
                     }
                     div { class: "tbl-header tbl-detail-row",
@@ -182,7 +154,7 @@ pub fn detail_panel(
             }
 
             // ── Raw Text view ──
-            if *view.read() == VIEW_RAW {
+            if *view_kind.read() == VIEW_RAW {
                 if let Some(ref text) = raw_text {
                     div { class: "raw-text-wrap",
                         div { class: "raw-text-toolbar",
@@ -200,24 +172,6 @@ pub fn detail_panel(
                 }
             }
 
-            // ── JSON view ──
-            if *view.read() == VIEW_JSON {
-                if let Some(ref text) = json_text {
-                    div { class: "raw-text-wrap",
-                        div { class: "raw-text-toolbar",
-                            button {
-                                class: if *copied.read() { "btn btn-copied" } else { "btn btn-copy" },
-                                onclick: {
-                                    let js = copy_js(text);
-                                    move |_| { eval(&js); copied.set(true); }
-                                },
-                                if *copied.read() { "Copied!" } else { "Copy" }
-                            }
-                        }
-                        pre { class: "raw-text", "{text}" }
-                    }
-                }
-            }
         }
     }
 }

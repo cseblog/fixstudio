@@ -791,7 +791,7 @@ fn settl_type_label(value: &str) -> &'static str {
 pub fn badge_class(msg_type_raw: &str) -> &'static str {
     match msg_type_raw {
         "A" => "badge-green",  // Logon
-        "5" => "badge-red",    // Logout
+        "5" => "badge-amber",  // Logout (lifecycle event, not error)
         "0" => "badge-gray",   // Heartbeat
         "1" => "badge-gray",   // TestRequest
         "D" => "badge-orange", // NewOrderSingle

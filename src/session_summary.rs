@@ -1,9 +1,9 @@
 //! Session summary — one-page executive report over a slice of FIX messages.
 
-use std::collections::{HashMap, HashSet};
+use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 
 use crate::model::FixMessage;
-use crate::session_health::{parse_time_us, run_health_checks};
+use crate::session_health::parse_time_us;
 
 // ── Tag helper ────────────────────────────────────────────────────────────────
 
@@ -52,9 +52,6 @@ pub struct SessionSummary {
     pub order_stats:    OrderStats,
     pub latency_stats:  LatencyStats,
     pub top_symbols:    Vec<(String, u64)>,
-    /// Full health report — already computed during summary build, re-exposed here
-    /// so the UI component does not need to run health checks a second time.
-    pub health:         crate::session_health::SessionHealthReport,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -65,7 +62,6 @@ pub fn build_session_summary(messages: &[FixMessage]) -> SessionSummary {
     let order_stats   = compute_order_stats(messages);
     let latency_stats = compute_latency_stats(messages);
     let top_symbols   = compute_top_symbols(messages);
-    let health        = run_health_checks(messages);
 
     let session_label = if sender.is_empty() && target.is_empty() {
         "Unknown Session".to_string()
@@ -86,7 +82,6 @@ pub fn build_session_summary(messages: &[FixMessage]) -> SessionSummary {
         order_stats,
         latency_stats,
         top_symbols,
-        health,
     }
 }
 
@@ -370,5 +365,68 @@ fn compute_top_symbols(messages: &[FixMessage]) -> Vec<(String, u64)> {
     result.sort_unstable_by(|a, b| b.1.cmp(&a.1));
     result.truncate(10);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::parse_all;
+
+    /// Tiny synthetic FIX session: one logon, two NOS, one fill (ORD1), one reject (ORD2).
+    fn synth_session() -> Vec<FixMessage> {
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=A|49=CLIENT|56=BROKER|34=1|52=20240101-09:00:00.000|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=CLIENT|56=BROKER|34=2|52=20240101-09:00:00.100|11=ORD1|55=AAPL|54=1|38=100|40=2|44=150.0|10=000|",
+            "8=FIX.4.4|9=1|35=8|49=BROKER|56=CLIENT|34=3|52=20240101-09:00:00.200|11=ORD1|150=2|39=2|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=CLIENT|56=BROKER|34=4|52=20240101-09:00:00.300|11=ORD2|55=MSFT|54=2|38=50|40=2|44=300.0|10=000|",
+            "8=FIX.4.4|9=1|35=8|49=BROKER|56=CLIENT|34=5|52=20240101-09:00:00.400|11=ORD2|150=8|39=8|55=MSFT|10=000|",
+        );
+        parse_all(raw)
+    }
+
+    #[test]
+    fn counts_total_orders_via_nos() {
+        let s = build_session_summary(&synth_session());
+        assert_eq!(s.order_stats.total, 2);
+    }
+
+    #[test]
+    fn classifies_filled_and_rejected() {
+        let s = build_session_summary(&synth_session());
+        assert_eq!(s.order_stats.filled,    1);
+        assert_eq!(s.order_stats.rejected,  1);
+        assert_eq!(s.order_stats.cancelled, 0);
+    }
+
+    #[test]
+    fn detects_session_pair_from_logon() {
+        let s = build_session_summary(&synth_session());
+        assert_eq!(s.sender, "CLIENT");
+        assert_eq!(s.target, "BROKER");
+        assert_eq!(s.begin_string, "FIX.4.4");
+    }
+
+    #[test]
+    fn ranks_top_symbols() {
+        let s = build_session_summary(&synth_session());
+        let names: Vec<&str> = s.top_symbols.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"AAPL"));
+        assert!(names.contains(&"MSFT"));
+    }
+
+    #[test]
+    fn empty_input_does_not_panic() {
+        let s = build_session_summary(&[]);
+        assert_eq!(s.order_stats.total, 0);
+        assert_eq!(s.total_messages, 0);
+    }
+
+    #[test]
+    fn ack_latency_mean_matches_synth() {
+        // Both orders: NOS → first ER = 100ms apart. Mean = 100ms.
+        let s = build_session_summary(&synth_session());
+        assert!((s.latency_stats.avg_ack_ms - 100.0).abs() < 1.0,
+            "expected ~100ms, got {}", s.latency_stats.avg_ack_ms);
+    }
 }
 

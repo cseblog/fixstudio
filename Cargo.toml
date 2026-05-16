@@ -37,6 +37,10 @@ rfd = "0.15"
 tao = "0.34"
 open = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# ahash: 2–3x faster than the standard SipHash-based HashMap for the small
+# string keys used by session_summary / fill_quality / lifecycle aggregations.
+# No DoS hardening needed — all inputs are operator-loaded FIX log files.
+ahash = "0.8"
 
 # ---------------------------------------------------------------------------
 # Platform-specific dependencies

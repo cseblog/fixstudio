@@ -5,6 +5,7 @@ use crate::parser::parse_all_simd_bytes;
 
 pub struct FileLoadResult {
     pub name: String,
+    pub path: String,
     pub messages: Vec<FixMessage>,
     pub parse_us: u128,
     pub is_soh: bool,
@@ -40,7 +41,28 @@ pub async fn pick_and_load_file() -> Option<FileLoadResult> {
         }
     };
     let parse_us = t.elapsed().as_micros();
-    Some(FileLoadResult { name, messages, parse_us, is_soh })
+    let path_str = path.to_string_lossy().into_owned();
+    Some(FileLoadResult { name, path: path_str, messages, parse_us, is_soh })
+}
+
+/// Load a file directly from a known path (no picker). Used for recent-file
+/// reopen flows. Returns `None` if the path no longer exists or cannot be read.
+pub async fn load_file_at(path: &str) -> Option<FileLoadResult> {
+    let p = std::path::PathBuf::from(path);
+    if !p.exists() { return None; }
+    let name = p.file_name()?.to_string_lossy().into_owned();
+    let t = Instant::now();
+    let (messages, is_soh) = match std::fs::File::open(&p)
+        .and_then(|f| unsafe { memmap2::Mmap::map(&f) })
+    {
+        Ok(mmap) => {
+            let soh = mmap.iter().take(4096).any(|&b| b == 0x01);
+            (parse_all_simd_bytes(&mmap), soh)
+        }
+        Err(_) => return None,
+    };
+    let parse_us = t.elapsed().as_micros();
+    Some(FileLoadResult { name, path: path.to_string(), messages, parse_us, is_soh })
 }
 
 pub async fn pick_and_load_folder() -> Option<FolderLoadResult> {

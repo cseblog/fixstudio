@@ -1,7 +1,10 @@
+pub mod command_palette;
 pub mod detail;
 pub mod hero;
 pub mod lifecycle;
 pub mod overview;
-pub mod premium_panel;
+pub mod tab_bar;
+pub mod tab_menu;
+pub mod tab_view;
 pub mod timeline;
 pub mod validator_view;

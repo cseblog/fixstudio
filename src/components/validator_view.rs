@@ -13,63 +13,137 @@ use crate::validator::{validate_batch, validate_raw, Issue, Severity, Validation
 #[derive(Props, Clone, PartialEq)]
 pub struct ValidatorProps {
     pub messages: Signal<Vec<FixMessage>>,
+    // Per-tab persistent state. Switching tabs swaps these handles so each
+    // tab's validator results survive the switch.
+    pub tab_kind:        Signal<u8>,      // 0=Debugger, 1=Batch
+    pub raw_input:       Signal<String>,
+    pub filter_text:     Signal<String>,
+    pub report:          Signal<Option<ValidationReport>>,
+    pub parsed_fields:   Signal<Vec<(u16, String)>>,
+    pub batch_reports:   Signal<Vec<(usize, String, ValidationReport)>>,
+    pub batch_total:     Signal<usize>,
+    pub validating:      Signal<bool>,
+    /// `messages.len()` snapshot the cached batch_reports were computed against.
+    /// Compared against the live `messages.len()` each render to decide whether
+    /// to recompute. `usize::MAX` means "never computed yet".
+    pub batch_signature: Signal<usize>,
+    /// Epoch bumped by the host when the user navigates away — the chunked
+    /// validation loop polls this and aborts if its snapshot is stale.
+    pub cancel:          Signal<u64>,
 }
 
 // ── Sub-view tabs ─────────────────────────────────────────────────────────────
 
-#[derive(Clone, PartialEq)]
-enum Tab { Single, Batch }
+const TAB_SINGLE: u8 = 0;
+const TAB_BATCH:  u8 = 1;
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 pub fn validator_panel(props: ValidatorProps) -> Element {
-    let mut tab          = use_signal(|| Tab::Batch);
-    let mut raw_input    = use_signal(String::new);
-    let mut report: Signal<Option<ValidationReport>> = use_signal(|| None);
-    let mut parsed_fields: Signal<Vec<(u16, String)>> = use_signal(Vec::new);
-
-    // Batch state — populated automatically via use_effect
-    let mut batch_reports: Signal<Vec<(usize, String, ValidationReport)>> = use_signal(Vec::new);
-    let mut batch_total   = use_signal(|| 0usize);
-    let mut validating    = use_signal(|| false);
-    let mut filter_text   = use_signal(String::new);
-
-    let messages = props.messages;
+    let messages              = props.messages;
+    let mut tab               = props.tab_kind;
+    let mut raw_input         = props.raw_input;
+    let mut report            = props.report;
+    let mut parsed_fields     = props.parsed_fields;
+    let mut batch_reports     = props.batch_reports;
+    let mut batch_total       = props.batch_total;
+    let mut validating        = props.validating;
+    let mut filter_text       = props.filter_text;
+    let mut batch_signature   = props.batch_signature;
+    let cancel                = props.cancel;
 
     // ── Auto-validate whenever messages change ────────────────────────────────
+    // Uses messages.len() as a cheap signature. When the cached signature does
+    // not match the live count we recompute. This fires correctly on tab switch
+    // because each tab carries its own `batch_signature` + `messages` signals,
+    // and the *first* render of a freshly-switched tab will see a mismatch
+    // (unless that tab has already been validated, in which case the cached
+    // reports render instantly).
+    let live_count   = messages.read().len();
+    let cached_sig   = *batch_signature.read();
+    let needs_recompute = cached_sig != live_count;
+
     use_effect(move || {
-        let msgs = messages.read().clone();
-        let count = msgs.len();
+        let _ = messages.read();
+        let count = messages.peek().len();
+        let cur_sig = *batch_signature.peek();
+        if cur_sig == count { return; }  // already up-to-date for this tab
+
         batch_total.set(count);
         batch_reports.set(vec![]);
+        batch_signature.set(count);
 
         if count == 0 {
             validating.set(false);
             return;
         }
-
+        // Mark validating *before* the heavy clone so the render commits the
+        // loading state immediately. The actual Vec clone (potentially
+        // hundreds of MB for 1M messages) and the rayon dispatch are deferred
+        // by one yield so the UI repaints the validator panel first — without
+        // this defer, the previous panel (e.g. Session) appears stuck on screen
+        // while the runtime task is busy cloning.
         validating.set(true);
-        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<(usize, String, ValidationReport)>>();
-
-        rayon::spawn(move || {
-            let reports = validate_batch(&msgs);
-            let with_issues: Vec<(usize, String, ValidationReport)> = reports
-                .into_iter()
-                .enumerate()
-                .filter(|(_, r)| !r.is_clean() || r.warning_count() > 0)
-                .map(|(i, r)| {
-                    let mt = msgs[i].msg_type_raw.to_string();
-                    (i, mt, r)
-                })
-                .collect();
-            let _ = tx.send(with_issues);
-        });
-
+        // Snapshot the cancel epoch. If the host bumps it (user navigates away)
+        // we stop between chunks instead of finishing wasted work.
+        let my_epoch = *cancel.peek();
+        // Chunked validation: clone + validate one slice at a time, yielding
+        // between chunks so the UI repaints the "Validating…" indicator and
+        // can stream partial results as they arrive. Without chunking, a 1M-msg
+        // clone (~200MB) blocks the runtime thread for seconds and the panel
+        // appears hung.
+        const CHUNK_SIZE:    usize = 50_000;
+        // Hard upper bound on chunks to make every loop bounded ("limit on
+        // everything"). 2k chunks × 50k = 100M msgs, well past any realistic
+        // tab.
+        const CHUNK_MAX_ITER: usize = 2_048;
         spawn(async move {
-            if let Ok(data) = rx.await {
-                batch_reports.set(data);
+            tokio::task::yield_now().await;
+            if *cancel.peek() != my_epoch { return; }
+            let total = messages.peek().len();
+            if total == 0 {
                 validating.set(false);
+                return;
             }
+            let mut chunk_start = 0usize;
+            let mut iter = 0usize;
+            while chunk_start < total {
+                debug_assert!(iter < CHUNK_MAX_ITER);
+                iter += 1;
+                if iter >= CHUNK_MAX_ITER { break; }
+                if *cancel.peek() != my_epoch { return; }
+                let chunk_end = (chunk_start + CHUNK_SIZE).min(total);
+                let chunk: Vec<FixMessage> = {
+                    let m = messages.peek();
+                    m[chunk_start..chunk_end].to_vec()
+                };
+                let offset = chunk_start;
+                let (tx, rx) =
+                    tokio::sync::oneshot::channel::<Vec<(usize, String, ValidationReport)>>();
+                rayon::spawn(move || {
+                    let reports = validate_batch(&chunk);
+                    let with_issues: Vec<(usize, String, ValidationReport)> = reports
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, r)| !r.is_clean() || r.warning_count() > 0)
+                        .map(|(local_i, r)| {
+                            let mt = chunk[local_i].msg_type_raw.to_string();
+                            (offset + local_i, mt, r)
+                        })
+                        .collect();
+                    let _ = tx.send(with_issues);
+                });
+                if let Ok(data) = rx.await {
+                    if *cancel.peek() != my_epoch { return; }
+                    if !data.is_empty() {
+                        batch_reports.with_mut(|v| v.extend(data));
+                    }
+                }
+                chunk_start = chunk_end;
+                tokio::task::yield_now().await;
+            }
+            if *cancel.peek() != my_epoch { return; }
+            validating.set(false);
         });
     });
 
@@ -111,14 +185,17 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
                 .collect();
             parsed_fields.set(fields);
             report.set(Some(r));
-            tab.set(Tab::Single);
+            tab.set(TAB_SINGLE);
         }
     };
 
     let msg_count    = messages.read().len();
-    let in_single    = *tab.read() == Tab::Single;
-    let in_batch     = *tab.read() == Tab::Batch;
-    let is_validating = *validating.read();
+    let in_single    = *tab.read() == TAB_SINGLE;
+    let in_batch     = *tab.read() == TAB_BATCH;
+    // Show "Validating…" if either the rayon job is in flight OR the cached
+    // signature is stale for this tab (avoids briefly painting old reports
+    // when switching to a tab whose validation hasn't started yet).
+    let is_validating = *validating.read() || needs_recompute;
 
     rsx! {
         div { class: "validator-panel",
@@ -138,12 +215,12 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
             div { class: "validator-tabs",
                 button {
                     class: if in_single { "panel-tab panel-tab-active" } else { "panel-tab" },
-                    onclick: move |_| tab.set(Tab::Single),
+                    onclick: move |_| tab.set(TAB_SINGLE),
                     "Message Debugger"
                 }
                 button {
                     class: if in_batch { "panel-tab panel-tab-active" } else { "panel-tab" },
-                    onclick: move |_| tab.set(Tab::Batch),
+                    onclick: move |_| tab.set(TAB_BATCH),
                     "Batch Validate"
                     if msg_count > 0 {
                         span { class: "validator-msg-count", " ({msg_count})" }
@@ -487,7 +564,7 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
                                         }
                                     }
                                     button {
-                                        class: "btn-export-csv",
+                                        class: "btn-icon",
                                         onclick: move |_| {
                                             let rows_snap = snapshot.clone();
                                             spawn(async move {
@@ -503,7 +580,7 @@ pub fn validator_panel(props: ValidatorProps) -> Element {
                                                 }
                                             });
                                         },
-                                        "Export CSV"
+                                        "⬇ CSV"
                                     }
                                 }
 
