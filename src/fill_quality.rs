@@ -1,6 +1,6 @@
 //! Fill Quality Scorecard — per-counterparty, per-symbol metrics.
 
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 
 use crate::model::FixMessage;
 use crate::session_health::parse_time_us;

@@ -8,7 +8,7 @@
 
 use dioxus::prelude::*;
 use dioxus::document::eval;
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 
 use crate::export::{csv_escape, now_tag};
 use crate::model::FixMessage;
@@ -490,17 +490,80 @@ fn compute_phase_stats(lats: &[i64]) -> Option<PhaseStats> {
     let mut s = lats.to_vec();
     s.sort_unstable();
     let n = s.len();
-    let sum: i64 = s.iter().sum();
-    let pct = |p: f64| s[((p / 100.0) * (n - 1) as f64).round() as usize];
+    debug_assert!(n > 0);
+    // Use i128 for sum so that a session of millions of multi-second latencies
+    // can't overflow i64. (Worst case: 4M * i64::MAX ≈ 2^85, well within i128.)
+    let sum: i128 = s.iter().map(|&v| v as i128).sum();
+    // Saturating index keeps us in-bounds for any p in [0, 100], even when
+    // float rounding nudges the computed offset past `n - 1`.
+    let pct = |p: f64| -> i64 {
+        debug_assert!(p >= 0.0 && p <= 100.0);
+        let idx_f = (p / 100.0) * (n - 1) as f64;
+        let idx = (idx_f.round() as usize).min(n - 1);
+        s[idx]
+    };
     Some(PhaseStats {
         count:   n,
         min_us:  s[0],
         max_us:  s[n - 1],
-        mean_us: sum as f64 / n as f64,
+        mean_us: (sum as f64) / (n as f64),
         p50_us:  pct(50.0),
         p95_us:  pct(95.0),
         p99_us:  pct(99.0),
     })
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::compute_phase_stats;
+
+    #[test]
+    fn empty_returns_none() {
+        assert!(compute_phase_stats(&[]).is_none());
+    }
+
+    #[test]
+    fn single_value_collapses_all_percentiles() {
+        let s = compute_phase_stats(&[42]).unwrap();
+        assert_eq!(s.min_us, 42);
+        assert_eq!(s.max_us, 42);
+        assert_eq!(s.p50_us, 42);
+        assert_eq!(s.p95_us, 42);
+        assert_eq!(s.p99_us, 42);
+        assert!((s.mean_us - 42.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sorts_unsorted_input() {
+        let s = compute_phase_stats(&[9, 1, 5, 3, 7]).unwrap();
+        assert_eq!(s.min_us, 1);
+        assert_eq!(s.max_us, 9);
+        assert_eq!(s.p50_us, 5);
+    }
+
+    #[test]
+    fn percentile_never_out_of_bounds() {
+        // Pathological: n=2 — the only requirement is that every percentile
+        // lookup falls within {10, 20}, never out-of-bounds-panics, and that
+        // p99 reaches the upper extreme.
+        let s = compute_phase_stats(&[10, 20]).unwrap();
+        for v in [s.p50_us, s.p95_us, s.p99_us] {
+            assert!(v == 10 || v == 20);
+        }
+        assert_eq!(s.p99_us, 20);
+    }
+
+    #[test]
+    fn sum_overflow_safe_with_max_values() {
+        // Four million i64::MAX values would overflow i64 sum; i128 keeps it safe.
+        // Use a smaller but still i64-overflowing case to keep the test fast.
+        let big = i64::MAX;
+        let lats = vec![big; 16];
+        let s = compute_phase_stats(&lats).unwrap();
+        assert_eq!(s.min_us, big);
+        assert_eq!(s.max_us, big);
+        assert!((s.mean_us - big as f64).abs() / (big as f64) < 1e-9);
+    }
 }
 
 // ─── Flow node types ──────────────────────────────────────────────────────────
@@ -533,17 +596,17 @@ enum FlowKind {
 impl FlowKind {
     fn color(&self) -> &'static str {
         match self {
-            FlowKind::RfqRequest   => "#bd93f9",
-            FlowKind::RfqQuote     => "#8be9fd",
-            FlowKind::NewOrder     => "#bd93f9",
-            FlowKind::ExecNew      => "#8be9fd",
-            FlowKind::ExecPartial  => "#f1fa8c",
-            FlowKind::ExecFilled   => "#50fa7b",
-            FlowKind::ExecCanceled => "#ffb86c",
-            FlowKind::ExecRejected => "#ff5555",
-            FlowKind::ExecExpired  => "#6272a4",
-            FlowKind::CancelReq    => "#ff79c6",
-            FlowKind::Other        => "#6272a4",
+            FlowKind::RfqRequest   => "#7a3a8a",
+            FlowKind::RfqQuote     => "#15467a",
+            FlowKind::NewOrder     => "#7a3a8a",
+            FlowKind::ExecNew      => "#15467a",
+            FlowKind::ExecPartial  => "#b78427",
+            FlowKind::ExecFilled   => "#2f6b2f",
+            FlowKind::ExecCanceled => "#b78427",
+            FlowKind::ExecRejected => "#b22222",
+            FlowKind::ExecExpired  => "#6b6356",
+            FlowKind::CancelReq    => "#b22222",
+            FlowKind::Other        => "#6b6356",
         }
     }
 }
@@ -737,7 +800,25 @@ enum SortCol { Time, RfqQuote, QuoteNos, NosEr, NosErFill, Duration }
 pub fn lifecycle_panel(
     messages: Signal<Vec<FixMessage>>,
     selected_idx: Signal<Option<usize>>,
+    // Per-tab cache: chains are expensive to build (O(n) with hashmaps) and
+    // must not block the UI thread. The host (tab_view) owns these signals so
+    // navigation away and back preserves results, and the cancel epoch lets
+    // the host abort an in-flight compute.
+    chains_state: Signal<Vec<LifecycleChain>>,
+    chains_signature: Signal<usize>,
+    chains_computing: Signal<bool>,
+    cancel: Signal<u64>,
 ) -> Element {
+    // Unique per-instance DOM id suffix so two lifecycle_panel mounts (e.g.
+    // active + compare panes in compare mode) don't collide on the same
+    // `getElementById('latency-hist')` — without this, ECharts only attaches
+    // to the first match and the second pane's chart never renders.
+    let chart_id: String = use_hook(|| {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        format!("latency-hist-{}", N.fetch_add(1, Ordering::Relaxed))
+    });
+
     // ── Signals ──
     let mut filter_sym:    Signal<String> = use_signal(String::new);
     let mut filter_status: Signal<String> = use_signal(|| "All".to_string());
@@ -747,8 +828,51 @@ pub fn lifecycle_panel(
     let expanded_phase: Signal<Option<u8>>                        = use_signal(|| None);
     let drill_band:     Signal<Option<(SortCol, i64, i64)>>       = use_signal(|| None);
 
-    // ── Memos ──
-    let chains  = use_memo(move || build_lifecycle_chains(&messages.read()));
+    // ── Async chains computation ──
+    // Detect a stale cache for this tab (different messages.len() than the
+    // signature we last computed against). When stale: mark computing, defer
+    // the heavy clone + rayon dispatch via a yielded spawn so the UI repaints
+    // the "Computing…" indicator before any blocking work begins. The cancel
+    // epoch is snapshotted so the task can bail out if the user navigates away.
+    let mut chains_state_w     = chains_state;
+    let mut chains_signature_w = chains_signature;
+    let mut chains_computing_w = chains_computing;
+    use_effect(move || {
+        let _ = messages.read();
+        let count = messages.peek().len();
+        if *chains_signature_w.peek() == count { return; }
+        chains_state_w.set(Vec::new());
+        chains_signature_w.set(count);
+        if count == 0 {
+            chains_computing_w.set(false);
+            return;
+        }
+        chains_computing_w.set(true);
+        let my_epoch = *cancel.peek();
+        spawn(async move {
+            tokio::task::yield_now().await;
+            if *cancel.peek() != my_epoch { return; }
+            // The clone here is intentionally a single shot because chain
+            // construction must see the full message set (chains span the log).
+            // It happens after yield_now so the "Computing…" frame paints first.
+            let msgs = messages.peek().clone();
+            let (tx, rx) = tokio::sync::oneshot::channel::<Vec<LifecycleChain>>();
+            rayon::spawn(move || {
+                let chains = build_lifecycle_chains(&msgs);
+                let _ = tx.send(chains);
+            });
+            if let Ok(chains) = rx.await {
+                if *cancel.peek() != my_epoch { return; }
+                chains_state_w.set(chains);
+                chains_computing_w.set(false);
+            }
+        });
+    });
+
+    // Read-only view of the chains signal, used by all downstream memos. While
+    // computing the cache is empty so downstream stats produce zero/empty
+    // results — the panel render branch shows a "Computing…" overlay instead.
+    let chains = chains_state;
 
     // Per-phase latency extractions
     let rfq_quote_lats  = use_memo(move || chains.read().iter().filter_map(|c| c.rfq_to_quote_us).collect::<Vec<_>>());
@@ -762,19 +886,22 @@ pub fn lifecycle_panel(
     let nos_er_stats    = use_memo(move || compute_phase_stats(&nos_er_lats.read()));
     let er_fill_stats   = use_memo(move || compute_phase_stats(&er_fill_lats.read()));
     // Draw the ECharts histogram whenever the expanded phase or latency data changes.
-    use_effect(move || {
-        let phase = *expanded_phase.read();
-        let Some(idx) = phase else { return };
-        let lats: Vec<i64> = match idx {
-            0 => rfq_quote_lats.read().clone(),
-            1 => quote_nos_lats.read().clone(),
-            2 => nos_er_lats.read().clone(),
-            3 => er_fill_lats.read().clone(),
-            _ => return,
-        };
-        let js = latency_hist_js(&lats);
-        spawn(async move { let _ = eval(&js).await; });
-    });
+    {
+        let chart_id = chart_id.clone();
+        use_effect(move || {
+            let phase = *expanded_phase.read();
+            let Some(idx) = phase else { return };
+            let lats: Vec<i64> = match idx {
+                0 => rfq_quote_lats.read().clone(),
+                1 => quote_nos_lats.read().clone(),
+                2 => nos_er_lats.read().clone(),
+                3 => er_fill_lats.read().clone(),
+                _ => return,
+            };
+            let js = latency_hist_js(&lats, &chart_id);
+            spawn(async move { let _ = eval(&js).await; });
+        });
+    }
 
     // Filtered + sorted chain list (capped at PAGE_SIZE for rendering)
     let filtered = use_memo(move || {
@@ -904,17 +1031,23 @@ pub fn lifecycle_panel(
         }
     });
 
+    let is_computing = *chains_computing.read();
+
     rsx! {
         div { class: "latency-panel",
 
             // ── Header ──────────────────────────────────────────────────────
             div { class: "panel-header",
                 div { class: "panel-title",
-                    span { class: "parse-stats", "{header_meta}" }
+                    if is_computing {
+                        span { class: "parse-stats", "Computing chain lifecycle…" }
+                    } else {
+                        span { class: "parse-stats", "{header_meta}" }
+                    }
                 }
                 if total_chains > 0 {
                     button {
-                        class: "btn-export-csv",
+                        class: "btn-icon",
                         onclick: move |_| {
                             let chains_snap = filtered.read().clone();
                             spawn(async move {
@@ -930,7 +1063,7 @@ pub fn lifecycle_panel(
                                 }
                             });
                         },
-                        "Export CSV"
+                        "⬇ CSV"
                     }
                 }
             }
@@ -1033,7 +1166,7 @@ pub fn lifecycle_panel(
                             span { class: "phase-detail-count", "{active_count} observations" }
                             span { class: "phase-detail-hint", "● click P50 · P95 · P99 to filter the chain table" }
                         }
-                        div { id: "latency-hist", class: "latency-hist-echarts" }
+                        div { id: "{chart_id}", class: "latency-hist-echarts" }
                         div { class: "phase-stats-table",
                             // Min (not clickable — it's a single extreme value)
                             div { class: "phase-stat-cell phase-stat-green",
@@ -1307,21 +1440,21 @@ pub fn lifecycle_panel(
 
 // ── ECharts histogram builder ─────────────────────────────────────────────────
 
-fn latency_hist_js(lats: &[i64]) -> String {
+fn latency_hist_js(lats: &[i64], el_id: &str) -> String {
     const BUCKETS: &[(&str, i64, i64, &str)] = &[
-        ("<10µs",      0,            10,       "#4ade80"),
-        ("10–50µs",    10,           50,       "#86efac"),
-        ("50–100µs",   50,           100,      "#a3e635"),
-        ("0.1–0.5ms",  100,          500,      "#facc15"),
-        ("0.5–1ms",    500,          1_000,    "#fb923c"),
-        ("1–2ms",      1_000,        2_000,    "#f97316"),
-        ("2–5ms",      2_000,        5_000,    "#ef4444"),
-        ("5–10ms",     5_000,        10_000,   "#dc2626"),
-        ("10–20ms",    10_000,       20_000,   "#b91c1c"),
-        ("20–50ms",    20_000,       50_000,   "#991b1b"),
-        ("50–100ms",   50_000,       100_000,  "#7f1d1d"),
-        ("100–500ms",  100_000,      500_000,  "#6b21a8"),
-        (">500ms",     500_000,      i64::MAX, "#4c1d95"),
+        ("<10µs",      0,            10,       "#2f6b2f"),
+        ("10–50µs",    10,           50,       "#4a7a4a"),
+        ("50–100µs",   50,           100,      "#6a8a3a"),
+        ("0.1–0.5ms",  100,          500,      "#b78427"),
+        ("0.5–1ms",    500,          1_000,    "#a06820"),
+        ("1–2ms",      1_000,        2_000,    "#8a541a"),
+        ("2–5ms",      2_000,        5_000,    "#b22222"),
+        ("5–10ms",     5_000,        10_000,   "#a01c1c"),
+        ("10–20ms",    10_000,       20_000,   "#8a1818"),
+        ("20–50ms",    20_000,       50_000,   "#7a1414"),
+        ("50–100ms",   50_000,       100_000,  "#691010"),
+        ("100–500ms",  100_000,      500_000,  "#7a3a8a"),
+        (">500ms",     500_000,      i64::MAX, "#5a2a6a"),
     ];
     let mut counts = vec![0u64; BUCKETS.len()];
     for &l in lats {
@@ -1338,7 +1471,7 @@ fn latency_hist_js(lats: &[i64]) -> String {
     format!(r#"
 (function init() {{
     if (typeof echarts === 'undefined') {{ setTimeout(init, 150); return; }}
-    var el = document.getElementById('latency-hist');
+    var el = document.getElementById('{el_id}');
     if (!el) {{ setTimeout(init, 150); return; }}
     var chart = echarts.getInstanceByDom(el) || echarts.init(el, null, {{renderer:'canvas'}});
     var labels = {labels};
@@ -1358,15 +1491,15 @@ fn latency_hist_js(lats: &[i64]) -> String {
             type: 'category',
             data: labels,
             axisLabel: {{
-                color: '#6b7280', fontSize: 10, rotate: 40, interval: 0
+                color: '#6b6356', fontSize: 10, rotate: 40, interval: 0
             }},
-            axisLine: {{ lineStyle: {{ color: '#374151' }} }},
+            axisLine: {{ lineStyle: {{ color: '#c9bfa9' }} }},
             axisTick: {{ show: false }}
         }},
         yAxis: {{
             type: 'value',
-            axisLabel: {{ color: '#6b7280', fontSize: 10 }},
-            splitLine: {{ lineStyle: {{ color: '#1f2937' }} }}
+            axisLabel: {{ color: '#6b6356', fontSize: 10 }},
+            splitLine: {{ lineStyle: {{ color: '#ede4cf' }} }}
         }},
         series: [{{
             type: 'bar',
@@ -1375,13 +1508,13 @@ fn latency_hist_js(lats: &[i64]) -> String {
             }}),
             barMaxWidth: 36,
             label: {{
-                show: true, position: 'top', color: '#9ca3af', fontSize: 9,
+                show: true, position: 'top', color: '#6b6356', fontSize: 9,
                 formatter: function(p) {{ return p.value > 0 ? p.value : ''; }}
             }}
         }}]
     }}, true);
 }})();
-"#, labels = labels_json, counts = counts_json, colors = colors_json)
+"#, labels = labels_json, counts = counts_json, colors = colors_json, el_id = el_id)
 }
 
 #[cfg(test)]

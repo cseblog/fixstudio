@@ -1,77 +1,79 @@
 use dioxus::prelude::*;
-use dioxus::document::eval;
 
-/// Hero landing screen shown before any data is loaded.
+use crate::sample::FIX_SPECS;
+
+/// Hero landing screen shown before any data is loaded. Acts as the welcome
+/// surface — branded perf stats up top, then direct CTAs (Load / Sample),
+/// with the textarea tucked underneath as the "paste" path.
 #[component]
-pub fn Hero() -> Element {
-    use_effect(move || {
-        eval(r#"
-            (function() {
-                function animCounter(id, target, dur) {
-                    var el = document.getElementById(id);
-                    if (!el) return;
-                    var t0 = performance.now();
-                    (function tick() {
-                        var p = Math.min((performance.now() - t0) / dur, 1);
-                        var v = Math.round((1 - Math.pow(1 - p, 3)) * target);
-                        el.textContent = (p >= 1 ? target : v).toLocaleString('en-US');
-                        if (p < 1) requestAnimationFrame(tick);
-                    })();
-                }
-                setTimeout(function() {
-                    animCounter('hero-msg-count',  1000000, 1600);
-                    animCounter('hero-parse-ms',   100,     1200);
-                    animCounter('hero-throughput', 631,     1000);
-                }, 150);
-            })();
-        "#);
-    });
-
+pub fn Hero(
+    on_load_file:   EventHandler<()>,
+    on_load_folder: EventHandler<()>,
+    on_load_sample: EventHandler<String>,
+    recent_files:   Vec<(String, String)>,
+    on_open_recent: EventHandler<String>,
+) -> Element {
     rsx! {
         div { class: "hero",
-            div { class: "hero-title",
-                span { class: "hero-icon", "⚡" }
-                h1 { "AiFIXParser.com" }
-                p { "Lightning fast FIX protocol parser & inspector" }
+            div { class: "hero-headline",
+                h1 { class: "hero-title-text", "Drop a FIX log to begin" }
+                p { class: "hero-sub", "Browse, inspect, validate and compare at native speed." }
             }
-            div { class: "hero-stats",
-                div { class: "hero-stat hero-stat-a",
-                    div { class: "hero-stat-value", id: "hero-msg-count", "0" }
-                    div { class: "hero-stat-unit", "messages" }
-                    div { class: "hero-stat-label", "parsed in one shot" }
+
+            div { class: "hero-cta-grid",
+                button {
+                    class: "hero-cta hero-cta-primary",
+                    onclick: move |_| on_load_file.call(()),
+                    span { class: "hero-cta-icon", "📄" }
+                    span { class: "hero-cta-label", "Load file" }
+                    span { class: "hero-cta-hint", "⌘O" }
                 }
-                div { class: "hero-stat hero-stat-featured",
-                    div { class: "hero-stat-value",
-                        span { id: "hero-parse-ms", "0" }
-                        span { class: "hero-stat-suffix", "ms" }
+                button {
+                    class: "hero-cta",
+                    onclick: move |_| on_load_folder.call(()),
+                    span { class: "hero-cta-icon", "📁" }
+                    span { class: "hero-cta-label", "Load folder" }
+                    span { class: "hero-cta-hint", "⌘⇧O" }
+                }
+            }
+
+            if !recent_files.is_empty() {
+                div { class: "hero-section",
+                    div { class: "hero-section-label", "Recent" }
+                    div { class: "hero-recent-list",
+                        for (path, name) in recent_files.iter() {
+                            {
+                                let p = path.clone();
+                                rsx! {
+                                    button {
+                                        class: "hero-recent-chip",
+                                        title: "{p}",
+                                        onclick: move |_| on_open_recent.call(p.clone()),
+                                        "{name}"
+                                    }
+                                }
+                            }
+                        }
                     }
-                    div { class: "hero-stat-unit", "parse time" }
-                    div { class: "hero-stat-label", "for 1,000,000 messages" }
                 }
-                div { class: "hero-stat hero-stat-b",
-                    div { class: "hero-stat-value",
-                        span { id: "hero-throughput", "0" }
-                        span { class: "hero-stat-suffix", " MiB/s" }
+            }
+
+            div { class: "hero-section",
+                div { class: "hero-section-label", "Samples" }
+                div { class: "hero-sample-list",
+                    for spec in FIX_SPECS.iter() {
+                        {
+                            let s = spec.to_string();
+                            rsx! {
+                                button {
+                                    class: "hero-sample-chip",
+                                    onclick: move |_| on_load_sample.call(s.clone()),
+                                    "{spec}"
+                                }
+                            }
+                        }
                     }
-                    div { class: "hero-stat-unit", "throughput" }
-                    div { class: "hero-stat-label", "streaming parse" }
                 }
-            }
-            div { class: "hero-demo",
-                div { class: "hero-demo-label",
-                    span { "Simulating 1,000,000 FIX message parse…" }
-                    span { class: "hero-demo-time", "100 ms" }
-                }
-                div { class: "hero-bar-track",
-                    div { class: "hero-bar-fill" }
-                }
-            }
-            p { class: "hero-hint",
-                "Paste FIX data and click "
-                span { class: "hero-hint-kbd", "Process" }
-                "  ·  "
-                span { class: "hero-hint-kbd", "Load file" }
-                "  ·  or pick a sample from the toolbar"
             }
         }
     }

@@ -6,10 +6,12 @@ mod export;
 mod fill_quality;
 mod model;
 mod parser;
+mod recents;
 mod sample;
 mod session_health;
 mod session_summary;
 mod style;
+mod tab;
 mod types;
 mod validator;
 

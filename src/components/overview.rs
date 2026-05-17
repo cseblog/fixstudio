@@ -1,4 +1,4 @@
-//! Overview Session Analysis — three-tab panel: Summary, Fill Quality, Health.
+//! Overview Session Analysis — two-tab panel: Summary, Fill Quality.
 
 use dioxus::prelude::*;
 use dioxus::document::eval;
@@ -6,11 +6,6 @@ use dioxus::document::eval;
 use crate::export::{messages_to_csv, now_tag};
 use crate::fill_quality::{build_scorecard, FillQualityScorecard, ScorecardRow};
 use crate::model::FixMessage;
-use crate::session_health::{
-    HealthDetail, HealthIssue, HealthIssueKind, IssueSeverity, SessionHealthReport,
-    HeartbeatGapDetail, SequenceGapDetail, ResendDetail, ReconnectDetail,
-    RateBurstDetail, LateCancelDetail, RejectedCancelDetail, parse_time_us,
-};
 use crate::session_summary::{build_session_summary, SessionSummary};
 
 // ── Tab enum ──────────────────────────────────────────────────────────────────
@@ -19,7 +14,6 @@ use crate::session_summary::{build_session_summary, SessionSummary};
 enum OverviewTab {
     Summary,
     FillQuality,
-    Health,
 }
 
 // ── Fill Quality view toggle ───────────────────────────────────────────────────
@@ -59,19 +53,37 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
     let fq_view: Signal<FqView>                        = use_signal(|| FqView::Charts);
     let mut computed: Signal<Option<OverviewData>>     = use_signal(|| None);
 
-    // Off-thread computation via rayon — never blocks the render thread.
+    // Per-instance DOM-id suffix so two overview_panel mounts (compare mode)
+    // don't share the same `getElementById('summary-fill-pie')` etc — without
+    // this, ECharts only attaches to the first match and the B pane is blank.
+    let chart_ns: String = use_hook(|| {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        format!("ov{}", N.fetch_add(1, Ordering::Relaxed))
+    });
+    let id_summary_fill   = format!("summary-fill-pie-{chart_ns}");
+    let id_summary_reject = format!("summary-reject-pie-{chart_ns}");
+    let id_fq_bar         = format!("fq-bar-chart-{chart_ns}");
+    let id_fq_tree        = format!("fq-tree-chart-{chart_ns}");
+
+    // Off-thread computation via rayon. The Vec clone (which can run into
+    // hundreds of MB for 1M-message tabs) is deferred by one yield so the
+    // "Computing session report…" loading state paints first — otherwise the
+    // previous panel appears frozen while the runtime task is busy cloning.
     use_effect(move || {
-        let msgs: Vec<FixMessage> = messages.read().clone();
+        let _ = messages.read();
         computed.set(None);
-        let (tx, rx) = tokio::sync::oneshot::channel::<OverviewData>();
-        rayon::spawn(move || {
-            let data = OverviewData {
-                summary:   build_session_summary(&msgs),
-                scorecard: build_scorecard(&msgs),
-            };
-            let _ = tx.send(data);
-        });
         spawn(async move {
+            tokio::task::yield_now().await;
+            let msgs: Vec<FixMessage> = messages.peek().clone();
+            let (tx, rx) = tokio::sync::oneshot::channel::<OverviewData>();
+            rayon::spawn(move || {
+                let data = OverviewData {
+                    summary:   build_session_summary(&msgs),
+                    scorecard: build_scorecard(&msgs),
+                };
+                let _ = tx.send(data);
+            });
             if let Ok(data) = rx.await {
                 computed.set(Some(data));
             }
@@ -79,18 +91,24 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
     });
 
     // Draw / redraw ECharts whenever the tab or data changes.
+    let id_fill_e   = id_summary_fill.clone();
+    let id_reject_e = id_summary_reject.clone();
+    let id_bar_e    = id_fq_bar.clone();
+    let id_tree_e   = id_fq_tree.clone();
     use_effect(move || {
         let tab  = active_tab.read().clone();
         let view = fq_view.read().clone();
+        let id_fill   = id_fill_e.clone();
+        let id_reject = id_reject_e.clone();
+        let id_bar    = id_bar_e.clone();
+        let id_tree   = id_tree_e.clone();
         let maybe_js = {
             let data_ref = computed.read();
             match (&tab, &view) {
                 (OverviewTab::Summary, _) =>
-                    data_ref.as_ref().map(|d| build_summary_charts_js(&d.scorecard)),
+                    data_ref.as_ref().map(|d| build_summary_charts_js(&d.scorecard, &id_fill, &id_reject)),
                 (OverviewTab::FillQuality, FqView::Charts) =>
-                    data_ref.as_ref().map(|d| build_charts_js(&d.scorecard)),
-                (OverviewTab::Health, _) =>
-                    data_ref.as_ref().map(|d| build_health_charts_js(&d.summary.health)),
+                    data_ref.as_ref().map(|d| build_charts_js(&d.scorecard, &id_bar, &id_tree)),
                 _ => None,
             }
         };
@@ -118,7 +136,7 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
                     }
                 }
                 button {
-                    class: "btn-export-csv",
+                    class: "btn-icon",
                     onclick: move |_| {
                         let snap: Vec<FixMessage> = messages.read().clone();
                         spawn(async move {
@@ -134,7 +152,7 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
                             }
                         });
                     },
-                    "Export CSV"
+                    "⬇ CSV"
                 }
             }
 
@@ -155,30 +173,20 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
                     },
                     "Fill Quality"
                 }
-                button {
-                    class: if tab_val == OverviewTab::Health
-                        { "overview-tab overview-tab-active" } else { "overview-tab" },
-                    onclick: move |_| active_tab.set(OverviewTab::Health),
-                    "Health"
-                    if let Some(ref d) = data_opt {
-                        if !d.summary.health.issues.is_empty() {
-                            span { class: "tab-badge-warn",
-                                "{d.summary.health.issues.len()}"
-                            }
-                        }
-                    }
-                }
             }
 
             // ── Tab content ──────────────────────────────────────────────────
             div { class: "overview-content",
                 if let Some(data) = data_opt {
                     {match tab_val {
-                        OverviewTab::Summary     => render_summary(&data.summary, &data.scorecard),
+                        OverviewTab::Summary     => render_summary(
+                            &data.summary, &data.scorecard,
+                            &id_summary_fill, &id_summary_reject,
+                        ),
                         OverviewTab::FillQuality => render_fill_quality(
                             &data.scorecard, sort_col, sort_asc, drill_counterparty, &drill_val, fq_view,
+                            &id_fq_bar, &id_fq_tree,
                         ),
-                        OverviewTab::Health      => render_health(&data.summary.health),
                     }}
                 } else {
                     div { class: "overview-loading",
@@ -192,7 +200,12 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
 
 // ── Summary tab ───────────────────────────────────────────────────────────────
 
-fn render_summary(s: &SessionSummary, sc: &crate::fill_quality::FillQualityScorecard) -> Element {
+fn render_summary(
+    s: &SessionSummary,
+    sc: &crate::fill_quality::FillQualityScorecard,
+    id_summary_fill: &str,
+    id_summary_reject: &str,
+) -> Element {
     let stats       = &s.order_stats;
     let lats        = &s.latency_stats;
     let has_cp_data = !sc.rows.is_empty();
@@ -314,11 +327,11 @@ fn render_summary(s: &SessionSummary, sc: &crate::fill_quality::FillQualityScore
                 div { class: "summary-charts",
                     div { class: "summary-chart-block",
                         p { class: "summary-chart-label", "Fills by Counterparty" }
-                        div { id: "summary-fill-pie", class: "summary-pie" }
+                        div { id: "{id_summary_fill}", class: "summary-pie" }
                     }
                     div { class: "summary-chart-block",
                         p { class: "summary-chart-label", "Rejects by Counterparty" }
-                        div { id: "summary-reject-pie", class: "summary-pie" }
+                        div { id: "{id_summary_reject}", class: "summary-pie" }
                     }
                 }
             }
@@ -335,6 +348,8 @@ fn render_fill_quality(
     mut drill_counterparty: Signal<Option<String>>,
     drill:                  &Option<String>,
     mut fq_view:            Signal<FqView>,
+    id_fq_bar:              &str,
+    id_fq_tree:             &str,
 ) -> Element {
     let view_val     = fq_view.read().clone();
     let sort_col_val = sort_col.read().clone();
@@ -383,13 +398,13 @@ fn render_fill_quality(
                         p { class: "fq-chart-label",
                             "Fill Rate & Reject Rate by Counterparty"
                         }
-                        div { id: "fq-bar-chart", class: "fq-chart" }
+                        div { id: "{id_fq_bar}", class: "fq-chart" }
                     }
                     div { class: "fq-chart-section",
                         p { class: "fq-chart-label",
                             "Order Volume · Counterparty → Symbol  (click to drill down)"
                         }
-                        div { id: "fq-tree-chart", class: "fq-treemap" }
+                        div { id: "{id_fq_tree}", class: "fq-treemap" }
                     }
                 }
 
@@ -532,156 +547,28 @@ fn sort_rows(rows: &mut Vec<ScorecardRow>, col: &SortCol, asc: bool) {
     });
 }
 
-// ── Health tab ────────────────────────────────────────────────────────────────
-
-fn render_health(report: &SessionHealthReport) -> Element {
-    if report.issues.is_empty() {
-        return rsx! {
-            div { class: "health-empty",
-                span { class: "health-ok-icon", "✓" }
-                span { "No issues detected. Session looks healthy." }
-            }
-        };
-    }
-
-    // Pre-compute all display data before entering RSX.
-    struct Card {
-        idx:             usize,
-        kind_label:      &'static str,
-        sev_class:       &'static str,
-        sev_icon:        &'static str,
-        technical_desc:  String,
-        business_impact: String,
-        detail_lines:    Vec<String>,
-    }
-
-    let cards: Vec<Card> = report.issues.iter().enumerate().map(|(idx, issue)| {
-        let (sev_class, sev_icon) = match issue.severity {
-            IssueSeverity::Critical => ("health-icon health-critical", "●"),
-            IssueSeverity::Warning  => ("health-icon health-warning",  "▲"),
-            IssueSeverity::Info     => ("health-icon health-info",     "ℹ"),
-        };
-        Card {
-            idx,
-            kind_label:      health_kind_label(&issue.kind),
-            sev_class,
-            sev_icon,
-            technical_desc:  issue.technical_desc.clone(),
-            business_impact: issue.business_impact.clone(),
-            detail_lines:    health_detail_lines(issue),
-        }
-    }).collect();
-
-    rsx! {
-        div { class: "health-list",
-            for card in cards.iter() {
-                div { class: "health-card",
-                    div { class: "health-card-header",
-                        span { class: "{card.sev_class}", "{card.sev_icon}" }
-                        span { class: "health-kind", "{card.kind_label}" }
-                        span { class: "health-tech-desc", "{card.technical_desc}" }
-                    }
-                    div { class: "health-impact", "{card.business_impact}" }
-                    if !card.detail_lines.is_empty() {
-                        div { class: "health-detail-lines",
-                            for line in card.detail_lines.iter() {
-                                div { class: "health-detail-line", "{line}" }
-                            }
-                        }
-                    }
-                    div { id: "health-chart-{card.idx}", class: "health-chart" }
-                }
-            }
-        }
-    }
-}
-
-fn health_kind_label(kind: &HealthIssueKind) -> &'static str {
-    match kind {
-        HealthIssueKind::HeartbeatGap     => "Heartbeat Gap",
-        HealthIssueKind::SequenceGap      => "Sequence Gap",
-        HealthIssueKind::ExcessiveResends => "Excessive Resends",
-        HealthIssueKind::Reconnect        => "Reconnect",
-        HealthIssueKind::MessageRateBurst => "Message Rate Burst",
-        HealthIssueKind::LateCancel       => "Late Cancel",
-        HealthIssueKind::RejectedCancel   => "Rejected Cancel",
-    }
-}
-
-/// Per-rule text rows shown below the business impact in each card.
-fn health_detail_lines(issue: &HealthIssue) -> Vec<String> {
-    match &issue.detail {
-        HealthDetail::HeartbeatGaps(d) => d.gaps.iter().take(5)
-            .map(|g| format!("at {}  —  {}ms", g.time, g.gap_ms))
-            .collect(),
-        HealthDetail::SequenceGaps(d) => d.gaps.iter().take(8)
-            .map(|g| format!("{}→{}  at {}  ({} missing)", g.from_seq, g.to_seq, g.time, g.missing))
-            .collect(),
-        HealthDetail::Resends(d) => d.instances.iter().take(5)
-            .map(|r| if r.end_seq == 0 {
-                format!("at {}  —  BeginSeq={}", r.time, r.begin_seq)
-            } else {
-                format!("at {}  —  seq {}→{}", r.time, r.begin_seq, r.end_seq)
-            })
-            .collect(),
-        HealthDetail::Reconnects(d) => d.logons.iter()
-            .map(|l| if l.reset_seq {
-                format!("{}  —  session reset  (seq={})", l.time, l.seq_num)
-            } else {
-                format!("{}  —  reconnect  (seq={})", l.time, l.seq_num)
-            })
-            .collect(),
-        HealthDetail::RateBursts(d) => {
-            let mut burst_buckets: Vec<(&str, usize)> = d.burst_indices.iter()
-                .filter_map(|&i| d.buckets.get(i))
-                .map(|b| (b.second_label.as_str(), b.count))
-                .collect();
-            burst_buckets.sort_by(|a, b| b.1.cmp(&a.1));
-            burst_buckets.iter().take(5)
-                .map(|(t, c)| format!("{}  —  {} msg/sec", t, c))
-                .collect()
-        },
-        HealthDetail::LateCancels(d) => {
-            let mut cases = d.cases.clone();
-            cases.sort_by(|a, b| b.lag_ms.cmp(&a.lag_ms));
-            cases.iter().take(5)
-                .map(|c| format!("{}  —  {}ms after fill", c.cl_ord_id, c.lag_ms))
-                .collect()
-        },
-        HealthDetail::RejectedCancels(d) => {
-            let mut counts: std::collections::HashMap<&str, usize> =
-                std::collections::HashMap::new();
-            for r in &d.rejections {
-                *counts.entry(r.reason_text.as_str()).or_insert(0) += 1;
-            }
-            let mut v: Vec<(&str, usize)> = counts.into_iter().collect();
-            v.sort_by(|a, b| b.1.cmp(&a.1));
-            v.iter().map(|(reason, count)| format!("{reason}: {count}")).collect()
-        },
-    }
-}
 
 // ── ECharts JS builders ───────────────────────────────────────────────────────
 
 /// Build JS for the two Summary-tab donut pies: fills & rejects by counterparty.
-fn build_summary_charts_js(sc: &FillQualityScorecard) -> String {
+fn build_summary_charts_js(sc: &FillQualityScorecard, fill_id: &str, reject_id: &str) -> String {
     let fill_opt   = serde_json::to_string(&summary_fill_pie(sc)).unwrap_or_default();
     let reject_opt = serde_json::to_string(&summary_reject_pie(sc)).unwrap_or_default();
     format!(r#"
 (function init() {{
     if (typeof echarts === 'undefined') {{ setTimeout(init, 150); return; }}
-    var fe = document.getElementById('summary-fill-pie');
+    var fe = document.getElementById('{fill_id}');
     if (fe) {{
         var fc = echarts.getInstanceByDom(fe) || echarts.init(fe, null, {{renderer:'canvas'}});
         fc.setOption({fill_opt}, true);
     }}
-    var re = document.getElementById('summary-reject-pie');
+    var re = document.getElementById('{reject_id}');
     if (re) {{
         var rc = echarts.getInstanceByDom(re) || echarts.init(re, null, {{renderer:'canvas'}});
         rc.setOption({reject_opt}, true);
     }}
 }})();
-"#, fill_opt = fill_opt, reject_opt = reject_opt)
+"#, fill_opt = fill_opt, reject_opt = reject_opt, fill_id = fill_id, reject_id = reject_id)
 }
 
 /// Collapse raw `(name, value)` pairs to top-5 + "Others" bucket.
@@ -742,7 +629,7 @@ fn summary_pie_option(name: &str, data: Vec<serde_json::Value>) -> serde_json::V
             "bottom": 2,
             "left": "center",
             "data": legend_names,
-            "textStyle": { "color": "#888890", "fontSize": 10 },
+            "textStyle": { "color": "#6b6356", "fontSize": 10 },
             "itemWidth": 8,
             "itemHeight": 8,
             "itemGap": 8
@@ -756,31 +643,31 @@ fn summary_pie_option(name: &str, data: Vec<serde_json::Value>) -> serde_json::V
             "label": { "show": false },
             "labelLine": { "show": false },
             "emphasis": {
-                "label": { "show": true, "fontSize": 11, "fontWeight": "bold", "color": "#dddde3" }
+                "label": { "show": true, "fontSize": 11, "fontWeight": "bold", "color": "#1c1a17" }
             },
             "data": data
         }]
     })
 }
 
-fn build_charts_js(sc: &FillQualityScorecard) -> String {
+fn build_charts_js(sc: &FillQualityScorecard, bar_id: &str, tree_id: &str) -> String {
     let bar  = serde_json::to_string(&bar_option(sc)).unwrap_or_default();
     let tree = serde_json::to_string(&treemap_option(sc)).unwrap_or_default();
     format!(r#"
 (function init() {{
     if (typeof echarts === 'undefined') {{ setTimeout(init, 150); return; }}
-    var be = document.getElementById('fq-bar-chart');
+    var be = document.getElementById('{bar_id}');
     if (be) {{
         var b = echarts.getInstanceByDom(be) || echarts.init(be, null, {{renderer:'canvas'}});
         b.setOption({bar}, true);
     }}
-    var te = document.getElementById('fq-tree-chart');
+    var te = document.getElementById('{tree_id}');
     if (te) {{
         var t = echarts.getInstanceByDom(te) || echarts.init(te, null, {{renderer:'canvas'}});
         t.setOption({tree}, true);
     }}
 }})();
-"#)
+"#, bar = bar, tree = tree, bar_id = bar_id, tree_id = tree_id)
 }
 
 fn r1(v: f64) -> f64 { (v * 10.0).round() / 10.0 }
@@ -800,51 +687,51 @@ fn bar_option(sc: &FillQualityScorecard) -> serde_json::Value {
         "tooltip": { "trigger": "axis", "axisPointer": { "type": "shadow" } },
         "legend": {
             "data": ["Fill %", "Reject %", "Ack ms"],
-            "textStyle": { "color": "#9ca3af" },
+            "textStyle": { "color": "#6b6356" },
             "top": 4
         },
         "grid": { "left": "2%", "right": "18%", "top": "44px", "bottom": "4px", "containLabel": true },
         "xAxis": [
             {
                 "type": "value", "max": 100,
-                "axisLabel": { "color": "#6b7280", "formatter": "{value}%" },
-                "splitLine": { "lineStyle": { "color": "#374151" } }
+                "axisLabel": { "color": "#6b6356", "formatter": "{value}%" },
+                "splitLine": { "lineStyle": { "color": "#c9bfa9" } }
             },
             {
                 "type": "value", "name": "ms",
-                "nameTextStyle": { "color": "#6b7280" },
-                "axisLabel": { "color": "#6b7280" },
+                "nameTextStyle": { "color": "#6b6356" },
+                "axisLabel": { "color": "#6b6356" },
                 "splitLine": { "show": false }
             }
         ],
         "yAxis": {
             "type": "category",
             "data": names,
-            "axisLabel": { "color": "#d1d5db", "fontSize": 11, "fontFamily": "monospace" }
+            "axisLabel": { "color": "#1c1a17", "fontSize": 11, "fontFamily": "monospace" }
         },
         "series": [
             {
                 "name": "Fill %", "type": "bar", "xAxisIndex": 0,
                 "data": fill,
-                "itemStyle": { "color": "#4ade80", "borderRadius": [0,3,3,0] },
+                "itemStyle": { "color": "#2f6b2f", "borderRadius": [0,3,3,0] },
                 "barMaxWidth": 18,
-                "label": { "show": true, "position": "right", "color": "#6b7280",
+                "label": { "show": true, "position": "right", "color": "#6b6356",
                             "fontSize": 10, "formatter": "{c}%" }
             },
             {
                 "name": "Reject %", "type": "bar", "xAxisIndex": 0,
                 "data": reject,
-                "itemStyle": { "color": "#f87171", "borderRadius": [0,3,3,0] },
+                "itemStyle": { "color": "#b22222", "borderRadius": [0,3,3,0] },
                 "barMaxWidth": 18,
-                "label": { "show": true, "position": "right", "color": "#6b7280",
+                "label": { "show": true, "position": "right", "color": "#6b6356",
                             "fontSize": 10, "formatter": "{c}%" }
             },
             {
                 "name": "Ack ms", "type": "bar", "xAxisIndex": 1,
                 "data": ack_ms,
-                "itemStyle": { "color": "#60a5fa", "borderRadius": [0,3,3,0] },
+                "itemStyle": { "color": "#15467a", "borderRadius": [0,3,3,0] },
                 "barMaxWidth": 18,
-                "label": { "show": true, "position": "right", "color": "#6b7280",
+                "label": { "show": true, "position": "right", "color": "#6b6356",
                             "fontSize": 10, "formatter": "{c}ms" }
             }
         ]
@@ -917,28 +804,28 @@ fn treemap_option(sc: &FillQualityScorecard) -> serde_json::Value {
             "visibleMin": 100,
             "label": {
                 "show": true,
-                "color": "#fff",
+                "color": "#1c1a17",
                 "fontSize": 11,
                 "overflow": "truncate"
             },
             "upperLabel": {
                 "show": true,
                 "height": 26,
-                "color": "#fff",
+                "color": "#1c1a17",
                 "fontWeight": "bold"
             },
             "breadcrumb": {
                 "show": true,
                 "height": 28,
-                "itemStyle": { "color": "#1e293b", "shadowBlur": 0 },
-                "textStyle": { "color": "#e5e7eb" }
+                "itemStyle": { "color": "#c9bfa9", "shadowBlur": 0 },
+                "textStyle": { "color": "#1c1a17" }
             },
             "emphasis": { "focus": "descendant" },
             "levels": [
                 {
                     "itemStyle": {
                         "borderWidth": 6,
-                        "borderColor": "#0f172a",
+                        "borderColor": "#c9bfa9",
                         "gapWidth": 6
                     },
                     "upperLabel": {
@@ -946,7 +833,7 @@ fn treemap_option(sc: &FillQualityScorecard) -> serde_json::Value {
                         "height": 28,
                         "fontSize": 13,
                         "fontWeight": "bold",
-                        "color": "#fff"
+                        "color": "#1c1a17"
                     }
                 },
                 {
@@ -960,7 +847,7 @@ fn treemap_option(sc: &FillQualityScorecard) -> serde_json::Value {
                         "show": true,
                         "height": 20,
                         "fontSize": 11,
-                        "color": "#fff"
+                        "color": "#1c1a17"
                     }
                 },
                 {
@@ -974,248 +861,10 @@ fn treemap_option(sc: &FillQualityScorecard) -> serde_json::Value {
                     "label": {
                         "show": true,
                         "fontSize": 10,
-                        "color": "#fff"
+                        "color": "#1c1a17"
                     }
                 }
             ],
-            "data": data
-        }]
-    })
-}
-
-// ── Health tab ECharts builders ───────────────────────────────────────────────
-
-fn build_health_charts_js(report: &SessionHealthReport) -> String {
-    let body: Vec<String> = report.issues.iter().enumerate()
-        .filter_map(|(idx, issue)| health_issue_chart_js(idx, issue))
-        .collect();
-    if body.is_empty() { return String::new(); }
-    format!(
-        "(function init() {{\n  \
-         if (typeof echarts === 'undefined') {{ setTimeout(init, 150); return; }}\n  \
-         {body}\n}})();\n",
-        body = body.join("\n  ")
-    )
-}
-
-fn health_issue_chart_js(idx: usize, issue: &HealthIssue) -> Option<String> {
-    let opt = match &issue.detail {
-        HealthDetail::HeartbeatGaps(d)   => health_hb_chart(d),
-        HealthDetail::SequenceGaps(d)    => health_seq_chart(d),
-        HealthDetail::Resends(d)         => health_resend_chart(d),
-        HealthDetail::Reconnects(d)      => health_reconnect_chart(d),
-        HealthDetail::RateBursts(d)      => health_burst_chart(d),
-        HealthDetail::LateCancels(d)     => health_late_cancel_chart(d),
-        HealthDetail::RejectedCancels(d) => health_rejected_cancel_chart(d),
-    };
-    let opt_json = serde_json::to_string(&opt).ok()?;
-    Some(format!(
-        "var e{idx}=document.getElementById('health-chart-{idx}');\
-         if(e{idx}){{var c{idx}=echarts.getInstanceByDom(e{idx})||\
-         echarts.init(e{idx},null,{{renderer:'canvas'}});\
-         c{idx}.setOption({opt_json},true);}}",
-        idx = idx, opt_json = opt_json
-    ))
-}
-
-// Rule 1 — Heartbeat Gap: scatter X=time, Y=gap_ms, threshold markLine.
-fn health_hb_chart(d: &HeartbeatGapDetail) -> serde_json::Value {
-    let labels: Vec<&str> = d.gaps.iter().map(|g| g.time.as_str()).collect();
-    let values: Vec<i64>  = d.gaps.iter().map(|g| g.gap_ms).collect();
-    let threshold_ms      = d.configured_interval_sec * 1_500;
-    serde_json::json!({
-        "backgroundColor": "transparent",
-        "tooltip": { "trigger": "axis" },
-        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
-        "xAxis": { "type": "category", "data": labels,
-            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
-        "yAxis": { "type": "value",
-            "axisLabel": { "color": "#6b7280", "formatter": "{value}ms" },
-            "splitLine": { "lineStyle": { "color": "#374151" } } },
-        "series": [{
-            "type": "scatter", "data": values,
-            "symbolSize": 9, "itemStyle": { "color": "#b8922a" },
-            "markLine": {
-                "silent": true,
-                "lineStyle": { "color": "#b8922a", "type": "dashed", "opacity": 0.5 },
-                "label": { "formatter": "threshold", "color": "#b8922a", "fontSize": 10 },
-                "data": [{ "yAxis": threshold_ms }]
-            }
-        }]
-    })
-}
-
-// Rule 2 — Sequence Gap: bar X=gap label, Y=missing count.
-fn health_seq_chart(d: &SequenceGapDetail) -> serde_json::Value {
-    let labels: Vec<String> = d.gaps.iter()
-        .map(|g| format!("{}→{}", g.from_seq, g.to_seq))
-        .collect();
-    let values: Vec<u64> = d.gaps.iter().map(|g| g.missing).collect();
-    serde_json::json!({
-        "backgroundColor": "transparent",
-        "tooltip": { "trigger": "axis", "formatter": "{b}<br/>Missing: {c}" },
-        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
-        "xAxis": { "type": "category", "data": labels,
-            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
-        "yAxis": { "type": "value",
-            "axisLabel": { "color": "#6b7280" },
-            "splitLine": { "lineStyle": { "color": "#374151" } } },
-        "series": [{
-            "type": "bar", "data": values, "barMaxWidth": 40,
-            "itemStyle": { "color": "#f87171", "borderRadius": [3,3,0,0] },
-            "label": { "show": true, "position": "top", "color": "#9ca3af", "fontSize": 10 }
-        }]
-    })
-}
-
-// Rule 3 — Excessive Resends: scatter timeline, Y=range size requested.
-fn health_resend_chart(d: &ResendDetail) -> serde_json::Value {
-    let labels: Vec<&str> = d.instances.iter().map(|r| r.time.as_str()).collect();
-    let values: Vec<u64>  = d.instances.iter()
-        .map(|r| if r.end_seq > r.begin_seq { r.end_seq - r.begin_seq + 1 } else { 1 })
-        .collect();
-    serde_json::json!({
-        "backgroundColor": "transparent",
-        "tooltip": { "trigger": "axis", "formatter": "{b}<br/>Range: {c} messages" },
-        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
-        "xAxis": { "type": "category", "data": labels,
-            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
-        "yAxis": { "type": "value", "name": "range",
-            "axisLabel": { "color": "#6b7280" },
-            "splitLine": { "lineStyle": { "color": "#374151" } } },
-        "series": [{
-            "type": "scatter", "data": values,
-            "symbolSize": 9, "itemStyle": { "color": "#fb923c" }
-        }]
-    })
-}
-
-// Rule 4 — Reconnects: bar showing gap in seconds before each reconnect logon.
-// Amber = mid-session reconnect; grey = clean session reset.
-fn health_reconnect_chart(d: &ReconnectDetail) -> serde_json::Value {
-    if d.logons.len() < 2 { return serde_json::json!({}); }
-    let mut labels:   Vec<String>            = Vec::new();
-    let mut gap_data: Vec<serde_json::Value> = Vec::new();
-    for window in d.logons.windows(2) {
-        let gap_sec = parse_time_us(&window[1].time)
-            .zip(parse_time_us(&window[0].time))
-            .map(|(c, p)| ((c - p).abs() / 1_000_000) as i64)
-            .unwrap_or(0);
-        labels.push(window[1].time.clone());
-        let color = if window[1].reset_seq { "#6b7280" } else { "#b8922a" };
-        gap_data.push(serde_json::json!({ "value": gap_sec, "itemStyle": { "color": color } }));
-    }
-    serde_json::json!({
-        "backgroundColor": "transparent",
-        "tooltip": { "trigger": "axis", "formatter": "{b}<br/>Gap before logon: {c}s" },
-        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
-        "xAxis": { "type": "category", "data": labels,
-            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
-        "yAxis": { "type": "value", "name": "sec",
-            "axisLabel": { "color": "#6b7280", "formatter": "{value}s" },
-            "splitLine": { "lineStyle": { "color": "#374151" } } },
-        "series": [{
-            "type": "bar", "data": gap_data, "barMaxWidth": 30,
-            "label": { "show": true, "position": "top",
-                       "formatter": "{c}s", "color": "#9ca3af", "fontSize": 10 }
-        }]
-    })
-}
-
-// Rule 5 — Rate Burst: bar chart of msg/sec, down-sampled to ≤200 points, threshold line.
-fn health_burst_chart(d: &RateBurstDetail) -> serde_json::Value {
-    const MAX_POINTS: usize = 200;
-    let (labels, counts): (Vec<String>, Vec<usize>) = if d.buckets.len() <= MAX_POINTS {
-        (
-            d.buckets.iter().map(|b| b.second_label.clone()).collect(),
-            d.buckets.iter().map(|b| b.count).collect(),
-        )
-    } else {
-        let group = (d.buckets.len() + MAX_POINTS - 1) / MAX_POINTS;
-        let mut lbs = Vec::new();
-        let mut cts = Vec::new();
-        for chunk in d.buckets.chunks(group) {
-            lbs.push(chunk[0].second_label.clone());
-            cts.push(chunk.iter().map(|b| b.count).max().unwrap_or(0));
-        }
-        (lbs, cts)
-    };
-    let threshold = d.threshold;
-    let data: Vec<serde_json::Value> = counts.iter().map(|&c| {
-        if c > threshold {
-            serde_json::json!({ "value": c, "itemStyle": { "color": "#b8922a" } })
-        } else {
-            serde_json::json!(c)
-        }
-    }).collect();
-    serde_json::json!({
-        "backgroundColor": "transparent",
-        "tooltip": { "trigger": "axis" },
-        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
-        "xAxis": { "type": "category", "data": labels,
-            "axisLabel": { "color": "#6b7280", "fontSize": 10 },
-            "axisTick": { "show": false } },
-        "yAxis": { "type": "value",
-            "axisLabel": { "color": "#6b7280" },
-            "splitLine": { "lineStyle": { "color": "#374151" } } },
-        "series": [{
-            "type": "bar", "data": data, "barMaxWidth": 6,
-            "itemStyle": { "color": "#4b5563", "borderRadius": [1,1,0,0] },
-            "markLine": {
-                "silent": true,
-                "lineStyle": { "color": "#b8922a", "type": "dashed", "opacity": 0.7 },
-                "label": { "formatter": "threshold", "color": "#b8922a", "fontSize": 10 },
-                "data": [{ "yAxis": threshold }]
-            }
-        }]
-    })
-}
-
-// Rule 6 — Late Cancels: scatter X=cancel time, Y=lag ms.
-fn health_late_cancel_chart(d: &LateCancelDetail) -> serde_json::Value {
-    let labels: Vec<&str> = d.cases.iter().map(|c| c.cancel_time.as_str()).collect();
-    let values: Vec<i64>  = d.cases.iter().map(|c| c.lag_ms).collect();
-    serde_json::json!({
-        "backgroundColor": "transparent",
-        "tooltip": { "trigger": "axis", "formatter": "{b}<br/>Lag: {c}ms" },
-        "grid": { "left": "3%", "right": "3%", "top": "14px", "bottom": "40px", "containLabel": true },
-        "xAxis": { "type": "category", "data": labels,
-            "axisLabel": { "color": "#6b7280", "fontSize": 10, "rotate": 30 } },
-        "yAxis": { "type": "value",
-            "axisLabel": { "color": "#6b7280", "formatter": "{value}ms" },
-            "splitLine": { "lineStyle": { "color": "#374151" } } },
-        "series": [{
-            "type": "scatter", "data": values,
-            "symbolSize": 9, "itemStyle": { "color": "#fb923c" }
-        }]
-    })
-}
-
-// Rule 7 — Rejected Cancels: donut pie by rejection reason (tag 102).
-fn health_rejected_cancel_chart(d: &RejectedCancelDetail) -> serde_json::Value {
-    let mut counts: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
-    for r in &d.rejections {
-        *counts.entry(r.reason_text.as_str()).or_insert(0) += 1;
-    }
-    let mut pairs: Vec<(&str, u64)> = counts.into_iter().collect();
-    pairs.sort_by(|a, b| b.1.cmp(&a.1));
-    let data: Vec<serde_json::Value> = pairs.iter()
-        .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
-        .collect();
-    serde_json::json!({
-        "backgroundColor": "transparent",
-        "tooltip": { "trigger": "item", "formatter": "{b}: {c} ({d}%)" },
-        "legend": {
-            "orient": "horizontal", "bottom": 2, "left": "center",
-            "textStyle": { "color": "#888890", "fontSize": 10 },
-            "itemWidth": 8, "itemHeight": 8
-        },
-        "series": [{
-            "type": "pie", "radius": ["38%", "60%"], "center": ["50%", "42%"],
-            "label": { "show": false }, "labelLine": { "show": false },
-            "emphasis": {
-                "label": { "show": true, "fontSize": 11, "fontWeight": "bold", "color": "#dddde3" }
-            },
             "data": data
         }]
     })

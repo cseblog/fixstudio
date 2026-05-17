@@ -1,11 +1,31 @@
+# ── Build artifacts ───────────────────────────────────────────────
 target/
+rust_out/
+
+# ── Shipping binaries — distribute via GitHub Releases, not in tree
+*.dmg
+*.pkg
+*.zip
+*.tar.gz
+*.app
+
+# ── Test / sample data may contain real ClOrdIDs / account numbers
 fixtures/
 *.log
-.DS_Store
-
-# Large raw video files — keep locally, never commit
-demo/*.mov
-
-# Large sample files — keep locally, never commit
-sample_1m.fix
+*.fix
+sample_*.fix
 *.fix.zip
+
+# ── Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── Large demo media — keep locally, never commit
+demo/*.mov
+demo/*.mp4
+
+# ── Local recents store (just in case)
+.aifixparser/

@@ -2,11 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+      AI FIX Parser entitlements — minimum set required for the Dioxus desktop
+      app (which embeds wry/wkwebview).
+
+      JIT entitlements are needed because wkwebview's JavaScriptCore JITs JS at
+      runtime. Both are mandatory for embedded WebView to function under the
+      hardened runtime.
+
+      `cs.disable-library-validation` is INTENTIONALLY OMITTED — the app never
+      dynamically loads third-party native libraries. Re-add only if a future
+      dependency fails codesign with a "library validation" error.
+    -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-    <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
 </dict>
 </plist>

@@ -1,0 +1,91 @@
+AI FIX Parser — Dual License
+=============================
+
+Copyright (c) 2025 Trung Huynh (andrew.cs328@gmail.com)
+
+This software is licensed under two tracks.
+
+────────────────────────────────────────────────────────────────────────────
+TRACK 1 — Free Personal Use License (MIT-style)
+────────────────────────────────────────────────────────────────────────────
+
+Permission is hereby granted, free of charge, to any individual obtaining a
+copy of this software and associated documentation files (the "Software"),
+to use, copy, modify, merge, publish, and distribute copies of the Software
+for **personal, educational, academic research, hobby, or non-commercial
+evaluation** purposes only, subject to the following conditions:
+
+  1. The above copyright notice and this permission notice shall be
+     included in all copies or substantial portions of the Software.
+
+  2. The Software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND,
+     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+     MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+     CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT OF OR IN
+     CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+     SOFTWARE.
+
+────────────────────────────────────────────────────────────────────────────
+TRACK 2 — Commercial License (Required for Financial Institutions)
+────────────────────────────────────────────────────────────────────────────
+
+If you, or the entity you represent, fall into **any** of the categories
+below, you must obtain a separate commercial license **before** using,
+deploying, or distributing the Software in any form (including internal
+use, production use, paid services, or derivative works):
+
+  • Investment banks, commercial banks, and broker-dealers
+  • Hedge funds, mutual funds, ETF issuers, and other asset managers
+  • Proprietary trading firms and market makers
+  • High-frequency trading (HFT) firms
+  • Exchanges, ECNs, ATSs, dark pools, and other trading venues
+  • Clearing houses, settlement systems, and central counterparties
+  • Prime brokers and custodian banks
+  • Financial data vendors and market-data redistributors
+  • Fintech companies offering trading, brokerage, custody, exchange,
+    or order-routing services
+  • Cryptocurrency exchanges, market makers, and trading firms
+  • Any subsidiary, affiliate, contractor, or consultant performing work
+    on behalf of any of the above
+
+This list is not exhaustive. If you are uncertain whether your use case
+requires a commercial license, please ask before deploying.
+
+To obtain a commercial license, contact:
+
+    Trung Huynh
+    Email: andrew.cs328@gmail.com
+    Subject: "AI FIX Parser Commercial License Inquiry"
+
+Please include in your request:
+
+  • Legal name of the licensee entity
+  • Country of incorporation
+  • Brief description of intended use
+  • Approximate number of internal users / seats
+  • Expected deployment scale
+
+Commercial license terms, pricing, and support options will be provided
+on request.
+
+────────────────────────────────────────────────────────────────────────────
+ENFORCEMENT
+────────────────────────────────────────────────────────────────────────────
+
+Unauthorized use by an entity covered under Track 2 constitutes copyright
+infringement and breach of these license terms. The author reserves all
+rights to pursue legal remedies, including injunctive relief, damages,
+and attorneys' fees.
+
+────────────────────────────────────────────────────────────────────────────
+CONTRIBUTIONS
+────────────────────────────────────────────────────────────────────────────
+
+By submitting a pull request or other contribution to this project, you
+agree that your contribution is licensed under the same dual-license terms
+above, and you grant the project author the right to relicense your
+contribution as part of any future commercial offering.
+
+────────────────────────────────────────────────────────────────────────────
+END OF LICENSE
