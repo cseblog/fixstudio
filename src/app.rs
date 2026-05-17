@@ -311,7 +311,14 @@ pub fn app() -> Element {
     });
 
     // ── On-mount effects ────────────────────────────────────────────────────
+    // Anonymous telemetry (Google Analytics): emits app_open + per-load counters
+    // (message_count, parse_us, delimiter). NO filenames, NO message content.
+    // Users opt out with environment variable AIFIXPARSER_NO_TELEMETRY=1.
+    let telemetry_disabled = std::env::var_os("AIFIXPARSER_NO_TELEMETRY")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
     use_effect(move || {
+        if telemetry_disabled { return; }
         let os = std::env::consts::OS;
         eval(&format!(
             r#"(function(id) {{

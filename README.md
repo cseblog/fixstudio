@@ -53,6 +53,36 @@ of intended use, approximate number of seats, and expected deployment scale.
 
 ---
 
+## Privacy & Network Behavior
+
+AI FIX Parser is **100% offline for your FIX log data** — log content, message
+fields, ClOrdIDs and counterparty IDs **never leave your machine**.
+
+The app makes exactly two outbound HTTP calls, both anonymous:
+
+| Call | Endpoint | Purpose | Data sent |
+|------|----------|---------|-----------|
+| Update check (on startup) | `https://aifixparser.com/latest-version` | Show "new version available" banner | None — plain GET |
+| Anonymous usage telemetry (Google Analytics 4) | `https://www.googletagmanager.com/gtag/js?id=…` | Aggregate counters: app starts, file parses, parse times | App version, OS, **message count**, **parse microseconds**, **delimiter (soh/pipe)**. **No filenames, no message content, no field values, no counterparty IDs.** |
+
+### Opt out of telemetry
+
+Launch the app with the environment variable set:
+
+```bash
+AIFIXPARSER_NO_TELEMETRY=1 open /Applications/AiFixParser.app
+```
+
+Or add it to your shell profile to make it permanent. When set, the Google
+Analytics script is never injected and no events fire.
+
+### Local storage
+
+The app writes one file on your machine, never sent anywhere:
+
+- `~/.aifixparser/recents.json` — last 8 file paths you opened, for the
+  "Recent" list in the welcome screen. Delete the file to clear.
+
 ## Contributing
 
 By submitting a pull request you agree your contribution is licensed under the
