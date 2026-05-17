@@ -1,30 +1,4 @@
-# Releasing AI FIX Parser for macOS
-
-## Prerequisites (Apple Developer Account)
-
-1. **Team ID** — [developer.apple.com/account](https://developer.apple.com/account) → Membership
-2. **Developer ID Application** certificate — Certificates → + → Developer ID Application
-3. **App-specific password** — [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords
-
-## One-time: Store notarization credentials
-
-```bash
-xcrun notarytool store-credentials "AC_PASSWORD" \
-  --apple-id "your@email.com" \
-  --team-id "YOUR_TEAM_ID" \
-  --password "xxxx-xxxx-xxxx-xxxx"
-```
-
-Use your app-specific password for `--password`.
-
-## Build signed app + DMG
-
-```bash
-export APPLE_TEAM_ID="YOUR_TEAM_ID"
-./scripts/release-macos.sh
-```
-
-Or run `dx bundle` directly:
+run `dx bundle` directly:
 
 ```bash
 dx bundle --macos \

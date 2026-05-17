@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI FIX Parser – Free FIX Protocol Parser & Debugger for macOS & Windows</title>
+<title>AI FIX Parser – Free FIX Protocol Parser & Debugger</title>
 <meta name="description" content="Parse 1 million FIX messages in 100ms. Free FIX 4.2, 4.4 & 5.0 protocol parser and debugger for macOS and Windows. 100% offline. Works with QuickFIX, QuickFIX/J, Artio FIX. Built for algo traders and FIX engine developers. Native Rust performance.">
 <meta name="keywords" content="FIX protocol parser, FIX debugger, FIX log analyzer, FIX message viewer, QuickFIX, Artio FIX, FIX 4.2, FIX 4.4, FIX 5.0, FIX engine, algo trading, FIX protocol tool, free FIX parser, offline FIX parser, macOS FIX parser, Windows FIX parser">
 
@@ -54,7 +54,7 @@
     "100% offline operation - no network calls or telemetry",
     "Works with QuickFIX, QuickFIX/J, Artio FIX, B2BITS, FIXIOM",
     "Native Rust performance with zero-copy parsing",
-    "Dark UI optimized for long debugging sessions",
+    "Editorial paper-themed UI — distinctive cream + ink design, easy on the eyes for long debugging sessions",
     "No sign-up required",
     "No usage limits",
     "Free forever"
@@ -76,25 +76,40 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
-  --bg: #0e0a0a;
-  --surface: #160f0f;
-  --surface2: #1e1414;
-  --border: rgba(255,255,255,0.07);
-  --text: #ede8e8;
-  --dim: #6b5f5f;
-  --primary: #9ec93d;
-  --green: #55c94a;
-  --rose: #b49898;
-  --mauve: #b284ae;
-  --warm: #6f4949;
+  /* Paper / Editorial palette — matches the desktop app. */
+  --bg:      #f5efe2;
+  --surface: #faf6ec;
+  --surface2:#ede4cf;
+  --rule:    #c9bfa9;
+  --border:  rgba(201,191,169,0.5);
+  --text:    #1c1a17;
+  --dim:     #6b6356;
+  --faint:   #8a8071;
+  --primary: #2f6b2f;   /* ledger green */
+  --green:   #2f6b2f;
+  --rose:    #15467a;   /* ink blue */
+  --mauve:   #7a3a8a;   /* ink purple */
+  --warm:    #b22222;   /* ink red */
+  --amber:   #b78427;   /* mustard */
+  --highlight:#fff39a;  /* highlighter yellow */
 }
+::selection { background: var(--highlight); color: var(--text); }
 body {
   background: var(--bg);
+  /* Subtle paper grain via two faint radial gradients. */
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(28,26,23,0.02) 0, transparent 60%),
+    radial-gradient(circle at 80% 70%, rgba(28,26,23,0.02) 0, transparent 60%);
   color: var(--text);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
+}
+/* Editorial serif headlines + numerals */
+h1, h2, h3, .stat-value {
+  font-family: 'Iowan Old Style', Charter, Georgia, serif;
+  letter-spacing: -0.01em;
 }
 .mono { font-family: 'JetBrains Mono', monospace; }
 
@@ -109,25 +124,19 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .hero-grid {
+  /* Faint ledger-paper rules — echoes the desktop app's grid feel. */
   position: absolute;
   inset: 0;
-  opacity: 0.08;
+  opacity: 0.35;
   background-image:
-    linear-gradient(var(--primary) 1px, transparent 1px),
-    linear-gradient(90deg, var(--primary) 1px, transparent 1px);
-  background-size: 50px 50px;
-  mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, black 30%, transparent 75%);
+    linear-gradient(var(--rule) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, black 25%, transparent 80%);
 }
 .hero-glow {
-  position: absolute;
-  top: -20%;
-  left: 20%;
-  width: 800px;
-  height: 800px;
-  background: radial-gradient(circle, rgba(158,201,61,0.15), transparent 65%);
-  border-radius: 50%;
-  filter: blur(80px);
-  pointer-events: none;
+  /* Cream wash, no glow on paper. */
+  display: none;
 }
 .hero-content {
   position: relative;
@@ -211,22 +220,23 @@ body {
 }
 .btn-primary {
   background: var(--primary);
-  color: #0e0a0a;
+  color: #faf6ec;
   border-color: var(--primary);
-  box-shadow: 0 8px 24px rgba(158,201,61,0.25);
+  box-shadow: 0 2px 6px rgba(28,26,23,0.10);
 }
 .btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 32px rgba(158,201,61,0.35);
+  transform: translateY(-1px);
+  background: #285a28;
+  box-shadow: 0 4px 12px rgba(28,26,23,0.16);
 }
 .btn-secondary {
-  background: rgba(255,255,255,0.04);
+  background: var(--surface);
   color: var(--text);
-  border-color: var(--border);
+  border-color: var(--rule);
 }
 .btn-secondary:hover {
-  background: rgba(255,255,255,0.07);
-  border-color: rgba(255,255,255,0.12);
+  background: var(--surface2);
+  border-color: var(--faint);
 }
 
 /* ── SECTION ────────────────────────── */
@@ -312,18 +322,37 @@ body {
 .screenshot-img {
   position: relative;
 }
+.screenshot-img {
+  /* Cream passe-partout: thick paper border + ink rule + soft shadow makes
+     dark-theme screenshots read as intentional "printed plates" framed on
+     the page, instead of clashing with the cream background. Replace the
+     screenshots in /screenshots/ with new paper-themed captures to remove
+     the contrast entirely. */
+  background: var(--surface);
+  padding: 14px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(28,26,23,0.12);
+  position: relative;
+}
+.screenshot-img::after {
+  /* Hairline inner ink rule for the engraved-plate feel. */
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border: 1px solid rgba(28,26,23,0.18);
+  border-radius: 3px;
+  pointer-events: none;
+}
 .screenshot-img img {
   width: 100%;
   height: auto;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.06);
+  display: block;
+  border-radius: 2px;
 }
 .screenshot-glow {
-  position: absolute;
-  inset: -40px;
-  background: radial-gradient(ellipse at center, var(--glow-color, var(--primary))15, transparent 65%);
-  z-index: -1;
-  border-radius: 60px;
+  /* No glows on paper — keep the markup but render nothing. */
+  display: none;
 }
 
 @media (max-width: 900px) {
@@ -353,7 +382,7 @@ body {
   transition: all 0.25s;
 }
 .feature-card:hover {
-  border-color: rgba(158,201,61,0.3);
+  border-color: rgba(47,107,47,0.3);
   transform: translateY(-4px);
 }
 .feature-icon {
@@ -399,9 +428,10 @@ body {
 
 /* ── CTA SECTION ────────────────────── */
 .cta-section {
-  background: linear-gradient(135deg, var(--warm) 0%, #1a0d0d 100%);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  /* Cream block with ink-rule top/bottom — newspaper section break. */
+  background: var(--surface);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
   position: relative;
   overflow: hidden;
 }
@@ -431,8 +461,8 @@ body {
 }
 .badge {
   padding: 8px 18px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(28,26,23,0.06);
+  border: 1px solid rgba(28,26,23,0.10);
   border-radius: 24px;
   font-size: 13px;
   color: var(--dim);
@@ -509,34 +539,12 @@ footer a:hover {
 <section class="section">
   <div class="section-header">
     <div class="section-label">FIX Protocol Parser Features</div>
-    <h2>Built for Production FIX Debugging and Log Analysis</h2>
+    <h2>Production FIX Log Analysis</h2>
     <p class="lead">
       AI FIX Parser is the fastest FIX protocol viewer and debugger available. 
       Load million-message FIX logs from QuickFIX, Artio FIX or any FIX engine, 
       inspect every tag with human-readable descriptions, validate FIX messages against the spec, 
       and analyze order lifecycle and latency — all 100% offline with no cloud connectivity.
-    </p>
-  </div>
-
-  <!-- Video Demo -->
-  <div id="demo" style="max-width: 1000px; margin: 0 auto 100px; text-align: center;">
-    <h3 style="font-size: 28px; font-weight: 700; margin-bottom: 32px; color: var(--text);">
-      Watch AI FIX Parser in Action
-    </h3>
-    <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.06);">
-        <video
-        style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
-          class="demo-video"
-          controls
-          preload="metadata"
-          poster="demo/demo1-poster.jpg"
-          playsinline>
-          <source src="demo/demo1_trimmed.mp4" type="video/mp4" />
-          Your browser does not support HTML5 video.
-        </video>
-    </div>
-    <p style="margin-top: 20px; font-size: 15px; color: var(--dim);">
-      See how AI FIX Parser parses QuickFIX logs, decodes FIX tags, and validates FIX messages in real-time
     </p>
   </div>
 
@@ -562,32 +570,10 @@ footer a:hover {
         </ul>
       </div>
       <div class="screenshot-img">
-        <div class="screenshot-glow" style="--glow-color: rgba(158,201,61,0.1)"></div>
+        <div class="screenshot-glow" style="--glow-color: rgba(47,107,47,0.1)"></div>
         <img src="screenshots/01-timeline.jpg" alt="Timeline view" loading="lazy">
       </div>
     </div>
-
-    <!-- Screenshot 2 -->
-    <div class="screenshot-item">
-      <div class="screenshot-text">
-        <h3>Quickly Inspect FIX sessions</h3>
-        <p>
-          Get a comprehensive view of your FIX sessions with key performance metrics and real-time monitoring capabilities.
-        </p>
-        <ul>
-          <li>Session overview with key metrics</li>
-          <li>Real-time session monitoring</li>
-          <li>Session performance analytics</li>
-          <li>Session health diagnostics</li>
-          <li>Identify and troubleshoot session issues</li>
-        </ul>
-      </div>
-      <div class="screenshot-img">
-        <div class="screenshot-glow" style="--glow-color: rgba(178,132,174,0.1)"></div>
-        <img src="screenshots/02-session.jpg" alt="Tag inspector" loading="lazy">
-      </div>
-    </div>
-
     <!-- Screenshot 3 -->
     <div class="screenshot-item">
       <div class="screenshot-text">
@@ -606,10 +592,32 @@ footer a:hover {
         </ul>
       </div>
       <div class="screenshot-img">
-        <div class="screenshot-glow" style="--glow-color: rgba(85,201,74,0.1)"></div>
+        <div class="screenshot-glow" style="--glow-color: rgba(47,107,47,0.1)"></div>
         <img src="screenshots/03-latency.jpg" alt="Latency analysis" loading="lazy">
       </div>
     </div>
+
+        <!-- Screenshot 2 -->
+    <div class="screenshot-item">
+      <div class="screenshot-text">
+        <h3>Quickly Inspect FIX sessions</h3>
+        <p>
+          Get a comprehensive view of your FIX sessions with key performance metrics and real-time monitoring capabilities.
+        </p>
+        <ul>
+          <li>Session overview with key metrics</li>
+          <li>Real-time session monitoring</li>
+          <li>Session performance analytics</li>
+          <li>Session health diagnostics</li>
+          <li>Identify and troubleshoot session issues</li>
+        </ul>
+      </div>
+      <div class="screenshot-img">
+        <div class="screenshot-glow" style="--glow-color: rgba(122,58,138,0.1)"></div>
+        <img src="screenshots/02-session.jpg" alt="Tag inspector" loading="lazy">
+      </div>
+    </div>
+
 
     <!-- Screenshot 4 -->
     <div class="screenshot-item">
@@ -630,7 +638,7 @@ footer a:hover {
         </ul>
       </div>
       <div class="screenshot-img">
-        <div class="screenshot-glow" style="--glow-color: rgba(201,138,74,0.1)"></div>
+        <div class="screenshot-glow" style="--glow-color: rgba(183,132,39,0.1)"></div>
         <img src="screenshots/04-validator.jpg" alt="FIX validator" loading="lazy">
       </div>
     </div>
@@ -745,7 +753,7 @@ footer a:hover {
 <!-- ══════════ FOOTER ══════════ -->
 <footer>
   <p><strong>AI FIX Parser</strong> · Free FIX Protocol Parser, Debugger & Log Analyzer for macOS & Windows</p>
-  <p style="font-size: 13px; color: #4a3535;">
+  <p style="font-size: 13px; color: #8a8071;">
     Parse FIX 4.0, 4.1, 4.2, 4.4, 5.0, 5.0 SP1, 5.0 SP2 messages instantly. 
     Works with QuickFIX, QuickFIX/J, Artio FIX, B2BITS, FIXIOM. 
     Built for algo traders and FIX engine developers. 
