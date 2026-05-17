@@ -3,7 +3,7 @@ name = "AiFIXParser"
 version = "2.0.0"
 edition = "2021"
 description = "AI FIX Parser – Parse and analyze FIX protocol messages with AI-powered insights"
-license = "aifixparser.com"
+license-file = "LICENSE"
 
 [[bin]]
 name = "AiFIXParser"
