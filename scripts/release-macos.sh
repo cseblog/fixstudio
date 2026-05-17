@@ -18,24 +18,35 @@ TEAM_ID="${APPLE_TEAM_ID:-438CH4PXMR}"
 BUNDLE_DIR="target/dx/AIFixParser/bundle/macos/bundle"
 APP_PATH="$BUNDLE_DIR/macos/AiFixParser.app"
 
-echo "Building signed macOS bundle (Team ID: $TEAM_ID)..."
+echo "Building unsigned macOS bundle..."
+# Build only — skip `dx`'s built-in --codesign because it picks the cert by
+# Team ID alone, which is ambiguous when both
+#   "3rd Party Mac Developer Application: … (438CH4PXMR)"
+# and
+#   "Developer ID Application: … (438CH4PXMR)"
+# exist in the keychain. We sign with the full identity name below instead.
 dx bundle --macos \
     --package-types macos \
     --package-types dmg \
-    --release \
-    --codesign \
-    --apple-team-id "$TEAM_ID" \
-    --apple-entitlements "entitlements.plist"
+    --release
 
-# Re-sign with hardened runtime (required for notarization)
-# dx bundle may not enable it; Apple rejects without it
+# Resolve the Developer ID identity by name (not by team) so we never pick
+# the 3rd-Party / Mac App Store cert by accident.
 echo ""
-echo "Re-signing with hardened runtime for notarization..."
-SIGN_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/^[^"]*"([^"]+)".*/\1/')
+echo "Resolving Developer ID signing identity..."
+SIGN_ID=$(security find-identity -v -p codesigning \
+    | grep "Developer ID Application" \
+    | head -1 \
+    | sed -E 's/^[^"]*"([^"]+)".*/\1/')
 if [[ -z "$SIGN_ID" ]]; then
     echo "ERROR: No 'Developer ID Application' certificate found in Keychain."
+    echo "       Install one from https://developer.apple.com/account → Certificates."
     exit 1
 fi
+echo "  → $SIGN_ID"
+
+echo ""
+echo "Signing app with hardened runtime (required for notarization)..."
 
 codesign --force --deep --timestamp --options runtime \
     --entitlements "entitlements.plist" \
