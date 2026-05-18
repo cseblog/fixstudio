@@ -112,6 +112,19 @@ pub fn app() -> Element {
         let mut view_mode      = t.view_mode;
         let mut label          = t.label;
 
+        // Also reset every per-tab filter so the timeline returns to a clean
+        // unfiltered state — otherwise stale column-filter values from the
+        // previous data set silently hide rows after Clear.
+        let mut f_time     = t.f_time;
+        let mut f_time_op  = t.f_time_op;
+        let mut f_sender   = t.f_sender;
+        let mut f_target   = t.f_target;
+        let mut f_msg      = t.f_msg;
+        let mut f_clord    = t.f_clord;
+        let mut f_detail   = t.f_detail;
+        let mut filters_open = t.timeline_filters_open;
+        let mut display_limit = t.display_limit;
+
         input.set(String::new());
         offload_replace(&mut messages, Vec::new());
         selected_idx.set(None);
@@ -120,6 +133,15 @@ pub fn app() -> Element {
         loaded_files.set(Vec::new());
         show_file_list.set(false);
         view_mode.set(ViewMode::Timeline);
+        f_time.set(String::new());
+        f_time_op.set("=".to_string());
+        f_sender.set(String::new());
+        f_target.set(String::new());
+        f_msg.set(String::new());
+        f_clord.set(String::new());
+        f_detail.set(String::new());
+        filters_open.set(false);
+        display_limit.set(1000);
         label.set("Untitled".to_string());
     };
 
@@ -290,10 +312,10 @@ pub fn app() -> Element {
         }
     });
 
-    // Entering compare mode: force BOTH Timeline and Detail visible so the user
-    // sees the full side-by-side picture by default. Also sync the compare
-    // pane's view mode to the active pane's, otherwise you can end up looking
-    // at Timeline vs Session (apples-to-oranges).
+    // Entering compare mode: force BOTH Timeline + Detail visible AND reset
+    // both panes to the Timeline view. Timeline is the only view where the
+    // diff coloring + ClOrdID rails meaningfully line up side-by-side; users
+    // can still switch to Latency/Session/Validator via the shared view-tabs.
     use_effect(move || {
         let Some(cid) = *compare_id.read() else { return };
         if !*timeline_visible.peek() { timeline_visible.set(true); }
@@ -302,11 +324,9 @@ pub fn app() -> Element {
         let list = tabs.read();
         let a_vm = list.iter().find(|t| t.id == aid).map(|t| t.view_mode);
         let c_vm = list.iter().find(|t| t.id == cid).map(|t| t.view_mode);
-        if let (Some(av), Some(mut cv)) = (a_vm, c_vm) {
-            let mode = av.read().clone();
-            if cv.read().clone() != mode {
-                cv.set(mode);
-            }
+        if let (Some(mut av), Some(mut cv)) = (a_vm, c_vm) {
+            if av.read().clone() != ViewMode::Timeline { av.set(ViewMode::Timeline); }
+            if cv.read().clone() != ViewMode::Timeline { cv.set(ViewMode::Timeline); }
         }
     });
 

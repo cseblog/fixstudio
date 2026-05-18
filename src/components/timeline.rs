@@ -11,6 +11,102 @@ use crate::tab::message_key;
 const LOAD_MORE: usize = 1000;
 const INITIAL_DISPLAY: usize = 1000;
 
+// ── Chain-aware ID filter index ──────────────────────────────────────────────
+//
+// Maps every (ClOrdID, QuoteID, QuoteReqID) string to the same chain root
+// when those ids appear together on any single message. A user-typed substring
+// resolves to a set of chain roots; every message in those chains is included
+// in the filter, even if its own ids don't textually match the query.
+
+/// Lowercased lookup table from any id substring → chain root, plus per-msg
+/// root assignment. `msg_root[i] == u32::MAX` when message i has no chain id.
+#[derive(PartialEq)]
+pub struct ChainIndex {
+    pub msg_root:    Vec<u32>,
+    pub id_to_root:  ahash::AHashMap<String, u32>,
+}
+
+/// Path-compressing union-find. Asserts that x is a valid index.
+fn uf_find(parent: &mut [u32], x: u32) -> u32 {
+    debug_assert!((x as usize) < parent.len());
+    let mut r = x;
+    while parent[r as usize] != r { r = parent[r as usize]; }
+    // One-pass path compression
+    let mut c = x;
+    while parent[c as usize] != r {
+        let nxt = parent[c as usize];
+        parent[c as usize] = r;
+        c = nxt;
+    }
+    r
+}
+
+/// Build the chain index over the given message set. Pure function; tested
+/// in isolation via the unit tests at the bottom of this file.
+pub fn build_chain_index(msgs: &[FixMessage]) -> ChainIndex {
+    let n = msgs.len();
+    let mut id_to_chain: ahash::AHashMap<String, u32> = ahash::AHashMap::default();
+    let mut parent:   Vec<u32> = Vec::with_capacity(n / 2);
+    let mut msg_root: Vec<u32> = vec![u32::MAX; n];
+
+    // Tags pulled from the raw message fields in addition to the three typed
+    // slots — OrigClOrdID (41) is critical because OrderCancelRequest /
+    // OrderCancelReplaceRequest / QuoteCancel reference the original chain
+    // through tag 41 rather than re-stating ClOrdID / QuoteID / QuoteReqID.
+    const EXTRA_LINK_TAGS: [u16; 1] = [41];
+
+    let mut ids_buf: Vec<String> = Vec::with_capacity(6);
+    for (i, m) in msgs.iter().enumerate() {
+        ids_buf.clear();
+        if !m.cl_ord_id.is_empty()    { ids_buf.push(m.cl_ord_id.as_str().to_ascii_lowercase()); }
+        if !m.quote_id.is_empty()     { ids_buf.push(m.quote_id.as_str().to_ascii_lowercase()); }
+        if !m.quote_req_id.is_empty() { ids_buf.push(m.quote_req_id.as_str().to_ascii_lowercase()); }
+        for f in &m.fields {
+            if EXTRA_LINK_TAGS.contains(&f.tag) {
+                let v = f.value_in(&m.arena);
+                if !v.is_empty() { ids_buf.push(v.to_ascii_lowercase()); }
+            }
+        }
+        if ids_buf.is_empty() { continue; }
+
+        // Unite any already-known chains shared by this message's ids.
+        let mut anchor: Option<u32> = None;
+        for id in ids_buf.iter() {
+            if let Some(&c) = id_to_chain.get(id) {
+                let rc = uf_find(&mut parent, c);
+                anchor = Some(match anchor {
+                    None    => rc,
+                    Some(a) => {
+                        let ra = uf_find(&mut parent, a);
+                        if ra != rc { parent[rc as usize] = ra; }
+                        ra
+                    }
+                });
+            }
+        }
+        let chain_id = match anchor {
+            Some(c) => c,
+            None => {
+                let c = parent.len() as u32;
+                parent.push(c);
+                c
+            }
+        };
+        for id in ids_buf.iter() {
+            id_to_chain.entry(id.clone()).or_insert(chain_id);
+        }
+        msg_root[i] = chain_id;
+    }
+    // Resolve every chain reference to its final root.
+    for v in msg_root.iter_mut() {
+        if *v != u32::MAX { *v = uf_find(&mut parent, *v); }
+    }
+    let id_to_root: ahash::AHashMap<String, u32> = id_to_chain.into_iter()
+        .map(|(k, c)| (k, uf_find(&mut parent, c)))
+        .collect();
+    ChainIndex { msg_root, id_to_root }
+}
+
 fn build_detail_text(m: &FixMessage) -> String {
     let mut parts = Vec::new();
     if !m.side.is_empty()      { parts.push(m.side.clone()); }
@@ -126,11 +222,21 @@ pub fn timeline_panel(
         eval("var el = document.getElementById('timeline-scroll'); if (el) el.scrollTop = 0;");
     });
 
+    // Per-message chain root — built once per messages change via union-find
+    // over (ClOrdID, QuoteID, QuoteReqID). Lets the ID column filter be
+    // CHAIN-AWARE: typing an RFQ also matches the Quote, the linked NOS, the
+    // ExecutionReports, and any cancels — every message in the same trade
+    // chain. Cost: O(n α(n)) build, then O(unique_ids) per filter input change.
+    let chain_index = use_memo(move || -> std::sync::Arc<ChainIndex> {
+        std::sync::Arc::new(build_chain_index(&messages.read()))
+    });
+
     // Memoized: re-computes only when filters, skip_heartbeats, or messages change.
     // Scrolling (display_limit changes) does NOT trigger a re-scan.
     let timeline_indices = use_memo(move || -> Vec<usize> {
         let skip_hb = *skip_heartbeats.read();
         let msgs    = messages.read();
+        let chain   = chain_index.read();
         let ft_val = f_time.read().clone();
         let ft_op  = f_time_op.read().clone();
         // Combine operator + value into the format time_match expects:
@@ -140,24 +246,40 @@ pub fn timeline_panel(
         } else {
             format!("{}{}", ft_op, ft_val)
         };
-        let fs      = f_sender.read().to_ascii_lowercase();
-        let fta     = f_target.read().to_ascii_lowercase();
-        let fm      = f_msg.read().to_ascii_lowercase();
-        let fc      = f_clord.read().to_ascii_lowercase();
-        let fd      = f_detail.read().to_ascii_lowercase();
+        // Trim then lower-case every filter — copy/paste from terminals or
+        // spreadsheets often drags leading/trailing spaces that silently break
+        // substring matches against trimmed FIX values.
+        let fs      = f_sender.read().trim().to_ascii_lowercase();
+        let fta     = f_target.read().trim().to_ascii_lowercase();
+        let fm      = f_msg.read().trim().to_ascii_lowercase();
+        let fc      = f_clord.read().trim().to_ascii_lowercase();
+        let fd      = f_detail.read().trim().to_ascii_lowercase();
+
+        // Resolve the ID filter to the set of chain roots whose any member id
+        // contains the substring. A message passes the ID test if its chain
+        // root is in that set.
+        let matching_roots: ahash::AHashSet<u32> = if fc.is_empty() {
+            ahash::AHashSet::default()
+        } else {
+            chain.id_to_root.iter()
+                .filter_map(|(id, &r)| if id.contains(fc.as_str()) { Some(r) } else { None })
+                .collect()
+        };
 
         let mut indices: Vec<usize> = msgs.iter()
             .enumerate()
             .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
-            .filter(|(_, m)| {
+            .filter(|(i, m)| {
+                if !fc.is_empty() {
+                    let r = chain.msg_root[*i];
+                    if r == u32::MAX || !matching_roots.contains(&r) {
+                        return false;
+                    }
+                }
                 time_match(&m.time, &ft_raw)
                     && col_match(&m.sender, &fs)
                     && col_match(&m.target, &fta)
                     && col_match(m.msg_type_label, &fm)
-                    && (fc.is_empty()
-                        || col_match(&m.cl_ord_id,    &fc)
-                        || col_match(&m.quote_id,     &fc)
-                        || col_match(&m.quote_req_id, &fc))
                     && (fd.is_empty() || col_match(&build_detail_text(m), &fd))
             })
             .map(|(i, _)| i)
@@ -407,5 +529,97 @@ pub fn timeline_panel(
                 }
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod chain_tests {
+    use super::*;
+    use crate::parser::parse_all;
+
+    /// Synthetic RFQ chain: QuoteRequest → Quote → NewOrderSingle → ER FILL.
+    /// Tags: 131=QR-1 (RFQ id), 117=QT-9 (QuoteID), 11=CO-7 (ClOrdID).
+    /// - QuoteRequest carries 131 only.
+    /// - Quote carries 131 + 117 (links RFQ → QuoteID).
+    /// - NewOrderSingle carries 117 + 11 (links QuoteID → ClOrdID).
+    /// - ExecutionReport carries 11.
+    /// A user typing "QR-1" must surface all four.
+    fn synth_chain() -> Vec<FixMessage> {
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=R|49=A|56=B|34=1|52=20240101-09:00:00.000|131=QR-1|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=S|49=B|56=A|34=2|52=20240101-09:00:00.050|131=QR-1|117=QT-9|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=3|52=20240101-09:00:00.100|117=QT-9|11=CO-7|55=AAPL|54=1|38=100|40=2|10=000|",
+            "8=FIX.4.4|9=1|35=8|49=B|56=A|34=4|52=20240101-09:00:00.150|11=CO-7|150=F|39=2|10=000|",
+        );
+        parse_all(raw)
+    }
+
+    #[test]
+    fn rfq_id_resolves_to_full_chain() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        // All four messages should share the same chain root.
+        let roots: Vec<u32> = idx.msg_root.iter().copied().collect();
+        assert_eq!(roots.len(), 4);
+        assert_ne!(roots[0], u32::MAX, "QuoteRequest must have a chain");
+        assert!(roots.iter().all(|&r| r == roots[0]),
+            "all messages in the same chain must share a root, got {:?}", roots);
+    }
+
+    #[test]
+    fn rfq_substring_lookup_matches_chain() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        // Searching by RFQ id substring "qr-1" (lowercased) finds the chain.
+        let needle = "qr-1";
+        let roots: Vec<u32> = idx.id_to_root.iter()
+            .filter(|(id, _)| id.contains(needle))
+            .map(|(_, &r)| r)
+            .collect();
+        assert!(!roots.is_empty(), "RFQ substring must resolve");
+        // Every message should match.
+        let matched: Vec<usize> = idx.msg_root.iter().enumerate()
+            .filter(|(_, &r)| r != u32::MAX && roots.contains(&r))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(matched.len(), 4, "all 4 messages should match the RFQ chain");
+    }
+
+    #[test]
+    fn quote_id_substring_also_resolves_full_chain() {
+        // The user types only the QuoteID — chain still covers QuoteRequest AND ER.
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let needle = "qt-9";
+        let roots: ahash::AHashSet<u32> = idx.id_to_root.iter()
+            .filter(|(id, _)| id.contains(needle))
+            .map(|(_, &r)| r)
+            .collect();
+        let matched = idx.msg_root.iter()
+            .filter(|&&r| r != u32::MAX && roots.contains(&r))
+            .count();
+        assert_eq!(matched, 4);
+    }
+
+    #[test]
+    fn unrelated_messages_have_distinct_chains() {
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=1|52=20240101-09:00:00.000|11=ORD-A|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=2|52=20240101-09:00:00.001|11=ORD-B|55=MSFT|10=000|",
+        );
+        let msgs = parse_all(raw);
+        let idx  = build_chain_index(&msgs);
+        assert_ne!(idx.msg_root[0], idx.msg_root[1],
+            "two unrelated NOS messages must NOT share a chain root");
+    }
+
+    #[test]
+    fn messages_without_chain_ids_have_max_root() {
+        let raw = "8=FIX.4.4|9=1|35=0|49=A|56=B|34=1|52=20240101-09:00:00.000|10=000|";
+        let msgs = parse_all(raw);
+        let idx  = build_chain_index(&msgs);
+        assert_eq!(idx.msg_root[0], u32::MAX,
+            "heartbeat with no chain ids should be sentinel u32::MAX");
     }
 }
