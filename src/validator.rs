@@ -161,7 +161,12 @@ fn is_valid_enum(tag: u16, value: &str) -> bool {
         35  => is_known_msg_type(value),
         39  => matches!(value, "0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"A"|"B"|"C"|"D"|"E"),
         40  => matches!(value, "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"A"|"B"|"C"|"D"|"E"|"F"|"G"|"H"|"I"|"J"|"K"|"L"|"M"|"P"),
-        54  => matches!(value, "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"),
+        // Side (54): FIX 4.x defines 1-9 + A-G. "0" is widely used by FX
+        // venues for two-way quotes (the Quote is both bid AND ask in one
+        // message); accept it. A-G cover Cross variants, "As Defined",
+        // Opposite, Subscribe/Redeem, Lend/Borrow.
+        54  => matches!(value,
+            "0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"A"|"B"|"C"|"D"|"E"|"F"|"G"),
         59  => matches!(value, "0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"),
         98  => matches!(value, "0"|"1"|"2"|"3"|"4"|"5"|"6"),
         150 => matches!(value, "0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"A"|"B"|"C"|"D"|"E"|"F"|"G"|"H"|"I"),
@@ -180,7 +185,7 @@ fn enum_hint(tag: u16) -> &'static str {
         35  => "known MsgType code (e.g. D, 8, R, S, A, 0)",
         39  => "0-9 or A-E (OrdStatus)",
         40  => "1-9, A-P (OrdType; FX: 1=Market, 2=Limit, D=PreviouslyQuoted)",
-        54  => "1=Buy, 2=Sell (or 3-9)",
+        54  => "0=TwoWay/Both, 1=Buy, 2=Sell, 3-9=BuyMinus/SellPlus/Cross/…, A-G=CrossShortExempt/AsDefined/Opposite/Subscribe/Redeem/Lend/Borrow",
         59  => "0=DAY, 1=GTC, 3=IOC, 4=FOK, 6=GTD",
         98  => "0=None, 1=PKCS, 2=DES, 3=PKCS/DES, 4=PGP/DES, 5=PGP/DES-MD5, 6=PEM/DES-MD5",
         150 => "0-9 or A-I (ExecType; FX: F=Trade, 4=Canceled, 8=Rejected)",
@@ -755,6 +760,32 @@ mod tests {
         msg.set_field_value(54, "X");
         let report = validate_fields(&msg);
         assert!(report.issues.iter().any(|i| i.tag == Some(54) && i.code == "INVALID_ENUM"));
+    }
+
+    /// FX two-way quote: Side=0 is widely used to indicate the message
+    /// carries both bid and ask, even though FIX 4.x only formally documents
+    /// 1-9 + A-G. We accept it to avoid false-positive validation errors on
+    /// every FX quote stream.
+    #[test]
+    fn side_zero_two_way_is_valid() {
+        let mut msg = make_nos();
+        msg.set_field_value(54, "0");
+        let report = validate_fields(&msg);
+        assert!(!report.issues.iter().any(|i| i.tag == Some(54) && i.code == "INVALID_ENUM"),
+            "Side=0 (two-way) must NOT be flagged INVALID_ENUM");
+    }
+
+    /// Cross / AsDefined / Lend / Borrow letter codes must all pass too —
+    /// previously the rule only allowed 1-9.
+    #[test]
+    fn side_letter_codes_are_valid() {
+        for v in ["A", "B", "C", "D", "E", "F", "G"] {
+            let mut msg = make_nos();
+            msg.set_field_value(54, v);
+            let report = validate_fields(&msg);
+            assert!(!report.issues.iter().any(|i| i.tag == Some(54) && i.code == "INVALID_ENUM"),
+                "Side={v} must be accepted");
+        }
     }
 
     #[test]
