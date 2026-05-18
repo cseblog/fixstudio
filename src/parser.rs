@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use compact_str::{CompactString, format_compact};
-use memchr::{memchr3, memmem};
+use memchr::memmem;
 use rayon::prelude::*;
 
 use crate::dictionary::{msg_type_label, side_label};
@@ -20,26 +20,78 @@ const AVG_MSG_BYTES_STR: usize = 160;
 /// Typical number of fields per FIX message; used to pre-size `fields` Vec.
 const AVG_FIELDS_PER_MSG: usize = 24;
 
-/// Normalize delimiters: SOH (0x01), \x01, ^A → pipe.
-/// Returns a borrowed slice when no special delimiters are present (zero allocation).
+/// Normalize delimiters AND strip stray whitespace.
+///
+/// Accepts the many forms FIX text shows up in:
+///   • Real wire SOH (0x01)
+///   • Literal escape sequences `\x01` or `^A`
+///   • Pipe `|` (already the canonical form)
+///   • Newlines / CR / tabs (paste from chat, email, or multi-line logs)
+///
+/// All of the above collapse to a single `|`. Whitespace adjacent to any
+/// delimiter is dropped, and runs of consecutive delimiters collapse to one
+/// — so `  10=068  |  ` and `10=068|\n` both end up as `10=068|`.
+///
+/// Interior spaces inside a *value* are preserved (e.g. tag 58 Text =
+/// "Order rejected by venue" stays intact), because a space only ever gets
+/// dropped if it sits next to a delimiter.
+///
+/// Returns the original slice borrowed when the input is already clean.
 fn normalize_delimiters(input: &str) -> Cow<'_, str> {
-    if memchr3(0x01, b'\\', b'^', input.as_bytes()).is_none() {
+    let bytes = input.as_bytes();
+
+    // Fast path: input must be pure ASCII with no whitespace, no escapes, no
+    // double-pipes. Single O(n) scan with early-exit so clean inputs stay
+    // zero-allocation.
+    let mut needs_work = false;
+    let mut prev = 0u8;
+    for &b in bytes {
+        if matches!(b, 0x01 | b'\\' | b'^' | b'\r' | b'\n' | b'\t' | b' ') {
+            needs_work = true; break;
+        }
+        if prev == b'|' && b == b'|' {
+            needs_work = true; break;
+        }
+        prev = b;
+    }
+    if !needs_work {
         return Cow::Borrowed(input);
     }
+
     let mut out = String::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut i = 0;
+    let mut last_was_delim = true;   // suppress leading delimiter
+    let mut i = 0usize;
     while i < bytes.len() {
-        match bytes[i] {
-            0x01 => { out.push('|'); i += 1; }
-            b'\\' if bytes.get(i + 1..i + 4) == Some(b"x01") => {
-                out.push('|'); i += 4;
+        let b = bytes[i];
+        // Match all delimiter forms first.
+        let consumed: usize = match b {
+            0x01 | b'|' | b'\n' | b'\r' | b'\t' => 1,
+            b'\\' if bytes.get(i + 1..i + 4) == Some(b"x01") => 4,
+            b'^' if bytes.get(i + 1) == Some(&b'A') => 2,
+            _ => 0,
+        };
+        if consumed > 0 {
+            if !last_was_delim {
+                // Trim trailing whitespace that sat just before the delimiter.
+                while matches!(out.as_bytes().last(), Some(b' ')) { out.pop(); }
+                out.push('|');
             }
-            b'^' if bytes.get(i + 1) == Some(&b'A') => {
-                out.push('|'); i += 2;
-            }
-            b => { out.push(b as char); i += 1; }
+            last_was_delim = true;
+            i += consumed;
+            continue;
         }
+        // Drop whitespace that sits adjacent to (the just-emitted) delimiter.
+        if b == b' ' && last_was_delim {
+            i += 1;
+            continue;
+        }
+        out.push(b as char);
+        last_was_delim = false;
+        i += 1;
+    }
+    // Drop any trailing whitespace at the very end too.
+    while matches!(out.as_bytes().last(), Some(b' ')) {
+        out.pop();
     }
     Cow::Owned(out)
 }
@@ -482,6 +534,54 @@ mod tests {
         let input = "8=FIX.4.4|9=5|35=0|10=001|";
         let result = normalize_delimiters(input);
         assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn test_normalize_strips_whitespace_around_delimiters() {
+        let input = "  8=FIX.4.4 | 9=5 |35=0|  10=001  | ";
+        let out = normalize_delimiters(input).into_owned();
+        assert_eq!(out, "8=FIX.4.4|9=5|35=0|10=001|");
+    }
+
+    #[test]
+    fn test_normalize_preserves_spaces_inside_values() {
+        // Tag 58 (Text) with internal spaces — must NOT be stripped.
+        let input = "35=3|58=Order rejected by venue|10=000|";
+        let out = normalize_delimiters(input).into_owned();
+        assert_eq!(out, "35=3|58=Order rejected by venue|10=000|");
+    }
+
+    #[test]
+    fn test_normalize_treats_newlines_tabs_as_delimiters() {
+        let input = "8=FIX.4.4|9=5|35=0\n10=001\r\n8=FIX.4.4|9=5|35=0\t10=002";
+        let out = normalize_delimiters(input).into_owned();
+        // Newlines / CR / tab collapse to single '|', then the leading 8=FIX
+        // of the second message follows naturally.
+        assert!(out.contains("35=0|10=001"));
+        assert!(out.contains("35=0|10=002"));
+        assert!(!out.contains("\n") && !out.contains("\r") && !out.contains("\t"));
+    }
+
+    #[test]
+    fn test_normalize_collapses_repeated_delimiters() {
+        let input = "8=FIX.4.4||9=5|||35=0|10=001||";
+        let out = normalize_delimiters(input).into_owned();
+        assert_eq!(out, "8=FIX.4.4|9=5|35=0|10=001|");
+    }
+
+    #[test]
+    fn test_parse_all_handles_messy_paste() {
+        // Realistic "user pasted from chat / Slack" input: mixed leading/trailing
+        // whitespace, line breaks, and tabs between fields.
+        let messy = "
+            8=FIX.4.4 | 9=5 | 35=A | 49=CLIENT | 56=BROKER | 34=1 |
+                52=20240101-09:00:00.000 | 10=000 |
+        ";
+        let msgs = parse_all(messy);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].msg_type_raw, "A");
+        assert_eq!(msgs[0].sender, "CLIENT");
+        assert_eq!(msgs[0].target, "BROKER");
     }
 
     #[test]

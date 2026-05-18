@@ -126,7 +126,7 @@ impl Tab {
             f_msg:                 Signal::new_in_scope(String::new(),       s),
             f_clord:               Signal::new_in_scope(String::new(),       s),
             f_detail:              Signal::new_in_scope(String::new(),       s),
-            timeline_filters_open: Signal::new_in_scope(false,               s),
+            timeline_filters_open: Signal::new_in_scope(true,                s),
             display_limit:         Signal::new_in_scope(1000usize,           s),
             detail_view:           Signal::new_in_scope(0u8,                 s),
             detail_filter:         Signal::new_in_scope(String::new(),       s),

@@ -706,58 +706,93 @@ struct TLLine {
 }
 
 fn build_timeline_lines(nodes: &[FlowNode]) -> Vec<TLLine> {
-    let mut preamble: Vec<&FlowNode> = Vec::new();
+    // Split preamble by role so multiple Quotes can be stacked vertically
+    // (one line per additional Quote) instead of crowding horizontally on
+    // the main line. The shape we want:
+    //
+    //   [RFQ] → [Quote #1] → [NOS] → [ER #1]      ← line 0
+    //         ↳ [Quote #2]                          ← line 1 (indented past RFQ)
+    //         ↳ [Quote #3]                          ← line 2
+    //                        ↳ [ER #2]              ← line N (indented past NOS)
+    //                        ↳ [Cancel chain …]     ← cancel branch
+    //
+    let mut rfq_request: Option<&FlowNode> = None;
+    let mut quotes:   Vec<&FlowNode> = Vec::new();
+    let mut new_order:   Option<&FlowNode> = None;
+    let mut other:    Vec<&FlowNode> = Vec::new();
     let mut er_nodes: Vec<&FlowNode> = Vec::new();
     let mut cancel:   Vec<&FlowNode> = Vec::new();
     let mut in_cancel = false;
 
     for n in nodes {
         match &n.kind {
-            FlowKind::RfqRequest | FlowKind::RfqQuote | FlowKind::NewOrder | FlowKind::Other => {
-                preamble.push(n);
-            }
-            FlowKind::CancelReq => { in_cancel = true; cancel.push(n); }
-            _ => { if in_cancel { cancel.push(n); } else { er_nodes.push(n); } }
+            FlowKind::RfqRequest => { rfq_request = Some(n); }
+            FlowKind::RfqQuote   => { quotes.push(n); }
+            FlowKind::NewOrder   => { new_order = Some(n); }
+            FlowKind::Other      => { other.push(n); }
+            FlowKind::CancelReq  => { in_cancel = true; cancel.push(n); }
+            _                    => { if in_cancel { cancel.push(n); } else { er_nodes.push(n); } }
         }
     }
 
-    let pre = preamble.len();
     let mut lines: Vec<TLLine> = Vec::new();
 
-    // Line 0: preamble nodes + first ER
-    {
-        let mut segs: Vec<TLSeg> = Vec::new();
-        for (i, n) in preamble.iter().enumerate() {
-            segs.push(TLSeg { delta_us: n.delta_us, label: n.label.clone(),
-                sublabel: n.sublabel.clone(), color: n.kind.color(),
-                first: i == 0, is_cancel: false });
-        }
-        if let Some(er0) = er_nodes.first() {
-            segs.push(TLSeg { delta_us: er0.delta_us, label: er0.label.clone(),
-                sublabel: er0.sublabel.clone(), color: er0.kind.color(),
-                first: segs.is_empty(), is_cancel: false });
-        }
-        if !segs.is_empty() { lines.push(TLLine { indent: 0, segs }); }
-    }
+    // ── Line 0: RFQ → first Quote → NewOrder → other → first ER ──────────
+    let mut line0: Vec<TLSeg> = Vec::new();
+    let mut push = |segs: &mut Vec<TLSeg>, n: &FlowNode| {
+        let first = segs.is_empty();
+        segs.push(TLSeg {
+            delta_us: n.delta_us, label: n.label.clone(),
+            sublabel: n.sublabel.clone(), color: n.kind.color(),
+            first, is_cancel: false,
+        });
+    };
+    if let Some(n) = rfq_request { push(&mut line0, n); }
+    if let Some(n) = quotes.first().copied() { push(&mut line0, n); }
+    if let Some(n) = new_order { push(&mut line0, n); }
+    for n in &other { push(&mut line0, *n); }
+    if let Some(er0) = er_nodes.first() { push(&mut line0, *er0); }
+    if !line0.is_empty() { lines.push(TLLine { indent: 0, segs: line0 }); }
 
-    // Additional ER lines branch from after preamble
-    for er in er_nodes.iter().skip(1) {
+    // ── One extra line per additional Quote, indented past the RFQ. ──────
+    // indent counts how many "node+arrow" slots to skip — 1 = past RFQ.
+    let quote_indent = if rfq_request.is_some() { 1 } else { 0 };
+    for q in quotes.iter().skip(1) {
         lines.push(TLLine {
-            indent: pre,
-            segs: vec![TLSeg { delta_us: er.delta_us, label: er.label.clone(),
-                sublabel: er.sublabel.clone(), color: er.kind.color(),
-                first: false, is_cancel: false }],
+            indent: quote_indent,
+            segs: vec![TLSeg {
+                delta_us: q.delta_us, label: q.label.clone(),
+                sublabel: q.sublabel.clone(), color: q.kind.color(),
+                first: false, is_cancel: false,
+            }],
         });
     }
 
-    // Cancel chain branches from preamble + 1 ER column
+    // ── Additional ER lines branch from after the chosen NOS. ────────────
+    // pre = count of segs on line 0 BEFORE the first ER.
+    let pre_er_count = rfq_request.is_some() as usize
+        + (!quotes.is_empty()) as usize
+        + new_order.is_some() as usize
+        + other.len();
+    for er in er_nodes.iter().skip(1) {
+        lines.push(TLLine {
+            indent: pre_er_count,
+            segs: vec![TLSeg {
+                delta_us: er.delta_us, label: er.label.clone(),
+                sublabel: er.sublabel.clone(), color: er.kind.color(),
+                first: false, is_cancel: false,
+            }],
+        });
+    }
+
+    // ── Cancel chain branches past the first ER. ─────────────────────────
     if !cancel.is_empty() {
         let segs = cancel.iter().enumerate().map(|(i, n)|
             TLSeg { delta_us: n.delta_us, label: n.label.clone(),
                 sublabel: n.sublabel.clone(), color: n.kind.color(),
                 first: i == 0, is_cancel: i == 0 }
         ).collect();
-        lines.push(TLLine { indent: pre + 1, segs });
+        lines.push(TLLine { indent: pre_er_count + 1, segs });
     }
 
     lines
@@ -820,6 +855,14 @@ pub fn lifecycle_panel(
     });
 
     // ── Signals ──
+    // Rendering cap with a "Load more" button. Reset when the underlying chain
+    // set changes (signature flips) so user always lands on the first page.
+    let mut display_cap: Signal<usize> = use_signal(|| PAGE_SIZE);
+    use_effect(move || {
+        let _ = chains_signature.read();
+        display_cap.set(PAGE_SIZE);
+    });
+
     let mut filter_sym:    Signal<String> = use_signal(String::new);
     let mut filter_status: Signal<String> = use_signal(|| "All".to_string());
     let selected_chain: Signal<Option<String>> = use_signal(|| None);
@@ -981,7 +1024,9 @@ pub fn lifecycle_panel(
     let total_chains   = chains_snap.len();
     let rfq_chains     = chains_snap.iter().filter(|c| c.has_rfq).count();
     let filtered_count = filtered_snap.len();
-    let shown          = filtered_snap.len().min(PAGE_SIZE);
+    let cur_cap        = *display_cap.read();
+    let shown          = filtered_snap.len().min(cur_cap);
+    let has_more       = filtered_count > shown;
 
     let header_meta = format!(
         "{} chains · {} RFQ ({:.0}%) · {} NOS→ER · {} ER→Fill",
@@ -1323,7 +1368,7 @@ pub fn lifecycle_panel(
                             }
                         }
                         div { class: "tbl-body latency-tbl-body",
-                            {filtered_snap.iter().take(PAGE_SIZE).map(|ch| {
+                            {filtered_snap.iter().take(cur_cap).map(|ch| {
                                 let is_sel   = sel_id.as_deref() == Some(ch.chain_id.as_str());
                                 let row_cls  = if is_sel { "tbl-row tbl-chain-row flow-row-selected" } else { "tbl-row tbl-chain-row flow-row-clickable" };
                                 let type_lbl = if ch.has_rfq { "RFQ" } else { "Direct" };
@@ -1413,9 +1458,22 @@ pub fn lifecycle_panel(
                         }
                     }
 
-                    if filtered_count > PAGE_SIZE {
+                    if has_more {
                         div { class: "recon-more",
-                            "Showing {shown} of {filtered_count} chains. Refine the symbol or status filter to narrow results."
+                            span { "Showing {shown} of {filtered_count} chains. " }
+                            button {
+                                class: "btn-icon",
+                                onclick: move |_| {
+                                    let cur = *display_cap.peek();
+                                    display_cap.set(cur + PAGE_SIZE);
+                                },
+                                "Load {PAGE_SIZE} more"
+                            }
+                            button {
+                                class: "btn-icon",
+                                onclick: move |_| display_cap.set(usize::MAX),
+                                "Show all"
+                            }
                         }
                     }
                 }

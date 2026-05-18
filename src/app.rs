@@ -112,6 +112,19 @@ pub fn app() -> Element {
         let mut view_mode      = t.view_mode;
         let mut label          = t.label;
 
+        // Also reset every per-tab filter so the timeline returns to a clean
+        // unfiltered state — otherwise stale column-filter values from the
+        // previous data set silently hide rows after Clear.
+        let mut f_time     = t.f_time;
+        let mut f_time_op  = t.f_time_op;
+        let mut f_sender   = t.f_sender;
+        let mut f_target   = t.f_target;
+        let mut f_msg      = t.f_msg;
+        let mut f_clord    = t.f_clord;
+        let mut f_detail   = t.f_detail;
+        let mut filters_open = t.timeline_filters_open;
+        let mut display_limit = t.display_limit;
+
         input.set(String::new());
         offload_replace(&mut messages, Vec::new());
         selected_idx.set(None);
@@ -120,6 +133,15 @@ pub fn app() -> Element {
         loaded_files.set(Vec::new());
         show_file_list.set(false);
         view_mode.set(ViewMode::Timeline);
+        f_time.set(String::new());
+        f_time_op.set("=".to_string());
+        f_sender.set(String::new());
+        f_target.set(String::new());
+        f_msg.set(String::new());
+        f_clord.set(String::new());
+        f_detail.set(String::new());
+        filters_open.set(true);   // keep filter row visible by default
+        display_limit.set(1000);
         label.set("Untitled".to_string());
     };
 
@@ -290,23 +312,34 @@ pub fn app() -> Element {
         }
     });
 
-    // Entering compare mode: force BOTH Timeline and Detail visible so the user
-    // sees the full side-by-side picture by default. Also sync the compare
-    // pane's view mode to the active pane's, otherwise you can end up looking
-    // at Timeline vs Session (apples-to-oranges).
+    // Entering compare mode (once, on the None → Some transition) we force
+    // both panes to a clean Timeline view + Timeline & Detail visible. We do
+    // NOT keep re-forcing on every render — that would override the user's
+    // click on the shared "Latency / Session / Validator" tabs because the
+    // effect would re-read view_mode, refire, and snap back to Timeline.
+    //
+    // `peek()` reads without registering a reactive dep, so writes to
+    // view_mode / timeline_visible / detail_visible inside the body don't
+    // refire the effect. Only the explicit `compare_id.read()` is a tracked
+    // dep, which is exactly what we want.
+    let mut last_compare: Signal<Option<u64>> = use_signal(|| None);
     use_effect(move || {
-        let Some(cid) = *compare_id.read() else { return };
+        let cur = *compare_id.read();
+        let prev = *last_compare.peek();
+        if cur == prev { return; }
+        last_compare.set(cur);
+
+        let Some(cid) = cur else { return };
         if !*timeline_visible.peek() { timeline_visible.set(true); }
         if !*detail_visible.peek()   { detail_visible.set(true); }
-        let aid = *active_id.read();
-        let list = tabs.read();
+
+        let aid = *active_id.peek();
+        let list = tabs.peek();
         let a_vm = list.iter().find(|t| t.id == aid).map(|t| t.view_mode);
         let c_vm = list.iter().find(|t| t.id == cid).map(|t| t.view_mode);
-        if let (Some(av), Some(mut cv)) = (a_vm, c_vm) {
-            let mode = av.read().clone();
-            if cv.read().clone() != mode {
-                cv.set(mode);
-            }
+        if let (Some(mut av), Some(mut cv)) = (a_vm, c_vm) {
+            if av.peek().clone() != ViewMode::Timeline { av.set(ViewMode::Timeline); }
+            if cv.peek().clone() != ViewMode::Timeline { cv.set(ViewMode::Timeline); }
         }
     });
 

@@ -82,7 +82,23 @@ xcrun notarytool submit "$DMG_PATH" \
 echo "Stapling notarization ticket..."
 xcrun stapler staple "$DMG_PATH"
 
+# Copy the final, signed + notarized + stapled DMG into release/ at the
+# repo root so the upload step has a stable, easy-to-find path. We do this
+# AFTER stapling — copying earlier would lose the embedded ticket if the
+# DMG is rewritten by a later step.
+RELEASE_DIR="release"
+mkdir -p "$RELEASE_DIR"
+RELEASE_PATH="$RELEASE_DIR/$DMG_NAME"
+cp -f "$DMG_PATH" "$RELEASE_PATH"
+
+# Quick verification — staple must validate against the copy too.
+if ! xcrun stapler validate "$RELEASE_PATH" >/dev/null 2>&1; then
+    echo "ERROR: stapler validation failed on copied DMG ($RELEASE_PATH)."
+    exit 1
+fi
+
 echo ""
 echo "✓ Release complete!"
-echo "  DMG: $DMG_PATH"
+echo "  Build DMG: $DMG_PATH"
+echo "  Release  : $RELEASE_PATH"
 echo "  Ready to distribute."
