@@ -1,7 +1,6 @@
 # ── Build artifacts ───────────────────────────────────────────────
 target/
 rust_out/
-release/
 
 # ── Shipping binaries — distribute via GitHub Releases, not in tree
 *.dmg
