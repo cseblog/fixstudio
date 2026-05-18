@@ -140,7 +140,7 @@ pub fn app() -> Element {
         f_msg.set(String::new());
         f_clord.set(String::new());
         f_detail.set(String::new());
-        filters_open.set(false);
+        filters_open.set(true);   // keep filter row visible by default
         display_limit.set(1000);
         label.set("Untitled".to_string());
     };

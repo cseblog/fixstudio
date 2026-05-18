@@ -855,6 +855,14 @@ pub fn lifecycle_panel(
     });
 
     // ── Signals ──
+    // Rendering cap with a "Load more" button. Reset when the underlying chain
+    // set changes (signature flips) so user always lands on the first page.
+    let mut display_cap: Signal<usize> = use_signal(|| PAGE_SIZE);
+    use_effect(move || {
+        let _ = chains_signature.read();
+        display_cap.set(PAGE_SIZE);
+    });
+
     let mut filter_sym:    Signal<String> = use_signal(String::new);
     let mut filter_status: Signal<String> = use_signal(|| "All".to_string());
     let selected_chain: Signal<Option<String>> = use_signal(|| None);
@@ -1016,7 +1024,9 @@ pub fn lifecycle_panel(
     let total_chains   = chains_snap.len();
     let rfq_chains     = chains_snap.iter().filter(|c| c.has_rfq).count();
     let filtered_count = filtered_snap.len();
-    let shown          = filtered_snap.len().min(PAGE_SIZE);
+    let cur_cap        = *display_cap.read();
+    let shown          = filtered_snap.len().min(cur_cap);
+    let has_more       = filtered_count > shown;
 
     let header_meta = format!(
         "{} chains · {} RFQ ({:.0}%) · {} NOS→ER · {} ER→Fill",
@@ -1358,7 +1368,7 @@ pub fn lifecycle_panel(
                             }
                         }
                         div { class: "tbl-body latency-tbl-body",
-                            {filtered_snap.iter().take(PAGE_SIZE).map(|ch| {
+                            {filtered_snap.iter().take(cur_cap).map(|ch| {
                                 let is_sel   = sel_id.as_deref() == Some(ch.chain_id.as_str());
                                 let row_cls  = if is_sel { "tbl-row tbl-chain-row flow-row-selected" } else { "tbl-row tbl-chain-row flow-row-clickable" };
                                 let type_lbl = if ch.has_rfq { "RFQ" } else { "Direct" };
@@ -1448,9 +1458,22 @@ pub fn lifecycle_panel(
                         }
                     }
 
-                    if filtered_count > PAGE_SIZE {
+                    if has_more {
                         div { class: "recon-more",
-                            "Showing {shown} of {filtered_count} chains. Refine the symbol or status filter to narrow results."
+                            span { "Showing {shown} of {filtered_count} chains. " }
+                            button {
+                                class: "btn-icon",
+                                onclick: move |_| {
+                                    let cur = *display_cap.peek();
+                                    display_cap.set(cur + PAGE_SIZE);
+                                },
+                                "Load {PAGE_SIZE} more"
+                            }
+                            button {
+                                class: "btn-icon",
+                                onclick: move |_| display_cap.set(usize::MAX),
+                                "Show all"
+                            }
                         }
                     }
                 }
