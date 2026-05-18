@@ -312,21 +312,34 @@ pub fn app() -> Element {
         }
     });
 
-    // Entering compare mode: force BOTH Timeline + Detail visible AND reset
-    // both panes to the Timeline view. Timeline is the only view where the
-    // diff coloring + ClOrdID rails meaningfully line up side-by-side; users
-    // can still switch to Latency/Session/Validator via the shared view-tabs.
+    // Entering compare mode (once, on the None → Some transition) we force
+    // both panes to a clean Timeline view + Timeline & Detail visible. We do
+    // NOT keep re-forcing on every render — that would override the user's
+    // click on the shared "Latency / Session / Validator" tabs because the
+    // effect would re-read view_mode, refire, and snap back to Timeline.
+    //
+    // `peek()` reads without registering a reactive dep, so writes to
+    // view_mode / timeline_visible / detail_visible inside the body don't
+    // refire the effect. Only the explicit `compare_id.read()` is a tracked
+    // dep, which is exactly what we want.
+    let mut last_compare: Signal<Option<u64>> = use_signal(|| None);
     use_effect(move || {
-        let Some(cid) = *compare_id.read() else { return };
+        let cur = *compare_id.read();
+        let prev = *last_compare.peek();
+        if cur == prev { return; }
+        last_compare.set(cur);
+
+        let Some(cid) = cur else { return };
         if !*timeline_visible.peek() { timeline_visible.set(true); }
         if !*detail_visible.peek()   { detail_visible.set(true); }
-        let aid = *active_id.read();
-        let list = tabs.read();
+
+        let aid = *active_id.peek();
+        let list = tabs.peek();
         let a_vm = list.iter().find(|t| t.id == aid).map(|t| t.view_mode);
         let c_vm = list.iter().find(|t| t.id == cid).map(|t| t.view_mode);
         if let (Some(mut av), Some(mut cv)) = (a_vm, c_vm) {
-            if av.read().clone() != ViewMode::Timeline { av.set(ViewMode::Timeline); }
-            if cv.read().clone() != ViewMode::Timeline { cv.set(ViewMode::Timeline); }
+            if av.peek().clone() != ViewMode::Timeline { av.set(ViewMode::Timeline); }
+            if cv.peek().clone() != ViewMode::Timeline { cv.set(ViewMode::Timeline); }
         }
     });
 
