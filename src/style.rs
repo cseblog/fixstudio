@@ -1469,36 +1469,53 @@ html, body {
     align-items: center;
     padding: 0 8px;
 }
+/* Lifecycle / latency filter bar — visually identical to the timeline
+   filter row (.tbl-filter + .col-filter) so the two views feel like one
+   tool. Borderless inputs that get an ink-green underline on focus, sitting
+   in a faint paper card. Status pills are tab-style chips. */
 .recon-filter-bar {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 10px;
     flex-wrap: wrap;
     margin-bottom: 8px;
-}
-.recon-filter-input {
-    background: #f5efe2;
+    padding: 6px 12px;
+    background: #faf6ec;
     border: 1px solid #ede4cf;
-    border-radius: 4px;
+    border-radius: 5px;
+}
+/* Reuse .col-filter for inputs (defined above) — alias kept for legacy
+   callers that may still hand-pick the wider standalone treatment. */
+.recon-filter-input {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid transparent;
     color: #1c1a17;
     font-size: 12px;
-    padding: 4px 8px;
-    width: 160px;
+    font-family: inherit;
+    padding: 3px 4px;
+    width: 200px;
     outline: none;
 }
-.recon-filter-input:focus { border-color: #2f6b2f; }
+.recon-filter-input::placeholder { color: #c9bfa9; }
+.recon-filter-input:focus { border-bottom-color: #2f6b2f; }
 .recon-filter-btn {
-    background: #f5efe2;
-    border: 1px solid #ede4cf;
-    border-radius: 4px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
     color: #8a8071;
     font-size: 11px;
-    padding: 3px 9px;
+    font-weight: 600;
+    padding: 3px 10px;
     cursor: pointer;
-    transition: all 0.08s;
+    transition: all 0.1s;
+    border-radius: 0;
 }
-.recon-filter-btn:hover { border-color: #8a8071; color: #1c1a17; }
-.recon-filter-btn-active { background: #ede4cf; color: #1c1a17; border-color: #8a8071; }
+.recon-filter-btn:hover { color: #1c1a17; }
+.recon-filter-btn-active {
+    color: #1c1a17;
+    border-bottom-color: #2f6b2f;
+}
 .recon-more {
     color: #8a8071;
     font-size: 11px;
