@@ -13,6 +13,11 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# Sync version refs (latest-version, index.html JSON-LD + download URLs) from
+# the canonical Cargo.toml version BEFORE building, so the shipped DMG, the
+# landing page download links, and the auto-update payload all agree.
+./scripts/sync-version.sh
+
 # Team ID (override with APPLE_TEAM_ID env var if needed)
 TEAM_ID="${APPLE_TEAM_ID:-438CH4PXMR}"
 BUNDLE_DIR="target/dx/AIFixParser/bundle/macos/bundle"
