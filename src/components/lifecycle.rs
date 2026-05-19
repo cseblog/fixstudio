@@ -991,22 +991,46 @@ pub fn lifecycle_panel(
 
     // Filtered + sorted chain list (capped at PAGE_SIZE for rendering)
     let filtered = use_memo(move || {
-        let c     = chains.read();
-        let sym_f = filter_sym.read().trim().to_lowercase();
-        let id_f  = filter_id.read().trim().to_lowercase();
-        let st_f  = filter_status.read().clone();
-        let col   = *sort_col.read();
-        let asc   = *sort_asc.read();
-        let drill = *drill_band.read();
+        let c        = chains.read();
+        let msgs_all = messages.read();
+        let sym_f    = filter_sym.read().trim().to_lowercase();
+        let id_f     = filter_id.read().trim().to_lowercase();
+        let st_f     = filter_status.read().clone();
+        let col      = *sort_col.read();
+        let asc      = *sort_asc.read();
+        let drill    = *drill_band.read();
         // Helper: does `s` substring-match the lowercased filter needle?
         let id_match = |s: &str| s.to_ascii_lowercase().contains(id_f.as_str());
         let mut v: Vec<LifecycleChain> = c.iter().filter(|ch| {
             if !sym_f.is_empty() && !ch.symbol.to_lowercase().contains(sym_f.as_str()) { return false; }
             if !id_f.is_empty() {
-                let hit = id_match(&ch.chain_id)
+                let mut hit = id_match(&ch.chain_id)
                     || ch.quote_req_id.as_deref().is_some_and(id_match)
                     || ch.quote_id.as_deref().is_some_and(id_match)
                     || ch.primary_cl_ord_id.as_deref().is_some_and(id_match);
+                // Also scan EVERY message in the chain — picks up the cancel
+                // request's own ClOrdID (e.g. CXL-A) and any OrigClOrdID
+                // (tag 41) reference. Without this the user can only filter
+                // by the original order id, not the cancel id.
+                if !hit {
+                    for &mi in &ch.msg_indices {
+                        let Some(m) = msgs_all.get(mi) else { continue };
+                        if id_match(&m.cl_ord_id)
+                            || id_match(&m.quote_id)
+                            || id_match(&m.quote_req_id)
+                        {
+                            hit = true;
+                            break;
+                        }
+                        for f in &m.fields {
+                            if f.tag == 41 && id_match(f.value_in(&m.arena)) {
+                                hit = true;
+                                break;
+                            }
+                        }
+                        if hit { break; }
+                    }
+                }
                 if !hit { return false; }
             }
             match st_f.as_str() {
