@@ -295,11 +295,21 @@ pub fn timeline_panel(
             .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
             .filter(|(i, m)| {
                 if !fc.is_empty() {
-                    // Direct match against this message's own id fields first
-                    // (cheapest + always-correct fallback).
-                    let direct = col_match(&m.cl_ord_id,    &fc)
-                              || col_match(&m.quote_id,     &fc)
-                              || col_match(&m.quote_req_id, &fc);
+                    // Direct match against every chain-relevant id on this
+                    // message — including OrigClOrdID (tag 41) so cancels /
+                    // replaces surface when the user types the original
+                    // ClOrdID. Cheapest + always-correct fallback.
+                    let mut direct = col_match(&m.cl_ord_id,    &fc)
+                                  || col_match(&m.quote_id,     &fc)
+                                  || col_match(&m.quote_req_id, &fc);
+                    if !direct {
+                        for f in &m.fields {
+                            if f.tag == 41 && col_match(f.value_in(&m.arena), &fc) {
+                                direct = true;
+                                break;
+                            }
+                        }
+                    }
                     if !direct {
                         let r = chain.msg_root[*i];
                         if r == u32::MAX || !matching_roots.contains(&r) {
@@ -528,17 +538,43 @@ pub fn timeline_panel(
                                             span { "{m.sender}" }
                                             span { "{m.target}" }
                                             span { span { class: "badge {badge_class(&m.msg_type_raw)}", "{m.msg_type_label}" } }
-                                            span {
-                                                if !m.cl_ord_id.is_empty() {
-                                                    span { class: "id-clordid", "{m.cl_ord_id}" }
-                                                }
-                                                if !m.quote_id.is_empty() {
-                                                    span { class: "id-label", "Q:" }
-                                                    span { class: "id-quoteid", "{m.quote_id}" }
-                                                }
-                                                if !m.quote_req_id.is_empty() {
-                                                    span { class: "id-label", "QR:" }
-                                                    span { class: "id-quotereqid", "{m.quote_req_id}" }
+                                            {
+                                                // Vertical stack of every chain-relevant id on this
+                                                // message — ClOrdID (C), QuoteID (Q), QuoteReqID (QR)
+                                                // and OrigClOrdID (O, tag 41 — used by cancels). The
+                                                // ID-column filter substring-matches against ALL of
+                                                // them so typing any one id reveals the row.
+                                                let orig_cl_ord_id: Option<&str> = m.fields.iter()
+                                                    .find(|f| f.tag == 41)
+                                                    .map(|f| f.value_in(&m.arena))
+                                                    .filter(|v| !v.is_empty());
+                                                rsx! {
+                                                    span { class: "cell-id-stack",
+                                                        if !m.cl_ord_id.is_empty() {
+                                                            span { class: "id-line",
+                                                                span { class: "id-label", "C:" }
+                                                                span { class: "id-clordid", "{m.cl_ord_id}" }
+                                                            }
+                                                        }
+                                                        if let Some(oc) = orig_cl_ord_id {
+                                                            span { class: "id-line",
+                                                                span { class: "id-label", "O:" }
+                                                                span { class: "id-orig", "{oc}" }
+                                                            }
+                                                        }
+                                                        if !m.quote_id.is_empty() {
+                                                            span { class: "id-line",
+                                                                span { class: "id-label", "Q:" }
+                                                                span { class: "id-quoteid", "{m.quote_id}" }
+                                                            }
+                                                        }
+                                                        if !m.quote_req_id.is_empty() {
+                                                            span { class: "id-line",
+                                                                span { class: "id-label", "QR:" }
+                                                                span { class: "id-quotereqid", "{m.quote_req_id}" }
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                             span { class: "cell-detail", "{build_detail_text(m)}" }

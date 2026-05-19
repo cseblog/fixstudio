@@ -1286,10 +1286,40 @@ html, body {
     font-size: 12px;
 }
 .lc-clordid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #15467a; }
-.id-clordid  { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #1c1a17; text-decoration: underline; text-decoration-color: rgba(28,26,23,0.25); text-underline-offset: 2px; display: block; }
-.id-quoteid  { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #3a342c; font-size: 11px; }
-.id-quotereqid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #3a342c; font-size: 11px; }
-.id-label    { color: #8a8071; font-size: 10px; margin-right: 2px; margin-left: 4px; }
+/* Stacked-id cell — each id on its own line so multi-id rows
+   (Quote linking RFQ→QuoteID, ER linking ClOrdID+OrigClOrdID) are
+   scannable. Labels (C / O / Q / QR) sit flush-left. */
+.cell-id-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.2;
+    min-width: 0;
+}
+.id-line {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    min-width: 0;
+}
+.id-line > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.id-clordid    { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #1c1a17; font-weight: 600; }
+.id-orig       { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #6b6356; font-style: italic; }
+.id-quoteid    { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #15467a; }
+.id-quotereqid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #7a3a8a; }
+.id-label {
+    color: #8a8071;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    min-width: 18px;
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 .lc-symbol  { color: #1c1a17; font-weight: 600; }
 .lc-side    { color: #1c1a17; font-weight: 600; }
 .lc-qty     { color: #1c1a17; font-variant-numeric: tabular-nums; }
