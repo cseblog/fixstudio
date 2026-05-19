@@ -870,7 +870,42 @@ pub fn lifecycle_panel(
     // switch between views.
     let mut filter_id:     Signal<String> = use_signal(String::new);
     let mut filter_status: Signal<String> = use_signal(|| "All".to_string());
-    let selected_chain: Signal<Option<String>> = use_signal(|| None);
+    let mut selected_chain: Signal<Option<String>> = use_signal(|| None);
+
+    // Cross-view selection sync: if the user selected a row in the Timeline
+    // before opening Latency, auto-select the chain that contains that
+    // message's ClOrdID / QuoteID / QuoteReqID so they don't lose their place.
+    // Only fires on first chains-or-selection arrival; never overrides an
+    // explicit user pick on this panel.
+    use_effect(move || {
+        if selected_chain.peek().is_some() { return; }
+        let chains_snap = chains_state.read();
+        if chains_snap.is_empty() { return; }
+        let Some(idx) = *selected_idx.read() else { return };
+        let msgs_snap = messages.peek();
+        let Some(msg) = msgs_snap.get(idx) else { return };
+        let probe: Vec<String> = [
+            msg.cl_ord_id.as_str(),
+            msg.quote_id.as_str(),
+            msg.quote_req_id.as_str(),
+        ].iter().copied().filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+        if probe.is_empty() { return; }
+        for ch in chains_snap.iter() {
+            let ch_ids: [&str; 4] = [
+                ch.chain_id.as_str(),
+                ch.quote_req_id.as_deref().unwrap_or(""),
+                ch.quote_id.as_deref().unwrap_or(""),
+                ch.primary_cl_ord_id.as_deref().unwrap_or(""),
+            ];
+            let hit = probe.iter().any(|p| {
+                ch_ids.iter().any(|c: &&str| !c.is_empty() && *c == p.as_str())
+            });
+            if hit {
+                selected_chain.set(Some(ch.chain_id.clone()));
+                return;
+            }
+        }
+    });
     let mut sort_col: Signal<SortCol> = use_signal(|| SortCol::Time);
     let mut sort_asc: Signal<bool>    = use_signal(|| true);
     let expanded_phase: Signal<Option<u8>>                        = use_signal(|| None);

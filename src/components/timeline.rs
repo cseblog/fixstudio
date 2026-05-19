@@ -646,8 +646,19 @@ pub fn timeline_panel(
                     }
                     if indices.is_empty() {
                         div { class: "empty-state",
-                            if has_filter { "No messages match the current filters." }
-                            else { "No messages parsed yet." }
+                            if has_filter {
+                                span { class: "empty-state-icon",  "🔍" }
+                                span { class: "empty-state-title", "No matching messages" }
+                                span { class: "empty-state-hint",
+                                    "No row passes the current column filters. Clear or relax a filter to see more."
+                                }
+                            } else {
+                                span { class: "empty-state-icon",  "📭" }
+                                span { class: "empty-state-title", "No messages yet" }
+                                span { class: "empty-state-hint",
+                                    "Paste FIX text above, load a file, or pick a sample to get started."
+                                }
+                            }
                         }
                     }
                     if has_more {

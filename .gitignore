@@ -3,7 +3,7 @@ target/
 rust_out/
 
 # ── Shipping binaries — distribute via GitHub Releases, not in tree
-*.dmg
+
 *.pkg
 *.zip
 *.tar.gz

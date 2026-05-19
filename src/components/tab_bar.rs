@@ -27,7 +27,7 @@ pub fn tab_bar(
 
     rsx! {
         div { class: "tab-strip",
-            for t in tab_list.iter().copied() {
+            for (pos, t) in tab_list.iter().copied().enumerate() {
                 {
                     let id        = t.id;
                     let label     = t.label.read().clone();
@@ -36,9 +36,17 @@ pub fn tab_bar(
                     let mut cls   = String::from("tab-chip");
                     if is_active { cls.push_str(" tab-chip-active"); }
                     if is_cmp    { cls.push_str(" tab-chip-compare"); }
+                    // Append the keyboard shortcut hint to the tab tooltip for
+                    // the first 9 tabs so power users discover ⌘1-9 jump.
+                    let chip_title = if pos < 9 {
+                        format!("{} (⌘{}  ·  right-click for actions)", label, pos + 1)
+                    } else {
+                        format!("{} (right-click for actions)", label)
+                    };
                     rsx! {
                         div {
                             class: "{cls}",
+                            title: "{chip_title}",
                             onclick: move |_| {
                                 // Any click on a tab chip exits compare mode —
                                 // user wants to focus on that tab, not keep an
@@ -89,7 +97,7 @@ pub fn tab_bar(
                             if tabs.read().len() > 1 {
                                 button {
                                     class: "tab-chip-close",
-                                    title: "Close tab",
+                                    title: "Close tab (⌘W · middle-click)",
                                     onclick: move |evt: MouseEvent| {
                                         evt.stop_propagation();
                                         let closing_active  = *active_id.read() == id;
