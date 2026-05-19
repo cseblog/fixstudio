@@ -1337,6 +1337,24 @@ html, body {
     text-align: right;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+/* Inline "jump to latency chain" button per id line. Invisible by default to
+   keep the timeline dense; fades in on row hover, click switches view_mode
+   to Lifecycle with the chain filter pre-populated. */
+.id-jump {
+    background: transparent;
+    border: none;
+    color: #15467a;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 3px;
+    margin-left: 2px;
+    opacity: 0;
+    transition: opacity 0.1s, color 0.1s, background 0.1s;
+    border-radius: 2px;
+}
+.tbl-row:hover .id-jump { opacity: 0.7; }
+.id-jump:hover { opacity: 1 !important; color: #2f6b2f; background: rgba(47,107,47,0.10); }
 .lc-symbol  { color: #1c1a17; font-weight: 600; }
 .lc-side    { color: #1c1a17; font-weight: 600; }
 .lc-qty     { color: #1c1a17; font-variant-numeric: tabular-nums; }

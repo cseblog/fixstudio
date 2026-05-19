@@ -70,6 +70,7 @@ pub fn tab_view(
         lifecycle_signature,
         lifecycle_computing,
         lifecycle_cancel,
+        lifecycle_filter_id,
         ..
     } = tab;
 
@@ -256,6 +257,7 @@ pub fn tab_view(
                         chains_signature: lifecycle_signature,
                         chains_computing: lifecycle_computing,
                         cancel: lifecycle_cancel,
+                        filter_id: lifecycle_filter_id,
                     }
                 } else {
                     {
@@ -287,6 +289,13 @@ pub fn tab_view(
                                             display_limit: display_limit,
                                             filters_open: timeline_filters_open,
                                             compare_keys: compare_keys,
+                                            on_jump_to_chain: move |id: String| {
+                                                // Pre-fill the latency view's chain filter, then
+                                                // switch this tab's view_mode so the user lands
+                                                // directly on the matching chain.
+                                                lifecycle_filter_id.clone().set(id);
+                                                view_mode.set(ViewMode::Lifecycle);
+                                            },
                                         }
                                     }
                                     if show_dt {

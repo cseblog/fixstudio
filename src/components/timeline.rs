@@ -306,6 +306,10 @@ pub fn timeline_panel(
     mut filters_open:  Signal<bool>,
     #[props(default)]
     compare_keys: Option<ReadSignal<HashSet<String>>>,
+    /// "Jump to latency chain": fires with the chosen id when the user
+    /// clicks the ↗ action on an ID line. Host wires it to switch view
+    /// mode to Lifecycle and pre-fill the chain filter.
+    on_jump_to_chain: EventHandler<String>,
 ) -> Element {
 
     // Installs a scroll listener on #timeline-scroll once on mount.
@@ -608,30 +612,94 @@ pub fn timeline_panel(
                                                     .find(|f| f.tag == 41)
                                                     .map(|f| f.value_in(&m.arena))
                                                     .filter(|v| !v.is_empty());
-                                                rsx! {
-                                                    span { class: "cell-id-stack",
-                                                        if !m.cl_ord_id.is_empty() {
-                                                            span { class: "id-line",
-                                                                span { class: "id-label", "C:" }
-                                                                span { class: "id-clordid", "{m.cl_ord_id}" }
+                                                {
+                                                    // Capture owned ids upfront so each row's jump
+                                                    // button closure can `move` its own copy.
+                                                    let id_c  = m.cl_ord_id.as_str().to_string();
+                                                    let id_o  = orig_cl_ord_id.map(|s| s.to_string());
+                                                    let id_q  = m.quote_id.as_str().to_string();
+                                                    let id_qr = m.quote_req_id.as_str().to_string();
+                                                    rsx! {
+                                                        span { class: "cell-id-stack",
+                                                            if !id_c.is_empty() {
+                                                                span { class: "id-line",
+                                                                    span { class: "id-label", "C:" }
+                                                                    span { class: "id-clordid", "{id_c}" }
+                                                                    {
+                                                                        let v = id_c.clone();
+                                                                        rsx! {
+                                                                            button {
+                                                                                class: "id-jump",
+                                                                                title: "Jump to latency chain for {v}",
+                                                                                onclick: move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_jump_to_chain.call(v.clone());
+                                                                                },
+                                                                                "↗"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
-                                                        }
-                                                        if let Some(oc) = orig_cl_ord_id {
-                                                            span { class: "id-line",
-                                                                span { class: "id-label", "O:" }
-                                                                span { class: "id-orig", "{oc}" }
+                                                            if let Some(oc) = id_o {
+                                                                span { class: "id-line",
+                                                                    span { class: "id-label", "O:" }
+                                                                    span { class: "id-orig", "{oc}" }
+                                                                    {
+                                                                        let v = oc.clone();
+                                                                        rsx! {
+                                                                            button {
+                                                                                class: "id-jump",
+                                                                                title: "Jump to latency chain for {v}",
+                                                                                onclick: move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_jump_to_chain.call(v.clone());
+                                                                                },
+                                                                                "↗"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
-                                                        }
-                                                        if !m.quote_id.is_empty() {
-                                                            span { class: "id-line",
-                                                                span { class: "id-label", "Q:" }
-                                                                span { class: "id-quoteid", "{m.quote_id}" }
+                                                            if !id_q.is_empty() {
+                                                                span { class: "id-line",
+                                                                    span { class: "id-label", "Q:" }
+                                                                    span { class: "id-quoteid", "{id_q}" }
+                                                                    {
+                                                                        let v = id_q.clone();
+                                                                        rsx! {
+                                                                            button {
+                                                                                class: "id-jump",
+                                                                                title: "Jump to latency chain for {v}",
+                                                                                onclick: move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_jump_to_chain.call(v.clone());
+                                                                                },
+                                                                                "↗"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
-                                                        }
-                                                        if !m.quote_req_id.is_empty() {
-                                                            span { class: "id-line",
-                                                                span { class: "id-label", "QR:" }
-                                                                span { class: "id-quotereqid", "{m.quote_req_id}" }
+                                                            if !id_qr.is_empty() {
+                                                                span { class: "id-line",
+                                                                    span { class: "id-label", "QR:" }
+                                                                    span { class: "id-quotereqid", "{id_qr}" }
+                                                                    {
+                                                                        let v = id_qr.clone();
+                                                                        rsx! {
+                                                                            button {
+                                                                                class: "id-jump",
+                                                                                title: "Jump to latency chain for {v}",
+                                                                                onclick: move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_jump_to_chain.call(v.clone());
+                                                                                },
+                                                                                "↗"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }

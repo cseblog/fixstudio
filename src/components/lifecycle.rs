@@ -843,6 +843,9 @@ pub fn lifecycle_panel(
     chains_signature: Signal<usize>,
     chains_computing: Signal<bool>,
     cancel: Signal<u64>,
+    /// Per-tab chain-id filter. Lifted to Tab so jump-from-timeline can pre-
+    /// populate it before switching the view mode here.
+    filter_id: Signal<String>,
 ) -> Element {
     // Unique per-instance DOM id suffix so two lifecycle_panel mounts (e.g.
     // active + compare panes in compare mode) don't collide on the same
@@ -868,7 +871,7 @@ pub fn lifecycle_panel(
     // ClOrdID, or the canonical chain_id. Mirrors how the timeline's ID
     // filter works so the user can drill-in by RFQ/Order id with no mental
     // switch between views.
-    let mut filter_id:     Signal<String> = use_signal(String::new);
+    let mut filter_id = filter_id;
     let mut filter_status: Signal<String> = use_signal(|| "All".to_string());
     let mut selected_chain: Signal<Option<String>> = use_signal(|| None);
 
