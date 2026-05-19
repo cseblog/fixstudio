@@ -583,6 +583,7 @@ pub fn app() -> Element {
                 div { class: "file-menu-wrap",
                     button {
                         class: if *file_menu_open.read() { "file-menu-btn file-menu-btn-open" } else { "file-menu-btn" },
+                        title: "File menu — Load ⌘O · Load folder ⌘⇧O · Samples · Clear",
                         onclick: move |e| {
                             e.stop_propagation();
                             let v = !*file_menu_open.read();

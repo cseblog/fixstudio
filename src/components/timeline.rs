@@ -107,6 +107,146 @@ pub fn build_chain_index(msgs: &[FixMessage]) -> ChainIndex {
     ChainIndex { msg_root, id_to_root }
 }
 
+// ── Timeline filter (pure, tested) ───────────────────────────────────────────
+//
+// All filter state needed by `apply_timeline_filter` in raw form (as typed by
+// the user). Keeping it as plain `String`s + a bool lets the function take a
+// single borrow and lets us write tests without touching any Dioxus signal.
+
+#[derive(Debug, Default, Clone)]
+pub struct TimelineFilter {
+    pub skip_heartbeats: bool,
+    /// User-typed time value (may be empty).
+    pub f_time:    String,
+    /// Time comparison operator: "=", ">=", or "<=".
+    pub f_time_op: String,
+    pub f_sender:  String,
+    pub f_target:  String,
+    pub f_msg:     String,
+    /// "ID column" filter — matches ClOrdID, OrigClOrdID, QuoteID, QuoteReqID
+    /// directly, then expands via chain_index for transitive chain membership.
+    pub f_clord:   String,
+    pub f_detail:  String,
+}
+
+/// Pure timeline-filter pipeline. Returns indices into `msgs` for rows that
+/// pass every column filter, sorted newest-first by `time`. Identical to the
+/// inline closure in `timeline_panel`'s use_memo, just extracted so the test
+/// suite can exercise every code path without spinning up Dioxus.
+pub fn apply_timeline_filter(
+    msgs: &[FixMessage],
+    chain: &ChainIndex,
+    f:    &TimelineFilter,
+) -> Vec<usize> {
+    // Combine operator + value into the format `time_match` expects:
+    //   "="  → plain substring match; ">=" / "<=" → prefixed range query.
+    let ft_raw = if f.f_time_op == "=" || f.f_time.is_empty() {
+        f.f_time.clone()
+    } else {
+        format!("{}{}", f.f_time_op, f.f_time)
+    };
+    // Trim then lower-case every filter — pasted IDs from terminals or
+    // spreadsheets often carry leading / trailing whitespace that would
+    // otherwise silently break substring matches against the trimmed FIX
+    // values stored on the message.
+    let fs = f.f_sender.trim().to_ascii_lowercase();
+    let fta = f.f_target.trim().to_ascii_lowercase();
+    let fm = f.f_msg.trim().to_ascii_lowercase();
+    let fc = f.f_clord.trim().to_ascii_lowercase();
+    let fd = f.f_detail.trim().to_ascii_lowercase();
+
+    // Chain-aware ID expansion: any chain root whose id_to_root key contains
+    // the substring becomes a match candidate. Roots that cover more than
+    // 70 % of the message set are treated as accidental merges (placeholder
+    // ClOrdIDs etc.) and dropped — without this guard a single junk chain
+    // can swallow the entire log and effectively disable the filter.
+    let (root_sizes, matching_roots) = resolve_chain_roots(chain, &fc, msgs.len());
+
+    let mut indices: Vec<usize> = msgs.iter()
+        .enumerate()
+        .filter(|(_, m)| !(f.skip_heartbeats && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
+        .filter(|(i, m)| {
+            if !fc.is_empty() && !msg_passes_id_filter(m, *i, chain, &matching_roots, &fc) {
+                return false;
+            }
+            time_match(&m.time, &ft_raw)
+                && col_match(&m.sender, &fs)
+                && col_match(&m.target, &fta)
+                && col_match(m.msg_type_label, &fm)
+                && (fd.is_empty() || col_match(&build_detail_text(m), &fd))
+        })
+        .map(|(i, _)| i)
+        .collect();
+    indices.sort_unstable_by(|&a, &b| msgs[b].time.cmp(&msgs[a].time));
+    let _ = root_sizes;   // touched only inside resolve_chain_roots; silence warning
+    indices
+}
+
+/// Build (per-root size map, matching-root set) for the given lowercased
+/// substring. Returns empty maps when the substring is empty so the caller
+/// can short-circuit.
+fn resolve_chain_roots(
+    chain:      &ChainIndex,
+    fc:         &str,
+    total_msgs: usize,
+) -> (ahash::AHashMap<u32, usize>, ahash::AHashSet<u32>) {
+    if fc.is_empty() {
+        return (ahash::AHashMap::default(), ahash::AHashSet::default());
+    }
+    let mut root_sizes: ahash::AHashMap<u32, usize> = ahash::AHashMap::default();
+    for &r in chain.msg_root.iter() {
+        if r != u32::MAX { *root_sizes.entry(r).or_insert(0) += 1; }
+    }
+    // Junk-chain guard: a chain that swallows nearly the whole log is almost
+    // certainly a counterparty re-using a placeholder ClOrdID. Skip it during
+    // expansion. Only applies once the log is large enough for the ratio to
+    // be meaningful — a tiny test or single-order paste should never trigger
+    // the guard (e.g. 4 chain members out of 4 total is legitimate, not junk).
+    const GUARD_MIN_TOTAL: usize = 50;
+    let oversize_cap = if total_msgs >= GUARD_MIN_TOTAL {
+        (total_msgs as f64 * 0.70) as usize
+    } else {
+        usize::MAX
+    };
+    let matching: ahash::AHashSet<u32> = chain.id_to_root.iter()
+        .filter_map(|(id, &r)| {
+            if !id.contains(fc) { return None; }
+            if root_sizes.get(&r).copied().unwrap_or(0) > oversize_cap {
+                return None;
+            }
+            Some(r)
+        })
+        .collect();
+    (root_sizes, matching)
+}
+
+/// Does message `m` (at index `i`) pass the ID-column filter `fc` (lowercased)?
+/// True if any of:
+///   • ClOrdID / OrigClOrdID (tag 41) / QuoteID / QuoteReqID substring-matches
+///     directly (legacy behaviour, always works even when chain join failed)
+///   • the message's chain root is in `matching_roots`
+fn msg_passes_id_filter(
+    m:               &FixMessage,
+    i:               usize,
+    chain:           &ChainIndex,
+    matching_roots:  &ahash::AHashSet<u32>,
+    fc:              &str,
+) -> bool {
+    if col_match(&m.cl_ord_id, fc)
+        || col_match(&m.quote_id, fc)
+        || col_match(&m.quote_req_id, fc)
+    {
+        return true;
+    }
+    for f in &m.fields {
+        if f.tag == 41 && col_match(f.value_in(&m.arena), fc) {
+            return true;
+        }
+    }
+    let r = chain.msg_root[i];
+    r != u32::MAX && matching_roots.contains(&r)
+}
+
 fn build_detail_text(m: &FixMessage) -> String {
     let mut parts = Vec::new();
     if !m.side.is_empty()      { parts.push(m.side.clone()); }
@@ -166,6 +306,10 @@ pub fn timeline_panel(
     mut filters_open:  Signal<bool>,
     #[props(default)]
     compare_keys: Option<ReadSignal<HashSet<String>>>,
+    /// "Jump to latency chain": fires with the chosen id when the user
+    /// clicks the ↗ action on an ID line. Host wires it to switch view
+    /// mode to Lifecycle and pre-fill the chain filter.
+    on_jump_to_chain: EventHandler<String>,
 ) -> Element {
 
     // Installs a scroll listener on #timeline-scroll once on mount.
@@ -234,58 +378,19 @@ pub fn timeline_panel(
     // Memoized: re-computes only when filters, skip_heartbeats, or messages change.
     // Scrolling (display_limit changes) does NOT trigger a re-scan.
     let timeline_indices = use_memo(move || -> Vec<usize> {
-        let skip_hb = *skip_heartbeats.read();
-        let msgs    = messages.read();
-        let chain   = chain_index.read();
-        let ft_val = f_time.read().clone();
-        let ft_op  = f_time_op.read().clone();
-        // Combine operator + value into the format time_match expects:
-        //   "="  → plain substring match; ">="/"<=" → prefixed range query
-        let ft_raw = if ft_op == "=" || ft_val.is_empty() {
-            ft_val
-        } else {
-            format!("{}{}", ft_op, ft_val)
+        let msgs  = messages.read();
+        let chain = chain_index.read();
+        let f = TimelineFilter {
+            skip_heartbeats: *skip_heartbeats.read(),
+            f_time:    f_time.read().clone(),
+            f_time_op: f_time_op.read().clone(),
+            f_sender:  f_sender.read().clone(),
+            f_target:  f_target.read().clone(),
+            f_msg:     f_msg.read().clone(),
+            f_clord:   f_clord.read().clone(),
+            f_detail:  f_detail.read().clone(),
         };
-        // Trim then lower-case every filter — copy/paste from terminals or
-        // spreadsheets often drags leading/trailing spaces that silently break
-        // substring matches against trimmed FIX values.
-        let fs      = f_sender.read().trim().to_ascii_lowercase();
-        let fta     = f_target.read().trim().to_ascii_lowercase();
-        let fm      = f_msg.read().trim().to_ascii_lowercase();
-        let fc      = f_clord.read().trim().to_ascii_lowercase();
-        let fd      = f_detail.read().trim().to_ascii_lowercase();
-
-        // Resolve the ID filter to the set of chain roots whose any member id
-        // contains the substring. A message passes the ID test if its chain
-        // root is in that set.
-        let matching_roots: ahash::AHashSet<u32> = if fc.is_empty() {
-            ahash::AHashSet::default()
-        } else {
-            chain.id_to_root.iter()
-                .filter_map(|(id, &r)| if id.contains(fc.as_str()) { Some(r) } else { None })
-                .collect()
-        };
-
-        let mut indices: Vec<usize> = msgs.iter()
-            .enumerate()
-            .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
-            .filter(|(i, m)| {
-                if !fc.is_empty() {
-                    let r = chain.msg_root[*i];
-                    if r == u32::MAX || !matching_roots.contains(&r) {
-                        return false;
-                    }
-                }
-                time_match(&m.time, &ft_raw)
-                    && col_match(&m.sender, &fs)
-                    && col_match(&m.target, &fta)
-                    && col_match(m.msg_type_label, &fm)
-                    && (fd.is_empty() || col_match(&build_detail_text(m), &fd))
-            })
-            .map(|(i, _)| i)
-            .collect();
-        indices.sort_unstable_by(|&a, &b| msgs[b].time.cmp(&msgs[a].time));
-        indices
+        apply_timeline_filter(&msgs, &chain, &f)
     });
 
     let msgs = messages.read();
@@ -497,17 +602,107 @@ pub fn timeline_panel(
                                             span { "{m.sender}" }
                                             span { "{m.target}" }
                                             span { span { class: "badge {badge_class(&m.msg_type_raw)}", "{m.msg_type_label}" } }
-                                            span {
-                                                if !m.cl_ord_id.is_empty() {
-                                                    span { class: "id-clordid", "{m.cl_ord_id}" }
-                                                }
-                                                if !m.quote_id.is_empty() {
-                                                    span { class: "id-label", "Q:" }
-                                                    span { class: "id-quoteid", "{m.quote_id}" }
-                                                }
-                                                if !m.quote_req_id.is_empty() {
-                                                    span { class: "id-label", "QR:" }
-                                                    span { class: "id-quotereqid", "{m.quote_req_id}" }
+                                            {
+                                                // Vertical stack of every chain-relevant id on this
+                                                // message — ClOrdID (C), QuoteID (Q), QuoteReqID (QR)
+                                                // and OrigClOrdID (O, tag 41 — used by cancels). The
+                                                // ID-column filter substring-matches against ALL of
+                                                // them so typing any one id reveals the row.
+                                                let orig_cl_ord_id: Option<&str> = m.fields.iter()
+                                                    .find(|f| f.tag == 41)
+                                                    .map(|f| f.value_in(&m.arena))
+                                                    .filter(|v| !v.is_empty());
+                                                {
+                                                    // Capture owned ids upfront so each row's jump
+                                                    // button closure can `move` its own copy.
+                                                    let id_c  = m.cl_ord_id.as_str().to_string();
+                                                    let id_o  = orig_cl_ord_id.map(|s| s.to_string());
+                                                    let id_q  = m.quote_id.as_str().to_string();
+                                                    let id_qr = m.quote_req_id.as_str().to_string();
+                                                    rsx! {
+                                                        span { class: "cell-id-stack",
+                                                            if !id_c.is_empty() {
+                                                                span { class: "id-line",
+                                                                    span { class: "id-label", "C:" }
+                                                                    span { class: "id-clordid", "{id_c}" }
+                                                                    {
+                                                                        let v = id_c.clone();
+                                                                        rsx! {
+                                                                            button {
+                                                                                class: "id-jump",
+                                                                                title: "Jump to latency chain for {v}",
+                                                                                onclick: move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_jump_to_chain.call(v.clone());
+                                                                                },
+                                                                                "↗"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            if let Some(oc) = id_o {
+                                                                span { class: "id-line",
+                                                                    span { class: "id-label", "O:" }
+                                                                    span { class: "id-orig", "{oc}" }
+                                                                    {
+                                                                        let v = oc.clone();
+                                                                        rsx! {
+                                                                            button {
+                                                                                class: "id-jump",
+                                                                                title: "Jump to latency chain for {v}",
+                                                                                onclick: move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_jump_to_chain.call(v.clone());
+                                                                                },
+                                                                                "↗"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            if !id_q.is_empty() {
+                                                                span { class: "id-line",
+                                                                    span { class: "id-label", "Q:" }
+                                                                    span { class: "id-quoteid", "{id_q}" }
+                                                                    {
+                                                                        let v = id_q.clone();
+                                                                        rsx! {
+                                                                            button {
+                                                                                class: "id-jump",
+                                                                                title: "Jump to latency chain for {v}",
+                                                                                onclick: move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_jump_to_chain.call(v.clone());
+                                                                                },
+                                                                                "↗"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            if !id_qr.is_empty() {
+                                                                span { class: "id-line",
+                                                                    span { class: "id-label", "QR:" }
+                                                                    span { class: "id-quotereqid", "{id_qr}" }
+                                                                    {
+                                                                        let v = id_qr.clone();
+                                                                        rsx! {
+                                                                            button {
+                                                                                class: "id-jump",
+                                                                                title: "Jump to latency chain for {v}",
+                                                                                onclick: move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_jump_to_chain.call(v.clone());
+                                                                                },
+                                                                                "↗"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                             span { class: "cell-detail", "{build_detail_text(m)}" }
@@ -519,8 +714,19 @@ pub fn timeline_panel(
                     }
                     if indices.is_empty() {
                         div { class: "empty-state",
-                            if has_filter { "No messages match the current filters." }
-                            else { "No messages parsed yet." }
+                            if has_filter {
+                                span { class: "empty-state-icon",  "🔍" }
+                                span { class: "empty-state-title", "No matching messages" }
+                                span { class: "empty-state-hint",
+                                    "No row passes the current column filters. Clear or relax a filter to see more."
+                                }
+                            } else {
+                                span { class: "empty-state-icon",  "📭" }
+                                span { class: "empty-state-title", "No messages yet" }
+                                span { class: "empty-state-hint",
+                                    "Paste FIX text above, load a file, or pick a sample to get started."
+                                }
+                            }
                         }
                     }
                     if has_more {
@@ -621,5 +827,290 @@ mod chain_tests {
         let idx  = build_chain_index(&msgs);
         assert_eq!(idx.msg_root[0], u32::MAX,
             "heartbeat with no chain ids should be sentinel u32::MAX");
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+    use crate::parser::parse_all;
+
+    /// 4-msg trade chain: QuoteRequest → Quote → NOS → ER FILL.
+    /// Chain ids: RFQ=QR-1, QuoteID=QT-9, ClOrdID=CO-7.
+    fn synth_chain() -> Vec<FixMessage> {
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=R|49=A|56=B|34=1|52=20240101-09:00:00.000|131=QR-1|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=S|49=B|56=A|34=2|52=20240101-09:00:00.050|131=QR-1|117=QT-9|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=3|52=20240101-09:00:00.100|117=QT-9|11=CO-7|55=AAPL|54=1|38=100|40=2|10=000|",
+            "8=FIX.4.4|9=1|35=8|49=B|56=A|34=4|52=20240101-09:00:00.150|11=CO-7|150=F|39=2|10=000|",
+        );
+        parse_all(raw)
+    }
+
+    /// Three independent orders, NO chain links between them.
+    fn synth_three_orders() -> Vec<FixMessage> {
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=1|52=20240101-09:00:00.000|11=ORD-1|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=2|52=20240101-09:00:00.001|11=ORD-2|55=MSFT|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=3|52=20240101-09:00:00.002|11=ORD-3|55=AMZN|10=000|",
+        );
+        parse_all(raw)
+    }
+
+    /// Order + Cancel pair where the Cancel uses tag 41 (OrigClOrdID) to point
+    /// at the original NOS. The shared OrigClOrdID is the only chain link.
+    fn synth_order_with_cancel() -> Vec<FixMessage> {
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=1|52=20240101-09:00:00.000|11=ORD-A|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=F|49=A|56=B|34=2|52=20240101-09:00:00.010|11=CXL-A|41=ORD-A|55=AAPL|10=000|",
+        );
+        parse_all(raw)
+    }
+
+    fn empty_filter() -> TimelineFilter {
+        TimelineFilter { f_time_op: "=".into(), ..Default::default() }
+    }
+
+    // ── ID filter: direct substring ─────────────────────────────────────
+
+    #[test]
+    fn id_filter_matches_cl_ord_id() {
+        let msgs = synth_three_orders();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "ORD-2".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 1);
+        assert_eq!(msgs[r[0]].cl_ord_id, "ORD-2");
+    }
+
+    #[test]
+    fn id_filter_matches_quote_req_id() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        // QuoteRequest carries 131=QR-1; should match by RFQ id alone.
+        f.f_clord = "QR-1".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        // All 4 chain members share the chain, so all should surface.
+        assert_eq!(r.len(), 4);
+    }
+
+    #[test]
+    fn id_filter_matches_quote_id() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "QT-9".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 4, "chain expansion should pull RFQ + NOS + ER");
+    }
+
+    #[test]
+    fn id_filter_matches_orig_cl_ord_id_via_direct() {
+        // Cancel message carries 41=ORD-A. Original NOS has 11=ORD-A.
+        // Typing ORD-A should surface BOTH rows even without chain expansion.
+        let msgs = synth_order_with_cancel();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "ORD-A".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 2, "NOS + Cancel both reference ORD-A");
+    }
+
+    #[test]
+    fn id_filter_case_insensitive() {
+        let msgs = synth_three_orders();
+        let idx  = build_chain_index(&msgs);
+        for q in ["ord-1", "ORD-1", "Ord-1", "oRd-1"] {
+            let mut f = empty_filter();
+            f.f_clord = q.into();
+            let r = apply_timeline_filter(&msgs, &idx, &f);
+            assert_eq!(r.len(), 1, "case-insensitive match failed for {q:?}");
+        }
+    }
+
+    #[test]
+    fn id_filter_trims_whitespace() {
+        let msgs = synth_three_orders();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "   ORD-2   ".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 1, "leading/trailing whitespace must be trimmed");
+    }
+
+    #[test]
+    fn id_filter_substring_partial() {
+        let msgs = synth_three_orders();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "ORD".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 3, "substring 'ORD' matches all three orders");
+    }
+
+    #[test]
+    fn id_filter_no_match_returns_empty() {
+        let msgs = synth_three_orders();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "NEVER-EXISTS".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn empty_id_filter_returns_all() {
+        let msgs = synth_three_orders();
+        let idx  = build_chain_index(&msgs);
+        let r = apply_timeline_filter(&msgs, &idx, &empty_filter());
+        assert_eq!(r.len(), 3);
+    }
+
+    // ── ID filter: chain over-merge guard ───────────────────────────────
+
+    #[test]
+    fn id_filter_skips_oversize_junk_chain() {
+        // 100 messages — 99 of them share placeholder ClOrdID "0" (which
+        // union-finds into one giant junk chain) plus 1 distinct "REAL-1".
+        // Threshold: junk chain has 99 msgs / 100 total = 99 %, well over
+        // the 70 % guard, so chain expansion must NOT include it. Filtering
+        // by "REAL" should surface exactly the one real row.
+        let mut raw = String::new();
+        for i in 0..99 {
+            raw.push_str(&format!(
+                "8=FIX.4.4|9=1|35=D|49=A|56=B|34={i}|52=20240101-09:00:00.000|11=0|55=AAPL|10=000|",
+            ));
+        }
+        raw.push_str("8=FIX.4.4|9=1|35=D|49=A|56=B|34=999|52=20240101-09:00:00.000|11=REAL-1|55=AAPL|10=000|");
+        let msgs = parse_all(&raw);
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "REAL".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 1, "only the REAL-1 row should match");
+    }
+
+    #[test]
+    fn id_filter_small_dataset_does_not_trip_guard() {
+        // With < 50 messages the over-merge guard is disabled — legitimate
+        // small chains (e.g. one paste with 4 chain members) must NOT be
+        // dropped just because they cover 100% of the dataset.
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "QR-1".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 4, "tiny dataset shouldn't be guarded as junk");
+    }
+
+    // ── Other column filters ────────────────────────────────────────────
+
+    #[test]
+    fn sender_filter_substring_case_insensitive() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_sender = "a".into();   // matches sender "A"
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        // Two messages have sender=A (RFQ and NOS).
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn target_filter_excludes_non_matches() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_target = "ZZ".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn msg_filter_matches_msg_type_label() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_msg = "Quote".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        // Quote + QuoteRequest both contain "Quote" in their msg_type_label.
+        assert!(r.len() >= 1);
+    }
+
+    #[test]
+    fn detail_filter_matches_symbol_or_text() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_detail = "AAPL".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert!(!r.is_empty(), "all msgs carry 55=AAPL");
+    }
+
+    #[test]
+    fn skip_heartbeats_excludes_session_msgs() {
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=A|49=A|56=B|34=1|52=20240101-09:00:00.000|10=000|",
+            "8=FIX.4.4|9=1|35=0|49=A|56=B|34=2|52=20240101-09:00:00.001|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=3|52=20240101-09:00:00.002|11=ORD-X|55=AAPL|10=000|",
+        );
+        let msgs = parse_all(raw);
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.skip_heartbeats = true;
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 1, "only the NOS should remain when heartbeats/logon skipped");
+    }
+
+    // ── Time range ──────────────────────────────────────────────────────
+
+    #[test]
+    fn time_filter_ge_includes_only_after() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_time = "2024-01-01 09:00:00.100".into();
+        f.f_time_op = ">=".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        // Only NOS (.100) and ER (.150) qualify.
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn time_filter_le_includes_only_before() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_time = "2024-01-01 09:00:00.050".into();
+        f.f_time_op = "<=".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        // RFQ (.000) + Quote (.050) qualify.
+        assert_eq!(r.len(), 2);
+    }
+
+    // ── Combined filters ────────────────────────────────────────────────
+
+    #[test]
+    fn combined_id_and_msg_filter() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "QR-1".into();        // chain expansion → 4 rows
+        // The ER has tag 150=F so its msg_type_label is rewritten to "ER FILL".
+        f.f_msg   = "ER FILL".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 1, "chain + msg type intersection should leave just the ER");
+    }
+
+    #[test]
+    fn results_sorted_newest_first() {
+        let msgs = synth_chain();
+        let idx  = build_chain_index(&msgs);
+        let r = apply_timeline_filter(&msgs, &idx, &empty_filter());
+        // Newest first → ER (.150) at top, RFQ (.000) at bottom.
+        assert_eq!(msgs[r[0]].msg_type_raw, "8");
+        assert_eq!(msgs[*r.last().unwrap()].msg_type_raw, "R");
     }
 }

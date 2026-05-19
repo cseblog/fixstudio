@@ -67,6 +67,10 @@ pub struct Tab {
     pub lifecycle_signature: Signal<usize>,
     pub lifecycle_computing: Signal<bool>,
     pub lifecycle_cancel:    Signal<u64>,
+    /// Chain-id filter for the Latency view. Lifted to Tab so a "Jump to
+    /// latency chain" action from the Timeline can pre-fill it before
+    /// switching view_mode = Lifecycle.
+    pub lifecycle_filter_id: Signal<String>,
 }
 
 impl Tab {
@@ -143,10 +147,11 @@ impl Tab {
             validator_batch_signature: Signal::new_in_scope(usize::MAX,    s),
             validator_cancel:          Signal::new_in_scope(0u64,          s),
 
-            lifecycle_chains:    Signal::new_in_scope(Vec::new(), s),
-            lifecycle_signature: Signal::new_in_scope(usize::MAX, s),
-            lifecycle_computing: Signal::new_in_scope(false,      s),
-            lifecycle_cancel:    Signal::new_in_scope(0u64,       s),
+            lifecycle_chains:    Signal::new_in_scope(Vec::new(),    s),
+            lifecycle_signature: Signal::new_in_scope(usize::MAX,    s),
+            lifecycle_computing: Signal::new_in_scope(false,         s),
+            lifecycle_cancel:    Signal::new_in_scope(0u64,          s),
+            lifecycle_filter_id: Signal::new_in_scope(String::new(), s),
         }
     }
 }

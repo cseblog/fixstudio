@@ -53,7 +53,7 @@ html, body {
 }
 .btn {
     padding: 7px 16px;
-    border-radius: 5px;
+    border-radius: 4px;
     border: none;
     font-size: 13px;
     font-weight: 600;
@@ -107,7 +107,7 @@ html, body {
     color: #6b6356;
     font-size: 13px;
     padding: 5px 10px;
-    border-radius: 5px;
+    border-radius: 4px;
     cursor: pointer;
     transition: all 0.12s;
     line-height: 1;
@@ -119,7 +119,7 @@ html, body {
     border: 1px solid #c9bfa9;
     color: #1c1a17;
     padding: 6px 12px;
-    border-radius: 5px;
+    border-radius: 4px;
     font-size: 12px;
     min-width: 240px;
     outline: none;
@@ -135,7 +135,7 @@ html, body {
     font-size: 13px;
     font-weight: 600;
     padding: 6px 12px;
-    border-radius: 5px;
+    border-radius: 4px;
     cursor: pointer;
     transition: all 0.12s;
 }
@@ -241,7 +241,7 @@ html, body {
     font-size: 10px;
     font-weight: 700;
     padding: 1px 5px;
-    border-radius: 3px;
+    border-radius: 4px;
     margin-right: 6px;
 }
 .tab-chip-close {
@@ -252,7 +252,7 @@ html, body {
     width: 20px;
     height: 20px;
     cursor: pointer;
-    border-radius: 3px;
+    border-radius: 4px;
     margin-right: 4px;
     line-height: 1;
 }
@@ -266,7 +266,7 @@ html, body {
     width: 28px;
     height: 28px;
     cursor: pointer;
-    border-radius: 5px;
+    border-radius: 4px;
     line-height: 1;
     padding: 0;
     margin-left: 2px;
@@ -282,7 +282,7 @@ html, body {
     border: 1px solid #c9bfa9;
     color: #1c1a17;
     padding: 5px 10px;
-    border-radius: 5px;
+    border-radius: 4px;
     font-size: 12px;
     cursor: pointer;
 }
@@ -294,7 +294,7 @@ html, body {
     font-size: 12px;
     font-weight: 600;
     padding: 5px 12px;
-    border-radius: 5px;
+    border-radius: 4px;
     cursor: pointer;
 }
 .compare-btn:hover { background: rgba(183,132,39,0.08); }
@@ -390,7 +390,7 @@ html, body {
     min-height: 110px;
     padding: 10px 12px;
     border: 1px solid #c9bfa9;
-    border-radius: 5px;
+    border-radius: 4px;
     background: #faf6ec;
     color: #6b6356;
     font-size: 13px;
@@ -437,7 +437,7 @@ html, body {
     width: 100%;
     background: #faf6ec;
     border: 1px solid #c9bfa9;
-    border-radius: 5px;
+    border-radius: 4px;
     margin-bottom: 16px;
     max-height: 200px;
     overflow-y: auto;
@@ -457,7 +457,7 @@ html, body {
     min-height: 110px;
     padding: 10px 12px;
     border: 1px solid #c9bfa9;
-    border-radius: 5px;
+    border-radius: 4px;
     background: #faf6ec;
     color: #1c1a17;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -493,7 +493,7 @@ html, body {
     margin-top: 6px;
     padding: 6px 18px;
     font-size: 12px;
-    border-radius: 5px;
+    border-radius: 4px;
 }
 .input-parse-btn:disabled {
     opacity: 0.45;
@@ -593,7 +593,7 @@ html, body {
 /* Tables */
 .table-wrap {
     border: 1px solid #c9bfa9;
-    border-radius: 5px;
+    border-radius: 4px;
     overflow: hidden;
     background: #faf6ec;
     display: flex;
@@ -703,7 +703,7 @@ html, body {
     width: 34px;
     background: #ede4cf;
     border: 1px solid #c9bfa9;
-    border-radius: 3px;
+    border-radius: 4px;
     color: #6b6356;
     font-size: 11px;
     font-weight: 700;
@@ -740,13 +740,30 @@ html, body {
 }
 .btn-clear-filter:hover { background: rgba(178,34,34,0.1); }
 
-.empty-state { padding: 20px; text-align: center; color: #8a8071; }
+/* ── Unified empty state ──────────────────────────────────────────────
+   Used everywhere an area has no data to show: timeline filtered out,
+   detail panel with no selection, batch validator with all rows clean,
+   etc. One pattern → consistent visual rhythm. */
+.empty-state {
+    padding: 32px 24px;
+    text-align: center;
+    color: #6b6356;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+.empty-state-icon  { font-size: 28px; opacity: 0.65; margin-bottom: 4px; }
+.empty-state-title { font-size: 14px; font-weight: 600; color: #3a342c; }
+.empty-state-hint  { font-size: 12px; color: #8a8071; max-width: 380px; }
 
 /* Badges */
 .badge {
     display: inline-block;
     padding: 2px 8px;
-    border-radius: 3px;
+    border-radius: 4px;
     font-size: 11px;
     font-weight: 600;
     white-space: nowrap;
@@ -777,7 +794,7 @@ html, body {
 }
 .tab-btn {
     padding: 5px 14px;
-    border-radius: 5px;
+    border-radius: 4px;
     border: 1px solid #c9bfa9;
     background: transparent;
     color: #8a8071;
@@ -796,7 +813,7 @@ html, body {
 /* Raw text view */
 .raw-text-wrap {
     border: 1px solid #c9bfa9;
-    border-radius: 5px;
+    border-radius: 4px;
     background: #faf6ec;
     overflow: hidden;
 }
@@ -837,7 +854,7 @@ html, body {
 /* Scrollbar */
 .tbl-body::-webkit-scrollbar, .raw-text::-webkit-scrollbar { width: 6px; }
 .tbl-body::-webkit-scrollbar-track, .raw-text::-webkit-scrollbar-track { background: #faf6ec; }
-.tbl-body::-webkit-scrollbar-thumb, .raw-text::-webkit-scrollbar-thumb { background: #c9bfa9; border-radius: 3px; }
+.tbl-body::-webkit-scrollbar-thumb, .raw-text::-webkit-scrollbar-thumb { background: #c9bfa9; border-radius: 4px; }
 .tbl-body::-webkit-scrollbar-thumb:hover, .raw-text::-webkit-scrollbar-thumb:hover { background: #8a8071; }
 
 /* ── Hero / Landing ─────────────────────────────────────────────────────── */
@@ -872,7 +889,7 @@ html, body {
 .hero-stats { display: flex; gap: 16px; align-items: stretch; }
 .hero-stat {
     border: 1px solid #c9bfa9;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 18px 26px;
     text-align: center;
     min-width: 140px;
@@ -945,7 +962,7 @@ html, body {
     background: #ede4cf;
     color: #6b6356;
     padding: 1px 8px;
-    border-radius: 3px;
+    border-radius: 4px;
     font-size: 11px;
     font-weight: 600;
     border: 1px solid #c9bfa9;
@@ -1016,7 +1033,7 @@ html, body {
 .modal {
     background: #faf6ec;
     border: 1px solid #c9bfa9;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 28px 32px;
     width: 460px;
     max-width: 90vw;
@@ -1133,7 +1150,7 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 3px;
+    border-radius: 4px;
     transition: all 0.12s;
     padding: 0;
     line-height: 1;
@@ -1286,10 +1303,58 @@ html, body {
     font-size: 12px;
 }
 .lc-clordid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #15467a; }
-.id-clordid  { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #1c1a17; text-decoration: underline; text-decoration-color: rgba(28,26,23,0.25); text-underline-offset: 2px; display: block; }
-.id-quoteid  { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #3a342c; font-size: 11px; }
-.id-quotereqid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #3a342c; font-size: 11px; }
-.id-label    { color: #8a8071; font-size: 10px; margin-right: 2px; margin-left: 4px; }
+/* Stacked-id cell — each id on its own line so multi-id rows
+   (Quote linking RFQ→QuoteID, ER linking ClOrdID+OrigClOrdID) are
+   scannable. Labels (C / O / Q / QR) sit flush-left. */
+.cell-id-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.2;
+    min-width: 0;
+}
+.id-line {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    min-width: 0;
+}
+.id-line > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.id-clordid    { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #1c1a17; font-weight: 600; }
+.id-orig       { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #6b6356; font-style: italic; }
+.id-quoteid    { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #15467a; }
+.id-quotereqid { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #7a3a8a; }
+.id-label {
+    color: #8a8071;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    min-width: 18px;
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* Inline "jump to latency chain" button per id line. Invisible by default to
+   keep the timeline dense; fades in on row hover, click switches view_mode
+   to Lifecycle with the chain filter pre-populated. */
+.id-jump {
+    background: transparent;
+    border: none;
+    color: #15467a;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 3px;
+    margin-left: 2px;
+    opacity: 0;
+    transition: opacity 0.1s, color 0.1s, background 0.1s;
+    border-radius: 2px;
+}
+.tbl-row:hover .id-jump { opacity: 0.7; }
+.id-jump:hover { opacity: 1 !important; color: #2f6b2f; background: rgba(47,107,47,0.10); }
 .lc-symbol  { color: #1c1a17; font-weight: 600; }
 .lc-side    { color: #1c1a17; font-weight: 600; }
 .lc-qty     { color: #1c1a17; font-variant-numeric: tabular-nums; }
@@ -1439,36 +1504,53 @@ html, body {
     align-items: center;
     padding: 0 8px;
 }
+/* Lifecycle / latency filter bar — visually identical to the timeline
+   filter row (.tbl-filter + .col-filter) so the two views feel like one
+   tool. Borderless inputs that get an ink-green underline on focus, sitting
+   in a faint paper card. Status pills are tab-style chips. */
 .recon-filter-bar {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 10px;
     flex-wrap: wrap;
     margin-bottom: 8px;
-}
-.recon-filter-input {
-    background: #f5efe2;
+    padding: 6px 12px;
+    background: #faf6ec;
     border: 1px solid #ede4cf;
     border-radius: 4px;
+}
+/* Reuse .col-filter for inputs (defined above) — alias kept for legacy
+   callers that may still hand-pick the wider standalone treatment. */
+.recon-filter-input {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid transparent;
     color: #1c1a17;
     font-size: 12px;
-    padding: 4px 8px;
-    width: 160px;
+    font-family: inherit;
+    padding: 3px 4px;
+    width: 200px;
     outline: none;
 }
-.recon-filter-input:focus { border-color: #2f6b2f; }
+.recon-filter-input::placeholder { color: #c9bfa9; }
+.recon-filter-input:focus { border-bottom-color: #2f6b2f; }
 .recon-filter-btn {
-    background: #f5efe2;
-    border: 1px solid #ede4cf;
-    border-radius: 4px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
     color: #8a8071;
     font-size: 11px;
-    padding: 3px 9px;
+    font-weight: 600;
+    padding: 3px 10px;
     cursor: pointer;
-    transition: all 0.08s;
+    transition: all 0.1s;
+    border-radius: 0;
 }
-.recon-filter-btn:hover { border-color: #8a8071; color: #1c1a17; }
-.recon-filter-btn-active { background: #ede4cf; color: #1c1a17; border-color: #8a8071; }
+.recon-filter-btn:hover { color: #1c1a17; }
+.recon-filter-btn-active {
+    color: #1c1a17;
+    border-bottom-color: #2f6b2f;
+}
 .recon-more {
     color: #8a8071;
     font-size: 11px;
@@ -1499,7 +1581,7 @@ html, body {
 .phase-card {
     background: #f5efe2;
     border: 1px solid #ede4cf;
-    border-radius: 5px;
+    border-radius: 4px;
     padding: 12px 14px 10px;
     cursor: pointer;
     transition: border-color 0.12s, background 0.12s;
@@ -1617,7 +1699,7 @@ html, body {
 .cit-node {
     display: inline-block;
     padding: 2px 7px;
-    border-radius: 3px;
+    border-radius: 4px;
     border: 1px solid currentColor;
     font-weight: 600;
     font-size: 11px;
@@ -1669,7 +1751,7 @@ html, body {
 .overview-tab {
     padding: 6px 14px;
     border: none;
-    border-radius: 5px 5px 0 0;
+    border-radius: 4px 5px 0 0;
     background: transparent;
     color: #8a8071;
     font-size: 12px;
@@ -1690,7 +1772,7 @@ html, body {
     color: #1c1a17;
     font-size: 10px;
     font-weight: 700;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 0 5px;
     margin-left: 4px;
     vertical-align: middle;
@@ -2118,7 +2200,7 @@ html, body {
     color: #b22222;
     background: rgba(178,34,34, 0.12);
     border: 1px solid rgba(178,34,34, 0.3);
-    border-radius: 3px;
+    border-radius: 4px;
     padding: 1px 5px;
     margin-right: 6px;
     white-space: nowrap;
@@ -2132,7 +2214,7 @@ html, body {
     color: #b22222;
     background: rgba(183,132,39, 0.12);
     border: 1px solid rgba(183,132,39, 0.3);
-    border-radius: 3px;
+    border-radius: 4px;
     padding: 1px 5px;
     margin-right: 6px;
     white-space: nowrap;
@@ -2449,7 +2531,7 @@ html, body {
     padding: 18px 14px;
     background: #faf6ec;
     border: 1px solid #c9bfa9;
-    border-radius: 8px;
+    border-radius: 6px;
     color: #1c1a17;
     font-size: 13px;
     font-weight: 600;
@@ -2552,7 +2634,7 @@ html, body {
     max-height: 60vh;
     background: #faf6ec;
     border: 1px solid #c9bfa9;
-    border-radius: 8px;
+    border-radius: 6px;
     box-shadow: 0 16px 48px rgba(28,26,23,0.22);
     overflow: hidden;
     display: flex;

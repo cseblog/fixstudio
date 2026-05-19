@@ -843,6 +843,9 @@ pub fn lifecycle_panel(
     chains_signature: Signal<usize>,
     chains_computing: Signal<bool>,
     cancel: Signal<u64>,
+    /// Per-tab chain-id filter. Lifted to Tab so jump-from-timeline can pre-
+    /// populate it before switching the view mode here.
+    filter_id: Signal<String>,
 ) -> Element {
     // Unique per-instance DOM id suffix so two lifecycle_panel mounts (e.g.
     // active + compare panes in compare mode) don't collide on the same
@@ -864,8 +867,48 @@ pub fn lifecycle_panel(
     });
 
     let mut filter_sym:    Signal<String> = use_signal(String::new);
+    // Chain-ID filter: substring against the chain's RFQ id, QuoteID, primary
+    // ClOrdID, or the canonical chain_id. Mirrors how the timeline's ID
+    // filter works so the user can drill-in by RFQ/Order id with no mental
+    // switch between views.
+    let mut filter_id = filter_id;
     let mut filter_status: Signal<String> = use_signal(|| "All".to_string());
-    let selected_chain: Signal<Option<String>> = use_signal(|| None);
+    let mut selected_chain: Signal<Option<String>> = use_signal(|| None);
+
+    // Cross-view selection sync: if the user selected a row in the Timeline
+    // before opening Latency, auto-select the chain that contains that
+    // message's ClOrdID / QuoteID / QuoteReqID so they don't lose their place.
+    // Only fires on first chains-or-selection arrival; never overrides an
+    // explicit user pick on this panel.
+    use_effect(move || {
+        if selected_chain.peek().is_some() { return; }
+        let chains_snap = chains_state.read();
+        if chains_snap.is_empty() { return; }
+        let Some(idx) = *selected_idx.read() else { return };
+        let msgs_snap = messages.peek();
+        let Some(msg) = msgs_snap.get(idx) else { return };
+        let probe: Vec<String> = [
+            msg.cl_ord_id.as_str(),
+            msg.quote_id.as_str(),
+            msg.quote_req_id.as_str(),
+        ].iter().copied().filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+        if probe.is_empty() { return; }
+        for ch in chains_snap.iter() {
+            let ch_ids: [&str; 4] = [
+                ch.chain_id.as_str(),
+                ch.quote_req_id.as_deref().unwrap_or(""),
+                ch.quote_id.as_deref().unwrap_or(""),
+                ch.primary_cl_ord_id.as_deref().unwrap_or(""),
+            ];
+            let hit = probe.iter().any(|p| {
+                ch_ids.iter().any(|c: &&str| !c.is_empty() && *c == p.as_str())
+            });
+            if hit {
+                selected_chain.set(Some(ch.chain_id.clone()));
+                return;
+            }
+        }
+    });
     let mut sort_col: Signal<SortCol> = use_signal(|| SortCol::Time);
     let mut sort_asc: Signal<bool>    = use_signal(|| true);
     let expanded_phase: Signal<Option<u8>>                        = use_signal(|| None);
@@ -948,14 +991,48 @@ pub fn lifecycle_panel(
 
     // Filtered + sorted chain list (capped at PAGE_SIZE for rendering)
     let filtered = use_memo(move || {
-        let c     = chains.read();
-        let sym_f = filter_sym.read().to_lowercase();
-        let st_f  = filter_status.read().clone();
-        let col   = *sort_col.read();
-        let asc   = *sort_asc.read();
-        let drill = *drill_band.read();
+        let c        = chains.read();
+        let msgs_all = messages.read();
+        let sym_f    = filter_sym.read().trim().to_lowercase();
+        let id_f     = filter_id.read().trim().to_lowercase();
+        let st_f     = filter_status.read().clone();
+        let col      = *sort_col.read();
+        let asc      = *sort_asc.read();
+        let drill    = *drill_band.read();
+        // Helper: does `s` substring-match the lowercased filter needle?
+        let id_match = |s: &str| s.to_ascii_lowercase().contains(id_f.as_str());
         let mut v: Vec<LifecycleChain> = c.iter().filter(|ch| {
             if !sym_f.is_empty() && !ch.symbol.to_lowercase().contains(sym_f.as_str()) { return false; }
+            if !id_f.is_empty() {
+                let mut hit = id_match(&ch.chain_id)
+                    || ch.quote_req_id.as_deref().is_some_and(id_match)
+                    || ch.quote_id.as_deref().is_some_and(id_match)
+                    || ch.primary_cl_ord_id.as_deref().is_some_and(id_match);
+                // Also scan EVERY message in the chain — picks up the cancel
+                // request's own ClOrdID (e.g. CXL-A) and any OrigClOrdID
+                // (tag 41) reference. Without this the user can only filter
+                // by the original order id, not the cancel id.
+                if !hit {
+                    for &mi in &ch.msg_indices {
+                        let Some(m) = msgs_all.get(mi) else { continue };
+                        if id_match(&m.cl_ord_id)
+                            || id_match(&m.quote_id)
+                            || id_match(&m.quote_req_id)
+                        {
+                            hit = true;
+                            break;
+                        }
+                        for f in &m.fields {
+                            if f.tag == 41 && id_match(f.value_in(&m.arena)) {
+                                hit = true;
+                                break;
+                            }
+                        }
+                        if hit { break; }
+                    }
+                }
+                if !hit { return false; }
+            }
             match st_f.as_str() {
                 "Filled"    => matches!(ch.final_status, FinalStatus::Filled),
                 "Partial"   => matches!(ch.final_status, FinalStatus::PartialFill),
@@ -1010,6 +1087,7 @@ pub fn lifecycle_panel(
     let timeline_snap      = timeline_nodes.read().clone();
     let sel_id             = selected_chain.read().clone();
     let filter_sym_val     = filter_sym.read().clone();
+    let filter_id_val      = filter_id.read().clone();
     let filter_st_val      = filter_status.read().clone();
     let sort_col_val       = *sort_col.read();
     let sort_asc_val       = *sort_asc.read();
@@ -1302,6 +1380,13 @@ pub fn lifecycle_panel(
                         placeholder: "Filter by symbol…",
                         value: "{filter_sym_val}",
                         oninput: move |e| filter_sym.set(e.value()),
+                    }
+                    input {
+                        class: "recon-filter-input",
+                        r#type: "text",
+                        placeholder: "Filter by chain id (RFQ / Quote / ClOrdID)…",
+                        value: "{filter_id_val}",
+                        oninput: move |e| filter_id.set(e.value()),
                     }
                     {
                         const STATUSES: &[&str] = &["All", "Filled", "Partial", "Cancelled", "Rejected", "Open"];

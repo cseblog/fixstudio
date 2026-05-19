@@ -147,7 +147,13 @@ pub fn detail_panel(
                                 }
                             }
                         } else {
-                            div { class: "empty-state", "Click a message in the timeline to view its fields." }
+                            div { class: "empty-state",
+                                span { class: "empty-state-icon",  "👈" }
+                                span { class: "empty-state-title", "Pick a message" }
+                                span { class: "empty-state-hint",
+                                    "Click any row in the timeline to inspect its FIX tags here."
+                                }
+                            }
                         }
                     }
                 }
