@@ -256,13 +256,37 @@ pub fn timeline_panel(
         let fd      = f_detail.read().trim().to_ascii_lowercase();
 
         // Resolve the ID filter to the set of chain roots whose any member id
-        // contains the substring. A message passes the ID test if its chain
-        // root is in that set.
+        // contains the substring. A message then passes the ID test if EITHER
+        // its own id field substring-matches the input (preserves the legacy
+        // direct-match behaviour) OR its chain root is in that set (the
+        // chain-aware expansion). The dual path is deliberate: when chain
+        // construction is incomplete for some FIX dialect (Quote message
+        // missing the link tag, etc.) the direct match still works.
+        //
+        // Chain roots that swallow more than 70 % of the message set are
+        // ignored — those are almost always accidental merges from a
+        // counterparty re-using a placeholder ClOrdID, and expanding to them
+        // would silently disable the filter.
+        let total_msgs   = msgs.len();
+        let oversize_cap = (total_msgs as f64 * 0.70) as usize;
+        let mut root_sizes: ahash::AHashMap<u32, usize> = ahash::AHashMap::default();
+        if !fc.is_empty() {
+            for &r in chain.msg_root.iter() {
+                if r != u32::MAX { *root_sizes.entry(r).or_insert(0) += 1; }
+            }
+        }
         let matching_roots: ahash::AHashSet<u32> = if fc.is_empty() {
             ahash::AHashSet::default()
         } else {
             chain.id_to_root.iter()
-                .filter_map(|(id, &r)| if id.contains(fc.as_str()) { Some(r) } else { None })
+                .filter_map(|(id, &r)| {
+                    if !id.contains(fc.as_str()) { return None; }
+                    // Skip clearly-merged junk chains.
+                    if root_sizes.get(&r).copied().unwrap_or(0) > oversize_cap {
+                        return None;
+                    }
+                    Some(r)
+                })
                 .collect()
         };
 
@@ -271,9 +295,16 @@ pub fn timeline_panel(
             .filter(|(_, m)| !(skip_hb && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
             .filter(|(i, m)| {
                 if !fc.is_empty() {
-                    let r = chain.msg_root[*i];
-                    if r == u32::MAX || !matching_roots.contains(&r) {
-                        return false;
+                    // Direct match against this message's own id fields first
+                    // (cheapest + always-correct fallback).
+                    let direct = col_match(&m.cl_ord_id,    &fc)
+                              || col_match(&m.quote_id,     &fc)
+                              || col_match(&m.quote_req_id, &fc);
+                    if !direct {
+                        let r = chain.msg_root[*i];
+                        if r == u32::MAX || !matching_roots.contains(&r) {
+                            return false;
+                        }
                     }
                 }
                 time_match(&m.time, &ft_raw)
