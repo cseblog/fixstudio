@@ -864,6 +864,11 @@ pub fn lifecycle_panel(
     });
 
     let mut filter_sym:    Signal<String> = use_signal(String::new);
+    // Chain-ID filter: substring against the chain's RFQ id, QuoteID, primary
+    // ClOrdID, or the canonical chain_id. Mirrors how the timeline's ID
+    // filter works so the user can drill-in by RFQ/Order id with no mental
+    // switch between views.
+    let mut filter_id:     Signal<String> = use_signal(String::new);
     let mut filter_status: Signal<String> = use_signal(|| "All".to_string());
     let selected_chain: Signal<Option<String>> = use_signal(|| None);
     let mut sort_col: Signal<SortCol> = use_signal(|| SortCol::Time);
@@ -949,13 +954,23 @@ pub fn lifecycle_panel(
     // Filtered + sorted chain list (capped at PAGE_SIZE for rendering)
     let filtered = use_memo(move || {
         let c     = chains.read();
-        let sym_f = filter_sym.read().to_lowercase();
+        let sym_f = filter_sym.read().trim().to_lowercase();
+        let id_f  = filter_id.read().trim().to_lowercase();
         let st_f  = filter_status.read().clone();
         let col   = *sort_col.read();
         let asc   = *sort_asc.read();
         let drill = *drill_band.read();
+        // Helper: does `s` substring-match the lowercased filter needle?
+        let id_match = |s: &str| s.to_ascii_lowercase().contains(id_f.as_str());
         let mut v: Vec<LifecycleChain> = c.iter().filter(|ch| {
             if !sym_f.is_empty() && !ch.symbol.to_lowercase().contains(sym_f.as_str()) { return false; }
+            if !id_f.is_empty() {
+                let hit = id_match(&ch.chain_id)
+                    || ch.quote_req_id.as_deref().is_some_and(id_match)
+                    || ch.quote_id.as_deref().is_some_and(id_match)
+                    || ch.primary_cl_ord_id.as_deref().is_some_and(id_match);
+                if !hit { return false; }
+            }
             match st_f.as_str() {
                 "Filled"    => matches!(ch.final_status, FinalStatus::Filled),
                 "Partial"   => matches!(ch.final_status, FinalStatus::PartialFill),
@@ -1010,6 +1025,7 @@ pub fn lifecycle_panel(
     let timeline_snap      = timeline_nodes.read().clone();
     let sel_id             = selected_chain.read().clone();
     let filter_sym_val     = filter_sym.read().clone();
+    let filter_id_val      = filter_id.read().clone();
     let filter_st_val      = filter_status.read().clone();
     let sort_col_val       = *sort_col.read();
     let sort_asc_val       = *sort_asc.read();
@@ -1302,6 +1318,13 @@ pub fn lifecycle_panel(
                         placeholder: "Filter by symbol…",
                         value: "{filter_sym_val}",
                         oninput: move |e| filter_sym.set(e.value()),
+                    }
+                    input {
+                        class: "recon-filter-input",
+                        r#type: "text",
+                        placeholder: "Filter by chain id (RFQ / Quote / ClOrdID)…",
+                        value: "{filter_id_val}",
+                        oninput: move |e| filter_id.set(e.value()),
                     }
                     {
                         const STATUSES: &[&str] = &["All", "Filled", "Partial", "Cancelled", "Rejected", "Open"];
