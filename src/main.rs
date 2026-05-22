@@ -1,9 +1,11 @@
+mod anomaly;
 mod app;
 mod components;
 mod loader;
 mod dictionary;
 mod export;
 mod fill_quality;
+mod last_look;
 mod model;
 mod parser;
 mod recents;

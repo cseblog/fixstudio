@@ -437,8 +437,58 @@ html, body {
     background: rgba(47,107,47,0.10);
     border-color: #2f6b2f;
     color: #2f6b2f;
+    position: relative;
 }
 .fix-file-toggle-on:hover { color: #1e4a1e; border-color: #1e4a1e; }
+/* Pulsing dot replaces the ○/● glyph state — visual proof to the user
+   that the watcher is alive and polling the file every 1.5s. */
+.fix-file-toggle-on::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #2f6b2f;
+    margin-right: 6px;
+    vertical-align: middle;
+    animation: live-pulse 1.5s ease-in-out infinite;
+}
+@keyframes live-pulse {
+    0%, 100% { opacity: 1.0;  transform: scale(1); }
+    50%      { opacity: 0.35; transform: scale(1.3); }
+}
+
+/* ── Anomaly banner ────────────────────────────────────────────────────
+   Sits above the view-tabs after a parse. Chips list each fired alert
+   with severity-coloured borders. Silent on healthy logs. */
+.anomaly-banner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 8px;
+}
+.anom-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #faf6ec;
+    border: 1px solid #c9bfa9;
+}
+.anom-icon { font-size: 12px; line-height: 1; }
+.anom-warn {
+    border-color: rgba(183,132,39,0.55);
+    background:   rgba(183,132,39,0.10);
+    color: #7d5712;
+}
+.anom-crit {
+    border-color: rgba(178,34,34,0.60);
+    background:   rgba(178,34,34,0.10);
+    color: #8a1818;
+}
 .fix-file-list {
     width: 100%;
     background: #faf6ec;
@@ -2839,5 +2889,113 @@ html, body {
 }
 .fix-file-banner-pasted .fix-file-icon { color: #15467a; opacity: 1; }
 .fix-file-meta { color: #8a8071; font-size: 11px; margin-left: 4px; }
+
+/* ── LP Scorecard (last-look analyzer) ────────────────────────────────── */
+.lp-scorecard {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 12px 16px;
+    overflow-y: auto;
+}
+.lp-section { display: flex; flex-direction: column; gap: 8px; }
+.lp-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #6b6356;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.lp-table {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #c9bfa9;
+    border-radius: 4px;
+    background: #faf6ec;
+    overflow: hidden;
+}
+.lp-row {
+    display: grid;
+    grid-template-columns: 1.5fr 80px 90px 90px 90px 90px 90px 40px;
+    align-items: center;
+    padding: 6px 12px;
+    border-top: 1px solid #ede4cf;
+    font-size: 12px;
+    gap: 8px;
+}
+.lp-row:first-child { border-top: none; }
+.lp-row-header {
+    background: #ede4cf;
+    color: #6b6356;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.lp-row-flagged {
+    background: rgba(178,34,34,0.06);
+    border-left: 4px solid #b22222;
+    padding-left: 8px;
+}
+.lp-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 600;
+    color: #1c1a17;
+}
+.lp-num {
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #3a342c;
+    text-align: right;
+}
+.lp-num-bad { color: #b22222; font-weight: 700; }
+.lp-flag    { text-align: center; }
+.lp-flag-on { color: #b22222; font-size: 14px; font-weight: 700; }
+
+.lp-grid {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #c9bfa9;
+    border-radius: 4px;
+    background: #faf6ec;
+    overflow-x: auto;
+}
+.lp-grid-row {
+    display: flex;
+    border-top: 1px solid #ede4cf;
+    align-items: stretch;
+}
+.lp-grid-row:first-child { border-top: none; }
+.lp-grid-header { background: #ede4cf; font-weight: 700; color: #6b6356; }
+.lp-grid-corner, .lp-grid-rowlabel {
+    width: 140px;
+    flex-shrink: 0;
+    padding: 6px 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: #1c1a17;
+    font-weight: 600;
+    border-right: 1px solid #ede4cf;
+}
+.lp-grid-cell, .lp-grid-cell-h {
+    flex: 1;
+    min-width: 70px;
+    padding: 6px 8px;
+    text-align: center;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.lp-grid-cell-h {
+    color: #6b6356;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.lp-grid-cell {
+    color: #1c1a17;
+    border-left: 1px solid rgba(201,191,169,0.5);
+}
 
 "#;

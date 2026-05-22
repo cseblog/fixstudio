@@ -1,6 +1,6 @@
 [package]
 name = "AiFIXParser"
-version = "3.0.4"
+version = "3.2.0"
 edition = "2021"
 description = "AI FIX Parser – Parse and analyze FIX protocol messages with AI-powered insights"
 license-file = "LICENSE"

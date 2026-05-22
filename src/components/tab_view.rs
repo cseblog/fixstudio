@@ -232,6 +232,38 @@ pub fn tab_view(
                     }
                 }
 
+                // Anomaly banner — silent on healthy logs; loud on bursts.
+                // Sits above the view-tabs so it's the first thing the user
+                // sees on a new file load.
+                if has_messages && !is_compare_pane {
+                    {
+                        let anomalies = use_memo(move || {
+                            crate::anomaly::scan(&messages.read())
+                        });
+                        let list = anomalies.read().clone();
+                        if !list.is_empty() {
+                            rsx! {
+                                div { class: "anomaly-banner",
+                                    for a in list.iter() {
+                                        {
+                                            let (icon, label, sev) = render_anomaly(a);
+                                            rsx! {
+                                                span {
+                                                    class: if sev == "crit" { "anom-chip anom-crit" } else { "anom-chip anom-warn" },
+                                                    span { class: "anom-icon", "{icon}" }
+                                                    span { class: "anom-text", "{label}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            rsx! {}
+                        }
+                    }
+                }
+
                 if (has_messages || in_validator) && !hide_view_tabs {
                     div { class: "panel-tabs",
                         button {
@@ -341,5 +373,34 @@ pub fn tab_view(
                 }
             }
         }
+    }
+}
+
+/// Render one anomaly as (icon, plain-text label, severity-class).
+/// Kept out of rsx! so the banner template stays scannable.
+fn render_anomaly(a: &crate::anomaly::Anomaly) -> (&'static str, String, &'static str) {
+    use crate::anomaly::{Anomaly, Severity};
+    let sev_str = |s: &Severity| if *s == Severity::Critical { "crit" } else { "warn" };
+    match a {
+        Anomaly::RejectBurst { count, window_secs, severity } => (
+            "⚠",
+            format!("Reject burst — {count} rejects in {window_secs}s"),
+            sev_str(severity),
+        ),
+        Anomaly::SequenceGap { sender, target, gap, .. } => (
+            "↯",
+            format!("Sequence gap — {sender}→{target} skipped {gap} msgs"),
+            sev_str(if *gap >= 10 { &Severity::Critical } else { &Severity::Warn }),
+        ),
+        Anomaly::LatencySpike { recent_p50_us, baseline_p50_us, multiple, severity } => (
+            "🐌",
+            format!(
+                "Latency spike — recent p50 {}ms vs baseline {}ms ({:.1}×)",
+                recent_p50_us   / 1_000,
+                baseline_p50_us / 1_000,
+                multiple,
+            ),
+            sev_str(severity),
+        ),
     }
 }

@@ -14,6 +14,7 @@ use crate::session_summary::{build_session_summary, SessionSummary};
 enum OverviewTab {
     Summary,
     FillQuality,
+    LpScorecard,
 }
 
 // ── Fill Quality view toggle ───────────────────────────────────────────────────
@@ -42,6 +43,7 @@ enum SortCol {
 struct OverviewData {
     summary:   SessionSummary,
     scorecard: FillQualityScorecard,
+    lp_card:   crate::last_look::LpScorecard,
 }
 
 #[component]
@@ -81,6 +83,7 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
                 let data = OverviewData {
                     summary:   build_session_summary(&msgs),
                     scorecard: build_scorecard(&msgs),
+                    lp_card:   crate::last_look::build_lp_scorecard(&msgs),
                 };
                 let _ = tx.send(data);
             });
@@ -173,21 +176,33 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
                     },
                     "Fill Quality"
                 }
+                button {
+                    class: if tab_val == OverviewTab::LpScorecard
+                        { "overview-tab overview-tab-active" } else { "overview-tab" },
+                    onclick: move |_| active_tab.set(OverviewTab::LpScorecard),
+                    "LP Scorecard"
+                }
             }
 
             // ── Tab content ──────────────────────────────────────────────────
             div { class: "overview-content",
                 if let Some(data) = data_opt {
-                    {match tab_val {
-                        OverviewTab::Summary     => render_summary(
-                            &data.summary, &data.scorecard,
-                            &id_summary_fill, &id_summary_reject,
-                        ),
-                        OverviewTab::FillQuality => render_fill_quality(
-                            &data.scorecard, sort_col, sort_asc, drill_counterparty, &drill_val, fq_view,
-                            &id_fq_bar, &id_fq_tree,
-                        ),
-                    }}
+                    {
+                        let msgs_for_grid = messages;
+                        match tab_val {
+                            OverviewTab::Summary     => render_summary(
+                                &data.summary, &data.scorecard,
+                                &id_summary_fill, &id_summary_reject,
+                            ),
+                            OverviewTab::FillQuality => render_fill_quality(
+                                &data.scorecard, sort_col, sort_asc, drill_counterparty, &drill_val, fq_view,
+                                &id_fq_bar, &id_fq_tree,
+                            ),
+                            OverviewTab::LpScorecard => render_lp_scorecard(
+                                &data.lp_card, msgs_for_grid,
+                            ),
+                        }
+                    }
                 } else {
                     div { class: "overview-loading",
                         "Computing session report…"
@@ -868,4 +883,122 @@ fn treemap_option(sc: &FillQualityScorecard) -> serde_json::Value {
             "data": data
         }]
     })
+}
+
+// ── LP Scorecard tab (last-look analyzer + symbol × LP heat grid) ───────────
+
+fn render_lp_scorecard(card: &crate::last_look::LpScorecard,
+                       messages: Signal<Vec<FixMessage>>) -> Element {
+    if card.rows.is_empty() {
+        return rsx! {
+            div { class: "empty-state",
+                span { class: "empty-state-icon",  "📊" }
+                span { class: "empty-state-title", "No counterparty traffic" }
+                span { class: "empty-state-hint",
+                    "Load a FIX log with Quote (35=S) → NewOrderSingle → ER messages \
+                     to score liquidity providers by hold time and reject rate."
+                }
+            }
+        };
+    }
+    // Symbol × LP fill-rate heat grid — top 8 symbols by order volume.
+    let grid = crate::last_look::build_symbol_grid(&messages.read(), 8);
+    rsx! {
+        div { class: "lp-scorecard",
+
+            // ── Per-LP stats table ───────────────────────────────────────
+            div { class: "lp-section",
+                div { class: "lp-section-label", "Liquidity providers" }
+                div { class: "lp-table",
+                    div { class: "lp-row lp-row-header",
+                        span { "Counterparty" }
+                        span { "Orders" }
+                        span { "Fill rate" }
+                        span { "Reject rate" }
+                        span { "Hold p50" }
+                        span { "Hold p95" }
+                        span { "Hold p99" }
+                        span { "Flag" }
+                    }
+                    for r in card.rows.iter() {
+                        div { class: if r.flagged { "lp-row lp-row-flagged" } else { "lp-row" },
+                            span { class: "lp-name", "{r.lp}" }
+                            span { class: "lp-num", "{r.orders}" }
+                            span { class: "lp-num", "{format_pct(r.fill_rate)}" }
+                            span {
+                                class: if r.reject_rate >= 0.05 { "lp-num lp-num-bad" } else { "lp-num" },
+                                "{format_pct(r.reject_rate)}"
+                            }
+                            span { class: "lp-num", "{format_us(r.hold_p50_us)}" }
+                            span {
+                                class: if r.hold_p95_us >= 50_000 { "lp-num lp-num-bad" } else { "lp-num" },
+                                "{format_us(r.hold_p95_us)}"
+                            }
+                            span { class: "lp-num", "{format_us(r.hold_p99_us)}" }
+                            span {
+                                class: if r.flagged { "lp-flag lp-flag-on" } else { "lp-flag" },
+                                if r.flagged { "⚑" } else { "" }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Symbol × LP fill-rate heat grid ──────────────────────────
+            if !grid.rows.is_empty() && !grid.symbols.is_empty() {
+                div { class: "lp-section",
+                    div { class: "lp-section-label",
+                        "Fill rate by counterparty × symbol  (green = good, red = bad)"
+                    }
+                    div { class: "lp-grid",
+                        // header row: symbols
+                        div { class: "lp-grid-row lp-grid-header",
+                            span { class: "lp-grid-corner", "" }
+                            for s in grid.symbols.iter() {
+                                span { class: "lp-grid-cell-h", "{s}" }
+                            }
+                        }
+                        for row in grid.rows.iter() {
+                            div { class: "lp-grid-row",
+                                span { class: "lp-grid-rowlabel", "{row.lp}" }
+                                for rate in row.rates.iter() {
+                                    {
+                                        let (txt, bg) = match rate {
+                                            None    => ("·".to_string(), "transparent".to_string()),
+                                            Some(r) => (format!("{:.0}%", r * 100.0),
+                                                        heat_color(*r).to_string()),
+                                        };
+                                        rsx! {
+                                            span { class: "lp-grid-cell",
+                                                style: "background: {bg};",
+                                                "{txt}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn format_pct(p: f64) -> String { format!("{:.1}%", p * 100.0) }
+fn format_us(us: i64) -> String {
+    if us == 0 { return "—".to_string(); }
+    if us < 1_000 { format!("{us}µs") }
+    else if us < 1_000_000 { format!("{:.1}ms", us as f64 / 1_000.0) }
+    else { format!("{:.2}s", us as f64 / 1_000_000.0) }
+}
+/// Fill rate → background colour for the heat grid. 100% → ledger green,
+/// 0% → ink red, gradient through mustard in the middle.
+fn heat_color(rate: f64) -> &'static str {
+    if rate >= 0.95      { "rgba(47,107,47,0.30)" }   // strong green
+    else if rate >= 0.85 { "rgba(47,107,47,0.18)" }
+    else if rate >= 0.70 { "rgba(183,132,39,0.18)" }  // mustard
+    else if rate >= 0.50 { "rgba(183,132,39,0.30)" }
+    else if rate >= 0.20 { "rgba(178,34,34,0.20)" }   // red
+    else                 { "rgba(178,34,34,0.35)" }
 }
