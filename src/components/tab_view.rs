@@ -29,6 +29,7 @@ pub fn tab_view(
     on_load_file:    EventHandler<()>,
     on_load_folder:  EventHandler<()>,
     on_load_sample:  EventHandler<String>,
+    on_reload:       EventHandler<()>,
     on_open_recent:  EventHandler<String>,
     on_parse:        EventHandler<()>,
 ) -> Element {
@@ -71,6 +72,8 @@ pub fn tab_view(
         lifecycle_computing,
         lifecycle_cancel,
         lifecycle_filter_id,
+        file_path,
+        mut file_auto_watch,
         ..
     } = tab;
 
@@ -161,25 +164,48 @@ pub fn tab_view(
                         let files      = loaded_files.read();
                         let file_count = files.len();
                         let expanded   = *show_file_list.read();
-                        // Only show banner if we have multiple files (folder load) —
-                        // single-file name is already in the tab chip.
+                        let has_path   = file_path.read().is_some();
+                        let auto_on    = *file_auto_watch.read();
                         rsx! {
-                            if file_count > 0 {
+                            // Single-file or folder load: a thin banner with
+                            // Reload + Auto-watch controls so the user can
+                            // pull in on-disk changes without re-picking
+                            // through the file dialog.
+                            if has_path || file_count > 0 {
                                 div { class: "fix-file-banner",
-                                    button {
-                                        class: "fix-file-toggle",
-                                        onclick: move |_| {
-                                            let cur = *show_file_list.read();
-                                            show_file_list.set(!cur);
-                                        },
-                                        if expanded {
-                                            "▾ {file_count} files"
-                                        } else {
-                                            "▸ {file_count} files"
+                                    if has_path {
+                                        button {
+                                            class: "fix-file-toggle",
+                                            title: "Re-read this file from disk and re-parse",
+                                            onclick: move |_| on_reload.call(()),
+                                            "↻ Reload"
+                                        }
+                                        button {
+                                            class: if auto_on { "fix-file-toggle fix-file-toggle-on" } else { "fix-file-toggle" },
+                                            title: "Watch this file and auto-reload when it changes (polls every 1.5s)",
+                                            onclick: move |_| {
+                                                let v = !*file_auto_watch.peek();
+                                                file_auto_watch.set(v);
+                                            },
+                                            if auto_on { "● Auto-reload on" } else { "○ Auto-reload" }
+                                        }
+                                    }
+                                    if file_count > 0 {
+                                        button {
+                                            class: "fix-file-toggle",
+                                            onclick: move |_| {
+                                                let cur = *show_file_list.read();
+                                                show_file_list.set(!cur);
+                                            },
+                                            if expanded {
+                                                "▾ {file_count} files"
+                                            } else {
+                                                "▸ {file_count} files"
+                                            }
                                         }
                                     }
                                 }
-                                if expanded {
+                                if expanded && file_count > 0 {
                                     div { class: "fix-file-list",
                                         for f in files.iter() {
                                             div { class: "fix-file-list-item", "{f}" }

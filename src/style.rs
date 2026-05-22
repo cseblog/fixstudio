@@ -433,6 +433,12 @@ html, body {
     white-space: nowrap;
 }
 .fix-file-toggle:hover { border-color: #8a8071; color: #1c1a17; }
+.fix-file-toggle-on {
+    background: rgba(47,107,47,0.10);
+    border-color: #2f6b2f;
+    color: #2f6b2f;
+}
+.fix-file-toggle-on:hover { color: #1e4a1e; border-color: #1e4a1e; }
 .fix-file-list {
     width: 100%;
     background: #faf6ec;

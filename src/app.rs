@@ -34,20 +34,36 @@ fn active_tab(tabs: &Signal<Vec<Tab>>, active_id: &Signal<u64>) -> Option<Tab> {
     tabs.read().iter().copied().find(|t| t.id == aid)
 }
 
+/// Read the file's current modification time as unix-millis, or 0 on error.
+/// Used to detect on-disk updates between auto-watch polls.
+fn file_mtime_ms(path: &str) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// Pump a `FileLoadResult` into the given tab's signals.
 fn apply_file_result(t: Tab, r: FileLoadResult, is_soh: &str) {
-    let mut messages     = t.messages;
-    let mut selected_idx = t.selected_idx;
-    let mut parse_stats  = t.parse_stats;
-    let mut file_name    = t.file_name;
-    let mut label        = t.label;
+    let mut messages       = t.messages;
+    let mut selected_idx   = t.selected_idx;
+    let mut parse_stats    = t.parse_stats;
+    let mut file_name      = t.file_name;
+    let mut file_path      = t.file_path;
+    let mut file_mtime     = t.file_mtime_ms;
+    let mut label          = t.label;
     let count = r.messages.len();
     let ms    = r.parse_us as u64;
+    let path  = r.path.clone();
     parse_stats.set(Some((count, ms)));
     offload_replace(&mut messages, r.messages);
     selected_idx.set(None);
     let name = r.name.clone();
     file_name.set(Some(r.name));
+    file_path.set(Some(path.clone()));
+    file_mtime.set(file_mtime_ms(&path));
     label.set(name);
     eval(&format!(
         "window.gtag && window.gtag('event', 'file_parsed', \
@@ -82,6 +98,9 @@ pub fn app() -> Element {
         let mut selected_idx = t.selected_idx;
         let mut parse_stats  = t.parse_stats;
         let mut file_name    = t.file_name;
+        let mut file_path    = t.file_path;
+        let mut file_mtime   = t.file_mtime_ms;
+        let mut file_auto    = t.file_auto_watch;
         let input            = t.input;
 
         let s = input.read().clone();
@@ -93,6 +112,9 @@ pub fn app() -> Element {
         offload_replace(&mut messages, parsed);
         selected_idx.set(None);
         file_name.set(None);
+        file_path.set(None);
+        file_mtime.set(0);
+        file_auto.set(false);
     };
 
     let process_active = move || {
@@ -107,6 +129,9 @@ pub fn app() -> Element {
         let mut selected_idx   = t.selected_idx;
         let mut parse_stats    = t.parse_stats;
         let mut file_name      = t.file_name;
+        let mut file_path      = t.file_path;
+        let mut file_mtime     = t.file_mtime_ms;
+        let mut file_auto      = t.file_auto_watch;
         let mut loaded_files   = t.loaded_files;
         let mut show_file_list = t.show_file_list;
         let mut view_mode      = t.view_mode;
@@ -130,6 +155,9 @@ pub fn app() -> Element {
         selected_idx.set(None);
         parse_stats.set(None);
         file_name.set(None);
+        file_path.set(None);
+        file_mtime.set(0);
+        file_auto.set(false);
         loaded_files.set(Vec::new());
         show_file_list.set(false);
         view_mode.set(ViewMode::Timeline);
@@ -152,6 +180,9 @@ pub fn app() -> Element {
         let mut selected_idx = t.selected_idx;
         let mut parse_stats  = t.parse_stats;
         let mut file_name    = t.file_name;
+        let mut file_path    = t.file_path;
+        let mut file_mtime   = t.file_mtime_ms;
+        let mut file_auto    = t.file_auto_watch;
         let mut label        = t.label;
 
         let s       = sample_data(&spec);
@@ -164,6 +195,9 @@ pub fn app() -> Element {
         offload_replace(&mut messages, parsed);
         selected_idx.set(None);
         file_name.set(None);
+        file_path.set(None);
+        file_mtime.set(0);
+        file_auto.set(false);
         label.set(format!("Sample {spec}"));
         eval(&format!(
             "window.gtag && window.gtag('event', 'sample_loaded', \
@@ -234,6 +268,44 @@ pub fn app() -> Element {
             loading.set(false);
         });
     };
+
+    // Re-read the current `file_path` of any tab and apply the result. Used by
+    // the Reload button + the auto-watch poller. Silently no-ops on tabs that
+    // were loaded from paste / sample (no file_path).
+    let reload_tab = move |t: Tab| {
+        let path = match t.file_path.peek().clone() { Some(p) => p, None => return };
+        let mut loading = t.loading;
+        spawn(async move {
+            loading.set(true);
+            if let Some(r) = load_file_at(&path).await {
+                let delim = if r.is_soh { "soh" } else { "pipe" };
+                apply_file_result(t, r, delim);
+            }
+            loading.set(false);
+        });
+    };
+
+    // Auto-watch poller: every 1.5s, check every tab whose `file_auto_watch`
+    // is on and reload if the file's mtime has advanced past the snapshot we
+    // last applied. One global poller, no per-tab tasks — survives tab close.
+    use_effect(move || {
+        spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                let snapshot: Vec<Tab> = tabs.peek().clone();
+                for t in snapshot {
+                    if !*t.file_auto_watch.peek() { continue; }
+                    let Some(path) = t.file_path.peek().clone() else { continue };
+                    let cur = file_mtime_ms(&path);
+                    if cur == 0 { continue; }
+                    let last = *t.file_mtime_ms.peek();
+                    if cur > last {
+                        reload_tab(t);
+                    }
+                }
+            }
+        });
+    });
 
     let mut add_tab = move || {
         let id = *next_id.read();
@@ -920,6 +992,7 @@ pub fn app() -> Element {
                                 on_load_sample: move |s: String| load_sample(s),
                                 on_open_recent: move |p: String| open_recent(p),
                                 on_parse:       move |_| process_active(),
+                                on_reload:      move |_| reload_tab(t),
                             }
                         }
                     }
@@ -947,6 +1020,7 @@ pub fn app() -> Element {
                                 on_load_sample: move |s: String| load_sample(s),
                                 on_open_recent: move |p: String| open_recent(p),
                                 on_parse:       move |_| process_tab(c),
+                                on_reload:      move |_| reload_tab(c),
                             }
                         }
                     }

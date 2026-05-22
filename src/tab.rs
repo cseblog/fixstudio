@@ -19,6 +19,17 @@ pub struct Tab {
     pub skip_common:     Signal<bool>,
     pub parse_stats:     Signal<Option<(usize, u64)>>,
     pub file_name:       Signal<Option<String>>,
+    /// Absolute path of the currently-loaded file (None for paste / sample
+    /// loads). Used by the Reload button + the optional auto-watch poller
+    /// to re-read the same file when it changes on disk.
+    pub file_path:       Signal<Option<String>>,
+    /// Last-seen mtime (unix-millis) of `file_path`. Used by the auto-watch
+    /// poller to detect changes without re-parsing on every tick.
+    pub file_mtime_ms:   Signal<u64>,
+    /// Per-tab toggle: when true, a 1-second poller reloads `file_path`
+    /// whenever its mtime increases. Defaults off — explicit Reload button
+    /// is the default flow.
+    pub file_auto_watch: Signal<bool>,
     pub loaded_files:    Signal<Vec<String>>,
     pub show_file_list:  Signal<bool>,
     pub view_mode:       Signal<ViewMode>,
@@ -118,6 +129,9 @@ impl Tab {
             skip_common:     Signal::new_in_scope(false,              s),
             parse_stats:     Signal::new_in_scope(None,               s),
             file_name:       Signal::new_in_scope(None,               s),
+            file_path:       Signal::new_in_scope(None,               s),
+            file_mtime_ms:   Signal::new_in_scope(0u64,               s),
+            file_auto_watch: Signal::new_in_scope(false,              s),
             loaded_files:    Signal::new_in_scope(Vec::new(),         s),
             show_file_list:  Signal::new_in_scope(false,              s),
             view_mode:       Signal::new_in_scope(ViewMode::Timeline, s),
