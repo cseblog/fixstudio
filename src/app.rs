@@ -1179,6 +1179,7 @@ pub fn app() -> Element {
                         let recents_clone = recent_for_hero.clone();
                         rsx! {
                             tab_view {
+                                key: "{t.id}",
                                 tab: t,
                                 detail_visible: detail_visible,
                                 timeline_visible: timeline_visible,
@@ -1207,6 +1208,7 @@ pub fn app() -> Element {
                         let cmp_input = c.input;
                         rsx! {
                             tab_view {
+                                key: "cmp-{c.id}",
                                 tab: c,
                                 detail_visible: detail_visible,
                                 timeline_visible: timeline_visible,
@@ -1234,15 +1236,17 @@ pub fn app() -> Element {
             // Always visible while a tab has messages. Shows per-session
             // heartbeat freshness so the operator can see at a glance which
             // counterparty is silent. Worst sessions sort left.
+            //
+            // Compute synchronously per render rather than via use_memo —
+            // the bar lives at app root and use_memo would capture the
+            // active tab's `messages` Signal handle from the first render
+            // forever, leaving the bar stuck on tab 0 after a tab switch.
             {
                 let bar_messages = active.map(|t| t.messages);
                 rsx! {
                     if let Some(msgs_sig) = bar_messages {
                         {
-                            let rows = use_memo(move || {
-                                crate::live_health::compute(&msgs_sig.read())
-                            });
-                            let list = rows.read().clone();
+                            let list = crate::live_health::compute(&msgs_sig.read());
                             if !list.is_empty() {
                                 rsx! {
                                     div { class: "status-bar",
