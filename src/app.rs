@@ -8,7 +8,7 @@ use crate::components::command_palette::{command_palette, CommandItem};
 use crate::components::tab_bar::{tab_bar, TabMenuPos};
 use crate::components::tab_menu::tab_menu;
 use crate::components::tab_view::tab_view;
-use crate::loader::{load_file_at, pick_and_load_file, pick_and_load_folder, FileLoadResult};
+use crate::loader::{load_file_at, load_file_tail, pick_and_load_file, pick_and_load_folder, FileLoadResult};
 use crate::model::FixMessage;
 use crate::parser::parse_all;
 use crate::recents::{self, RecentEntry};
@@ -45,15 +45,23 @@ fn file_mtime_ms(path: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// Read the current file size in bytes, or 0 on error. Used as the
+/// starting tail offset after a full load so the next mtime tick can
+/// stream just the appended bytes.
+fn file_size_bytes(path: &str) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
 /// Pump a `FileLoadResult` into the given tab's signals.
 fn apply_file_result(t: Tab, r: FileLoadResult, is_soh: &str) {
-    let mut messages       = t.messages;
-    let mut selected_idx   = t.selected_idx;
-    let mut parse_stats    = t.parse_stats;
-    let mut file_name      = t.file_name;
-    let mut file_path      = t.file_path;
-    let mut file_mtime     = t.file_mtime_ms;
-    let mut label          = t.label;
+    let mut messages         = t.messages;
+    let mut selected_idx     = t.selected_idx;
+    let mut parse_stats      = t.parse_stats;
+    let mut file_name        = t.file_name;
+    let mut file_path        = t.file_path;
+    let mut file_mtime       = t.file_mtime_ms;
+    let mut file_tail_offset = t.file_tail_offset;
+    let mut label            = t.label;
     let count = r.messages.len();
     let ms    = r.parse_us as u64;
     let path  = r.path.clone();
@@ -64,6 +72,7 @@ fn apply_file_result(t: Tab, r: FileLoadResult, is_soh: &str) {
     file_name.set(Some(r.name));
     file_path.set(Some(path.clone()));
     file_mtime.set(file_mtime_ms(&path));
+    file_tail_offset.set(file_size_bytes(&path));
     label.set(name);
     eval(&format!(
         "window.gtag && window.gtag('event', 'file_parsed', \
@@ -83,6 +92,9 @@ pub fn app() -> Element {
     // UI state
     let mut file_menu_open:    Signal<bool> = use_signal(|| false);
     let mut samples_sub_open:  Signal<bool> = use_signal(|| false);
+    let mut workspaces_sub_open: Signal<bool> = use_signal(|| false);
+    let mut workspaces_state:  Signal<Vec<crate::workspaces::Workspace>>
+        = use_signal(crate::workspaces::load);
     let mut palette_open:        Signal<bool> = use_signal(|| false);
     let mut compare_picker_open: Signal<bool> = use_signal(|| false);
     let mut detail_visible:      Signal<bool> = use_signal(|| true);
@@ -115,6 +127,10 @@ pub fn app() -> Element {
         file_path.set(None);
         file_mtime.set(0);
         file_auto.set(false);
+        let mut tail_offset = t.file_tail_offset;
+        tail_offset.set(0);
+        let mut follow = t.file_follow_tail;
+        follow.set(false);
     };
 
     let process_active = move || {
@@ -158,6 +174,10 @@ pub fn app() -> Element {
         file_path.set(None);
         file_mtime.set(0);
         file_auto.set(false);
+        let mut tail_offset = t.file_tail_offset;
+        tail_offset.set(0);
+        let mut follow = t.file_follow_tail;
+        follow.set(false);
         loaded_files.set(Vec::new());
         show_file_list.set(false);
         view_mode.set(ViewMode::Timeline);
@@ -269,6 +289,84 @@ pub fn app() -> Element {
         });
     };
 
+    // Save the active tab's current state (file + filters + view mode) as a
+    // named workspace. Auto-derives the name from the file label so the
+    // first save is one click — user can rename / delete via the menu later.
+    let mut save_workspace = move || {
+        let Some(t) = active_tab(&tabs, &active_id) else { return };
+        let Some(path) = t.file_path.peek().clone() else { return };
+        let label = t.label.peek().clone();
+        let vm = t.view_mode.peek().clone();
+        let view_tag = match vm {
+            ViewMode::Now       => "Now",
+            ViewMode::Timeline  => "Timeline",
+            ViewMode::Lifecycle => "Latency",
+            ViewMode::Overview  => "Session",
+            ViewMode::Validator => "Validator",
+        };
+        let ws = crate::workspaces::Workspace {
+            name:         format!("{label} · {view_tag}"),
+            file_path:    path,
+            view_mode:    vm.to_u8(),
+            f_sender:     t.f_sender.peek().clone(),
+            f_target:     t.f_target.peek().clone(),
+            f_msg:        t.f_msg.peek().clone(),
+            f_clord:      t.f_clord.peek().clone(),
+            f_detail:     t.f_detail.peek().clone(),
+            f_time:       t.f_time.peek().clone(),
+            f_time_op:    t.f_time_op.peek().clone(),
+            selected_lp:  String::new(),
+            chain_filter: t.lifecycle_filter_id.peek().clone(),
+            auto_watch:   *t.file_auto_watch.peek(),
+            follow_tail:  *t.file_follow_tail.peek(),
+        };
+        let list = crate::workspaces::save(ws);
+        workspaces_state.set(list);
+    };
+
+    let load_workspace = move |ws: crate::workspaces::Workspace| {
+        let Some(t) = active_tab(&tabs, &active_id) else { return };
+        let mut loading = t.loading;
+        let mut view_mode = t.view_mode;
+        let mut f_sender   = t.f_sender;
+        let mut f_target   = t.f_target;
+        let mut f_msg      = t.f_msg;
+        let mut f_clord    = t.f_clord;
+        let mut f_detail   = t.f_detail;
+        let mut f_time     = t.f_time;
+        let mut f_time_op  = t.f_time_op;
+        let mut chain_id   = t.lifecycle_filter_id;
+        let mut auto_watch = t.file_auto_watch;
+        let mut follow     = t.file_follow_tail;
+        spawn(async move {
+            loading.set(true);
+            if let Some(r) = load_file_at(&ws.file_path).await {
+                let delim = if r.is_soh { "soh" } else { "pipe" };
+                apply_file_result(t, r, delim);
+                // Apply filters + view AFTER load so the freshly-set
+                // messages signal triggers downstream effects with the
+                // workspace's view mode in place from the first paint.
+                view_mode.set(ViewMode::from_u8(ws.view_mode));
+                f_sender.set(ws.f_sender);
+                f_target.set(ws.f_target);
+                f_msg.set(ws.f_msg);
+                f_clord.set(ws.f_clord);
+                f_detail.set(ws.f_detail);
+                f_time.set(ws.f_time);
+                f_time_op.set(if ws.f_time_op.is_empty() { "=".into() } else { ws.f_time_op });
+                chain_id.set(ws.chain_filter);
+                auto_watch.set(ws.auto_watch);
+                follow.set(ws.follow_tail);
+            }
+            loading.set(false);
+        });
+    };
+
+    let mut delete_workspace = move |name: String| {
+        let list = crate::workspaces::delete(&name);
+        workspaces_state.set(list);
+    };
+
     // Re-read the current `file_path` of any tab and apply the result. Used by
     // the Reload button + the auto-watch poller. Silently no-ops on tabs that
     // were loaded from paste / sample (no file_path).
@@ -286,8 +384,9 @@ pub fn app() -> Element {
     };
 
     // Auto-watch poller: every 1.5s, check every tab whose `file_auto_watch`
-    // is on and reload if the file's mtime has advanced past the snapshot we
-    // last applied. One global poller, no per-tab tasks — survives tab close.
+    // is on. Prefers incremental tail-load (read only the bytes appended
+    // since the last poll); falls back to a full reload when the file
+    // shrank (rotation) or no tail offset has been recorded yet.
     use_effect(move || {
         spawn(async move {
             loop {
@@ -296,12 +395,48 @@ pub fn app() -> Element {
                 for t in snapshot {
                     if !*t.file_auto_watch.peek() { continue; }
                     let Some(path) = t.file_path.peek().clone() else { continue };
-                    let cur = file_mtime_ms(&path);
-                    if cur == 0 { continue; }
-                    let last = *t.file_mtime_ms.peek();
-                    if cur > last {
+                    let cur_mtime = file_mtime_ms(&path);
+                    if cur_mtime == 0 { continue; }
+                    let last_mtime = *t.file_mtime_ms.peek();
+                    if cur_mtime <= last_mtime { continue; }
+
+                    let last_offset = *t.file_tail_offset.peek();
+                    let cur_size    = file_size_bytes(&path);
+
+                    if last_offset == 0 || cur_size < last_offset {
+                        // Either first run after the watch was switched on
+                        // without a clean offset, or the file was truncated
+                        // / rotated. Either way, safest path is a full reload.
                         reload_tab(t);
+                        continue;
                     }
+
+                    // Incremental path: read [last_offset..cur_size], parse,
+                    // append. Heavier paths (offload_replace) intentionally
+                    // skipped — Vec::extend on the existing Signal works fine.
+                    let mut messages    = t.messages;
+                    let mut tail_offset = t.file_tail_offset;
+                    let mut file_mtime  = t.file_mtime_ms;
+                    let follow          = *t.file_follow_tail.peek();
+                    spawn(async move {
+                        if let Some(tail) = load_file_tail(&path, last_offset).await {
+                            if !tail.messages.is_empty() {
+                                messages.with_mut(|v| v.extend(tail.messages));
+                            }
+                            tail_offset.set(tail.new_offset);
+                            file_mtime.set(cur_mtime);
+                            if follow {
+                                // Scroll Timeline + Validator panes to the
+                                // bottom once the new rows are committed.
+                                let _ = eval(
+                                    "requestAnimationFrame(() => {\
+                                        document.querySelectorAll('.tbl-body, .latency-tbl-body')\
+                                            .forEach(el => el.scrollTop = el.scrollHeight);\
+                                    });"
+                                );
+                            }
+                        }
+                    });
                 }
             }
         });
@@ -747,6 +882,67 @@ pub fn app() -> Element {
                                 div { class: "file-menu-sep" }
                                 div {
                                     class: "file-menu-item",
+                                    title: "Save current file + filters + view as a workspace",
+                                    onclick: move |_| { save_workspace(); file_menu_open.set(false); },
+                                    span { "Save current as workspace" }
+                                }
+                                div {
+                                    class: "file-menu-item file-menu-item-sub",
+                                    onclick: move |_| {
+                                        let v = !*workspaces_sub_open.read();
+                                        workspaces_sub_open.set(v);
+                                    },
+                                    span { "Workspaces" }
+                                    span { class: "file-menu-hint", "▸" }
+                                }
+                                if *workspaces_sub_open.read() {
+                                    {
+                                        let list = workspaces_state.read().clone();
+                                        if list.is_empty() {
+                                            rsx! {
+                                                div {
+                                                    class: "file-menu-item file-menu-item-indent file-menu-item-disabled",
+                                                    span { "(none saved yet)" }
+                                                }
+                                            }
+                                        } else {
+                                            rsx! {
+                                                for ws in list.iter() {
+                                                    {
+                                                        let ws_for_load = ws.clone();
+                                                        let ws_name_for_del = ws.name.clone();
+                                                        let display = ws.name.clone();
+                                                        let tip = format!("{} → {}", ws.name, ws.file_path);
+                                                        rsx! {
+                                                            div {
+                                                                class: "file-menu-item file-menu-item-indent file-menu-item-ws",
+                                                                title: "{tip}",
+                                                                onclick: move |_| {
+                                                                    load_workspace(ws_for_load.clone());
+                                                                    file_menu_open.set(false);
+                                                                    workspaces_sub_open.set(false);
+                                                                },
+                                                                span { class: "file-menu-trunc", "{display}" }
+                                                                button {
+                                                                    class: "file-menu-ws-del",
+                                                                    title: "Delete workspace",
+                                                                    onclick: move |e: MouseEvent| {
+                                                                        e.stop_propagation();
+                                                                        delete_workspace(ws_name_for_del.clone());
+                                                                    },
+                                                                    "×"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                div { class: "file-menu-sep" }
+                                div {
+                                    class: "file-menu-item",
                                     onclick: move |_| { clear_active(); file_menu_open.set(false); },
                                     span { "Clear current tab" }
                                 }
@@ -919,9 +1115,11 @@ pub fn app() -> Element {
                         a_vm.set(mode.clone());
                         c_vm.set(mode);
                     };
+                    let in_now = cur == ViewMode::Now;
                     let in_lc  = cur == ViewMode::Lifecycle;
                     let in_ov  = cur == ViewMode::Overview;
                     let in_val = cur == ViewMode::Validator;
+                    let in_tl  = cur == ViewMode::Timeline;
 
                     rsx! {
                         div { class: "compare-bar",
@@ -941,7 +1139,12 @@ pub fn app() -> Element {
                             }
                             div { class: "panel-tabs panel-tabs-shared",
                                 button {
-                                    class: if !in_lc && !in_ov && !in_val { "panel-tab panel-tab-active" } else { "panel-tab" },
+                                    class: if in_now { "panel-tab panel-tab-active" } else { "panel-tab" },
+                                    onclick: { let mut sb = set_both; move |_| sb(ViewMode::Now) },
+                                    "Now"
+                                }
+                                button {
+                                    class: if in_tl { "panel-tab panel-tab-active" } else { "panel-tab" },
                                     onclick: { let mut sb = set_both; move |_| sb(ViewMode::Timeline) },
                                     "Timeline"
                                 }
@@ -1021,6 +1224,63 @@ pub fn app() -> Element {
                                 on_open_recent: move |p: String| open_recent(p),
                                 on_parse:       move |_| process_tab(c),
                                 on_reload:      move |_| reload_tab(c),
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Bottom status bar (heartbeat health) ────────────────────────
+            // Always visible while a tab has messages. Shows per-session
+            // heartbeat freshness so the operator can see at a glance which
+            // counterparty is silent. Worst sessions sort left.
+            {
+                let bar_messages = active.map(|t| t.messages);
+                rsx! {
+                    if let Some(msgs_sig) = bar_messages {
+                        {
+                            let rows = use_memo(move || {
+                                crate::live_health::compute(&msgs_sig.read())
+                            });
+                            let list = rows.read().clone();
+                            if !list.is_empty() {
+                                rsx! {
+                                    div { class: "status-bar",
+                                        span { class: "status-bar-label", "Sessions" }
+                                        for r in list.iter() {
+                                            {
+                                                use crate::live_health::HbStatus;
+                                                let dot_cls = match r.status {
+                                                    HbStatus::Fresh => "status-dot status-dot-fresh",
+                                                    HbStatus::Stale => "status-dot status-dot-stale",
+                                                    HbStatus::Dead  => "status-dot status-dot-dead",
+                                                };
+                                                let chip_cls = match r.status {
+                                                    HbStatus::Fresh => "status-chip status-chip-fresh",
+                                                    HbStatus::Stale => "status-chip status-chip-stale",
+                                                    HbStatus::Dead  => "status-chip status-chip-dead",
+                                                };
+                                                let age = crate::live_health::fmt_age(r.last_msg_age_us);
+                                                let tooltip = format!(
+                                                    "{}→{} · HB {}s · last msg {} ago{}",
+                                                    r.sender, r.target, r.interval_secs, age,
+                                                    if r.closed { " · logged out" } else { "" },
+                                                );
+                                                rsx! {
+                                                    span {
+                                                        class: "{chip_cls}",
+                                                        title: "{tooltip}",
+                                                        span { class: "{dot_cls}" }
+                                                        span { class: "status-chip-name", "{r.sender}→{r.target}" }
+                                                        span { class: "status-chip-age", "{age}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                rsx! {}
                             }
                         }
                     }

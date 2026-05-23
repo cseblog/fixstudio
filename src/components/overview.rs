@@ -54,6 +54,12 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
     let mut drill_counterparty: Signal<Option<String>> = use_signal(|| None);
     let fq_view: Signal<FqView>                        = use_signal(|| FqView::Charts);
     let mut computed: Signal<Option<OverviewData>>     = use_signal(|| None);
+    // LP Scorecard drill-down — None = table only, Some(lp) = drawer open.
+    let selected_lp: Signal<Option<String>>            = use_signal(|| None);
+    let lp_drill = use_memo(move || {
+        selected_lp.read().clone()
+            .map(|lp| crate::last_look::build_lp_drill(&messages.read(), &lp))
+    });
 
     // Per-instance DOM-id suffix so two overview_panel mounts (compare mode)
     // don't share the same `getElementById('summary-fill-pie')` etc — without
@@ -199,7 +205,8 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
                                 &id_fq_bar, &id_fq_tree,
                             ),
                             OverviewTab::LpScorecard => render_lp_scorecard(
-                                &data.lp_card, msgs_for_grid,
+                                &data.lp_card, msgs_for_grid, selected_lp,
+                                lp_drill.read().clone(),
                             ),
                         }
                     }
@@ -887,8 +894,12 @@ fn treemap_option(sc: &FillQualityScorecard) -> serde_json::Value {
 
 // ── LP Scorecard tab (last-look analyzer + symbol × LP heat grid) ───────────
 
-fn render_lp_scorecard(card: &crate::last_look::LpScorecard,
-                       messages: Signal<Vec<FixMessage>>) -> Element {
+fn render_lp_scorecard(
+    card: &crate::last_look::LpScorecard,
+    messages: Signal<Vec<FixMessage>>,
+    mut selected_lp: Signal<Option<String>>,
+    drill: Option<crate::last_look::LpDrill>,
+) -> Element {
     if card.rows.is_empty() {
         return rsx! {
             div { class: "empty-state",
@@ -921,23 +932,156 @@ fn render_lp_scorecard(card: &crate::last_look::LpScorecard,
                         span { "Flag" }
                     }
                     for r in card.rows.iter() {
-                        div { class: if r.flagged { "lp-row lp-row-flagged" } else { "lp-row" },
-                            span { class: "lp-name", "{r.lp}" }
-                            span { class: "lp-num", "{r.orders}" }
-                            span { class: "lp-num", "{format_pct(r.fill_rate)}" }
-                            span {
-                                class: if r.reject_rate >= 0.05 { "lp-num lp-num-bad" } else { "lp-num" },
-                                "{format_pct(r.reject_rate)}"
+                        {
+                            let row_lp = r.lp.clone();
+                            let is_selected = selected_lp.read().as_ref()
+                                .map(|s| s == &row_lp).unwrap_or(false);
+                            let mut cls = String::from("lp-row lp-row-clickable");
+                            if r.flagged { cls.push_str(" lp-row-flagged"); }
+                            if is_selected { cls.push_str(" lp-row-selected"); }
+                            rsx! {
+                                div {
+                                    class: "{cls}",
+                                    title: "Click to drill down · click again to close",
+                                    onclick: move |_| {
+                                        // Toggle: clicking the same LP again closes.
+                                        let cur = selected_lp.peek().clone();
+                                        if cur.as_deref() == Some(row_lp.as_str()) {
+                                            selected_lp.set(None);
+                                        } else {
+                                            selected_lp.set(Some(row_lp.clone()));
+                                        }
+                                    },
+                                    span { class: "lp-name",
+                                        if is_selected { "▾ " } else { "▸ " }
+                                        "{r.lp}"
+                                    }
+                                    span { class: "lp-num", "{r.orders}" }
+                                    span { class: "lp-num", "{format_pct(r.fill_rate)}" }
+                                    span {
+                                        class: if r.reject_rate >= 0.05 { "lp-num lp-num-bad" } else { "lp-num" },
+                                        "{format_pct(r.reject_rate)}"
+                                    }
+                                    span { class: "lp-num", "{format_us(r.hold_p50_us)}" }
+                                    span {
+                                        class: if r.hold_p95_us >= 50_000 { "lp-num lp-num-bad" } else { "lp-num" },
+                                        "{format_us(r.hold_p95_us)}"
+                                    }
+                                    span { class: "lp-num", "{format_us(r.hold_p99_us)}" }
+                                    span {
+                                        class: if r.flagged { "lp-flag lp-flag-on" } else { "lp-flag" },
+                                        if r.flagged { "⚑" } else { "" }
+                                    }
+                                }
                             }
-                            span { class: "lp-num", "{format_us(r.hold_p50_us)}" }
-                            span {
-                                class: if r.hold_p95_us >= 50_000 { "lp-num lp-num-bad" } else { "lp-num" },
-                                "{format_us(r.hold_p95_us)}"
-                            }
-                            span { class: "lp-num", "{format_us(r.hold_p99_us)}" }
-                            span {
-                                class: if r.flagged { "lp-flag lp-flag-on" } else { "lp-flag" },
-                                if r.flagged { "⚑" } else { "" }
+                        }
+                    }
+                }
+
+                // Drill-down drawer — visible when the operator clicked a row.
+                if let Some(d) = drill.as_ref() {
+                    {
+                        let max_bucket: u64 = d.hold_buckets.iter().map(|b| b.count).max().unwrap_or(1).max(1);
+                        let max_reason: u64 = d.reject_reasons.iter().map(|r| r.count).max().unwrap_or(1).max(1);
+                        rsx! {
+                            div { class: "lp-drill",
+                                div { class: "lp-drill-head",
+                                    h4 { class: "lp-drill-title", "Drill-down · {d.lp}" }
+                                    button {
+                                        class: "lp-drill-close",
+                                        title: "Close drawer",
+                                        onclick: move |_| selected_lp.set(None),
+                                        "×"
+                                    }
+                                }
+                                div { class: "lp-drill-body",
+                                    // Reject reasons (left column)
+                                    div { class: "lp-drill-col",
+                                        h5 { class: "lp-drill-subtitle", "Reject reasons (tag 58)" }
+                                        if d.reject_reasons.is_empty() {
+                                            div { class: "lp-drill-empty", "No rejects." }
+                                        } else {
+                                            for r in d.reject_reasons.iter() {
+                                                {
+                                                    let pct = r.count as f64 / max_reason as f64 * 100.0;
+                                                    rsx! {
+                                                        div { class: "lp-drill-bar-row",
+                                                            span { class: "lp-drill-bar-label", "{r.reason}" }
+                                                            div { class: "lp-drill-bar-wrap",
+                                                                div {
+                                                                    class: "lp-drill-bar lp-drill-bar-bad",
+                                                                    style: "width: {pct}%;",
+                                                                }
+                                                            }
+                                                            span { class: "lp-drill-bar-count", "{r.count}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Hold-time histogram (middle column)
+                                    div { class: "lp-drill-col",
+                                        h5 { class: "lp-drill-subtitle", "Hold-time distribution" }
+                                        if d.hold_buckets.iter().all(|b| b.count == 0) {
+                                            div { class: "lp-drill-empty", "No quote→order links." }
+                                        } else {
+                                            for b in d.hold_buckets.iter() {
+                                                {
+                                                    let pct = if b.count == 0 { 0.0 }
+                                                              else { b.count as f64 / max_bucket as f64 * 100.0 };
+                                                    rsx! {
+                                                        div { class: "lp-drill-bar-row",
+                                                            span { class: "lp-drill-bar-label", "{b.label}" }
+                                                            div { class: "lp-drill-bar-wrap",
+                                                                div {
+                                                                    class: "lp-drill-bar lp-drill-bar-neutral",
+                                                                    style: "width: {pct}%;",
+                                                                }
+                                                            }
+                                                            span { class: "lp-drill-bar-count", "{b.count}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Worst-hold sample (right column)
+                                    div { class: "lp-drill-col",
+                                        h5 { class: "lp-drill-subtitle", "Worst-10 holds" }
+                                        if d.worst_holds.is_empty() {
+                                            div { class: "lp-drill-empty", "No matched orders." }
+                                        } else {
+                                            div { class: "lp-drill-worst",
+                                                div { class: "lp-drill-worst-head",
+                                                    span { "Time" }
+                                                    span { "ClOrdID" }
+                                                    span { "Sym" }
+                                                    span { "Hold" }
+                                                    span { "Out" }
+                                                }
+                                                for w in d.worst_holds.iter() {
+                                                    {
+                                                        let outcome_cls = match w.outcome {
+                                                            "FILL"   => "lp-drill-out lp-drill-out-fill",
+                                                            "REJECT" => "lp-drill-out lp-drill-out-reject",
+                                                            _        => "lp-drill-out",
+                                                        };
+                                                        rsx! {
+                                                            div { class: "lp-drill-worst-row",
+                                                                span { "{w.time}" }
+                                                                span { class: "lp-drill-clord", "{w.cl_ord_id}" }
+                                                                span { "{w.symbol}" }
+                                                                span { class: "lp-drill-hold", "{format_us(w.hold_us)}" }
+                                                                span { class: "{outcome_cls}", "{w.outcome}" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

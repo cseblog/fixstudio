@@ -8,10 +8,32 @@ pub enum UpdateStatus {
 
 #[derive(Clone, PartialEq)]
 pub enum ViewMode {
+    Now,
     Timeline,
     Lifecycle,
     Overview,
     Validator,
+}
+
+impl ViewMode {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            ViewMode::Now       => 0,
+            ViewMode::Timeline  => 1,
+            ViewMode::Lifecycle => 2,
+            ViewMode::Overview  => 3,
+            ViewMode::Validator => 4,
+        }
+    }
+    pub fn from_u8(v: u8) -> ViewMode {
+        match v {
+            0 => ViewMode::Now,
+            2 => ViewMode::Lifecycle,
+            3 => ViewMode::Overview,
+            4 => ViewMode::Validator,
+            _ => ViewMode::Timeline,
+        }
+    }
 }
 
 pub fn is_newer_version(latest: &str, current: &str) -> bool {

@@ -30,6 +30,14 @@ pub struct Tab {
     /// whenever its mtime increases. Defaults off — explicit Reload button
     /// is the default flow.
     pub file_auto_watch: Signal<bool>,
+    /// Byte offset into `file_path` consumed so far. When auto-watch fires
+    /// and the file has grown, the loader reads only `[tail_offset..]` and
+    /// APPENDS to `messages` instead of re-parsing the whole file.
+    pub file_tail_offset: Signal<u64>,
+    /// When true, the Timeline auto-scrolls to the bottom after each
+    /// successful tail load. Independent of `file_auto_watch` because the
+    /// operator may want background ingest without losing scroll position.
+    pub file_follow_tail: Signal<bool>,
     pub loaded_files:    Signal<Vec<String>>,
     pub show_file_list:  Signal<bool>,
     pub view_mode:       Signal<ViewMode>,
@@ -132,6 +140,8 @@ impl Tab {
             file_path:       Signal::new_in_scope(None,               s),
             file_mtime_ms:   Signal::new_in_scope(0u64,               s),
             file_auto_watch: Signal::new_in_scope(false,              s),
+            file_tail_offset:Signal::new_in_scope(0u64,               s),
+            file_follow_tail:Signal::new_in_scope(false,              s),
             loaded_files:    Signal::new_in_scope(Vec::new(),         s),
             show_file_list:  Signal::new_in_scope(false,              s),
             view_mode:       Signal::new_in_scope(ViewMode::Timeline, s),

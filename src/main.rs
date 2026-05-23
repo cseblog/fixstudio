@@ -6,7 +6,9 @@ mod dictionary;
 mod export;
 mod fill_quality;
 mod last_look;
+mod live_health;
 mod model;
+mod now_metrics;
 mod parser;
 mod recents;
 mod sample;
@@ -16,6 +18,7 @@ mod style;
 mod tab;
 mod types;
 mod validator;
+mod workspaces;
 
 use dioxus_desktop::{launch::launch, Config, WindowBuilder};
 

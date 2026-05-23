@@ -37,15 +37,17 @@ pub enum Anomaly {
         window_secs: u32,
         severity:    Severity,
     },
-    /// `gap` MsgSeqNum values were skipped on session `(sender, target)`
-    /// between `prev_seq` and `next_seq`.
+    /// Aggregated per `(sender, target)` session: `occurrences` distinct
+    /// gap events skipped `total_skipped` MsgSeqNum values in total; the
+    /// single worst jump was `max_single_gap`. Banner shows one chip per
+    /// session pair, not per occurrence, so a chatty log stays readable.
     SequenceGap {
-        sender:    String,
-        target:    String,
-        prev_seq:  u64,
-        next_seq:  u64,
-        gap:       u64,
-        severity:  Severity,
+        sender:         String,
+        target:         String,
+        occurrences:    u32,
+        total_skipped:  u64,
+        max_single_gap: u64,
+        severity:       Severity,
     },
     /// Recent-window P50 NOS→ER latency exceeded the prior-window baseline
     /// by `multiple` ×.
@@ -123,29 +125,62 @@ fn tag_u64(m: &FixMessage, tag: u16) -> Option<u64> {
         .and_then(|f| f.value_in(&m.arena).parse::<u64>().ok())
 }
 
+/// Per-session running stats used while folding the message stream.
+#[derive(Default)]
+struct GapAgg {
+    last_seq:       u64,
+    occurrences:    u32,
+    total_skipped:  u64,
+    max_single_gap: u64,
+}
+
 fn scan_sequence_gaps(msgs: &[FixMessage]) -> Vec<Anomaly> {
-    // session key = (sender, target). Last-seen MsgSeqNum per session.
-    let mut last: HashMap<(String, String), u64> = HashMap::default();
-    let mut out: Vec<Anomaly> = Vec::new();
+    // Fold the stream into one entry per (sender, target) session.
+    // A typical session pair can produce dozens of distinct gap events
+    // (each reset / resend creates a new jump); the UI banner needs a
+    // single line of context, not one chip per occurrence.
+    let mut state: HashMap<(String, String), GapAgg> = HashMap::default();
     for m in msgs {
         let Some(seq) = tag_u64(m, 34) else { continue };
         let key = (m.sender.to_string(), m.target.to_string());
-        if let Some(&prev) = last.get(&key) {
-            if seq > prev + 1 {
-                let gap = seq - prev - 1;
-                let severity = if gap >= 10 { Severity::Critical } else { Severity::Warn };
-                out.push(Anomaly::SequenceGap {
-                    sender:   key.0.clone(),
-                    target:   key.1.clone(),
-                    prev_seq: prev,
-                    next_seq: seq,
-                    gap,
-                    severity,
-                });
-            }
+        let agg = state.entry(key).or_default();
+        if agg.last_seq != 0 && seq > agg.last_seq + 1 {
+            let gap = seq - agg.last_seq - 1;
+            agg.occurrences   += 1;
+            agg.total_skipped += gap;
+            if gap > agg.max_single_gap { agg.max_single_gap = gap; }
         }
-        last.insert(key, seq);
+        // Track the highest seq we've seen; rollbacks (seq < last) are
+        // treated as session reset and ignored for gap accounting.
+        if seq > agg.last_seq { agg.last_seq = seq; }
     }
+    let mut out: Vec<Anomaly> = state.into_iter()
+        .filter(|(_, a)| a.occurrences > 0)
+        .map(|((sender, target), a)| {
+            // Critical if ANY single jump skipped >=10 OR total skipped is large.
+            let severity = if a.max_single_gap >= 10 || a.total_skipped >= 50 {
+                Severity::Critical
+            } else {
+                Severity::Warn
+            };
+            Anomaly::SequenceGap {
+                sender,
+                target,
+                occurrences:    a.occurrences,
+                total_skipped:  a.total_skipped,
+                max_single_gap: a.max_single_gap,
+                severity,
+            }
+        })
+        .collect();
+    // Worst sessions first — total skipped is the primary sort key.
+    out.sort_by(|a, b| {
+        let key = |x: &Anomaly| match x {
+            Anomaly::SequenceGap { total_skipped, .. } => *total_skipped,
+            _ => 0,
+        };
+        key(b).cmp(&key(a))
+    });
     out
 }
 
@@ -252,10 +287,31 @@ mod tests {
         let msgs = parse(raw);
         let gaps = scan_sequence_gaps(&msgs);
         assert_eq!(gaps.len(), 1);
-        if let Anomaly::SequenceGap { gap, prev_seq, next_seq, .. } = &gaps[0] {
-            assert_eq!(*gap, 3);
-            assert_eq!(*prev_seq, 1);
-            assert_eq!(*next_seq, 5);
+        if let Anomaly::SequenceGap { occurrences, total_skipped, max_single_gap, .. } = &gaps[0] {
+            assert_eq!(*occurrences, 1);
+            assert_eq!(*total_skipped, 3);
+            assert_eq!(*max_single_gap, 3);
+        } else {
+            panic!("expected SequenceGap");
+        }
+    }
+
+    #[test]
+    fn sequence_gaps_aggregate_per_session() {
+        // Same session, two distinct jumps: 1→5 (skip 3) and 5→8 (skip 2).
+        // Expect ONE SequenceGap entry, not two.
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=1|52=20240101-09:00:00.000|11=O1|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=5|52=20240101-09:00:00.001|11=O2|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=A|56=B|34=8|52=20240101-09:00:00.002|11=O3|10=000|",
+        );
+        let msgs = parse(raw);
+        let gaps = scan_sequence_gaps(&msgs);
+        assert_eq!(gaps.len(), 1, "expected one aggregated chip per session pair");
+        if let Anomaly::SequenceGap { occurrences, total_skipped, max_single_gap, .. } = &gaps[0] {
+            assert_eq!(*occurrences, 2);
+            assert_eq!(*total_skipped, 5);  // 3 + 2
+            assert_eq!(*max_single_gap, 3);
         } else {
             panic!("expected SequenceGap");
         }

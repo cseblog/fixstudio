@@ -243,6 +243,198 @@ pub fn build_symbol_grid(msgs: &[FixMessage], max_symbols: usize) -> SymbolGrid 
     SymbolGrid { symbols, rows }
 }
 
+// ── Per-LP drill-down ───────────────────────────────────────────────────────
+//
+// Built on demand when the operator clicks a row in the scorecard. Walks
+// the messages a second time and gathers everything needed to answer
+// "why is this LP flagged?":
+//
+//   • reject reasons     — bucketed by tag 58 text, top N
+//   • hold-time buckets  — fixed log-ish bins so a histogram bar chart can
+//                          be drawn from the result without re-binning
+//   • worst-hold sample  — the 10 slowest holds with their raw ClOrdID +
+//                          symbol + outcome for direct copy-paste to LP
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LpDrillRejectReason {
+    pub reason: String,
+    pub count:  u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LpDrillHoldBucket {
+    pub label: &'static str,
+    pub count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LpDrillWorstHold {
+    pub cl_ord_id: String,
+    pub symbol:    String,
+    pub hold_us:   i64,
+    pub time:      String,
+    pub outcome:   &'static str,  // "FILL" / "REJECT" / "OPEN"
+}
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct LpDrill {
+    pub lp:             String,
+    pub reject_reasons: Vec<LpDrillRejectReason>,
+    pub hold_buckets:   Vec<LpDrillHoldBucket>,
+    pub worst_holds:    Vec<LpDrillWorstHold>,
+}
+
+const HOLD_BUCKETS_US: &[(i64, &str)] = &[
+    (1_000,        "<1ms"),
+    (5_000,        "1-5ms"),
+    (10_000,       "5-10ms"),
+    (25_000,       "10-25ms"),
+    (50_000,       "25-50ms"),
+    (100_000,      "50-100ms"),
+    (250_000,      "100-250ms"),
+    (i64::MAX,     "250ms+"),
+];
+
+pub fn build_lp_drill(msgs: &[FixMessage], lp: &str) -> LpDrill {
+    if lp.is_empty() {
+        return LpDrill::default();
+    }
+
+    // Need the same quote → NOS hold linkage as the scorecard. Re-run it
+    // narrowly for this LP only.
+    let mut quotes: HashMap<String, i64> = HashMap::default();
+    for m in msgs {
+        if m.msg_type_raw.as_str() != "S" { continue; }
+        if m.sender.as_str() != lp { continue; }
+        let q = tag_val(m, 117);
+        if q.is_empty() { continue; }
+        if let Some(us) = parse_time_us(&m.time) {
+            quotes.insert(q.to_string(), us);
+        }
+    }
+
+    struct Order {
+        cl:      String,
+        sym:     String,
+        nos_us:  i64,
+        hold_us: Option<i64>,
+        outcome: &'static str,
+    }
+    let mut orders: HashMap<String, Order> = HashMap::default();
+
+    let mut reject_counts: HashMap<String, u64> = HashMap::default();
+
+    for m in msgs {
+        match m.msg_type_raw.as_str() {
+            "D" => {
+                if m.target.as_str() != lp { continue; }
+                if m.cl_ord_id.is_empty() { continue; }
+                let qid     = tag_val(m, 117);
+                let nos_us  = parse_time_us(&m.time).unwrap_or(0);
+                let hold_us = quotes.get(qid).map(|&qu| (nos_us - qu).max(0));
+                orders.insert(m.cl_ord_id.to_string(), Order {
+                    cl:      m.cl_ord_id.to_string(),
+                    sym:     m.symbol.to_string(),
+                    nos_us,
+                    hold_us,
+                    outcome: "OPEN",
+                });
+            }
+            "8" => {
+                if m.sender.as_str() != lp { continue; }
+                if m.cl_ord_id.is_empty() { continue; }
+                let exec_type  = tag_val(m, 150);
+                let ord_status = tag_val(m, 39);
+                let is_fill   = exec_type == "F" || (exec_type == "2" && ord_status == "2");
+                let is_reject = exec_type == "8" || ord_status == "8";
+                if is_reject {
+                    // Tag 58 = Text (reject reason). Falls back to a
+                    // synthetic "(no reason given)" so the bar chart still
+                    // accounts for every reject.
+                    let reason = tag_val(m, 58);
+                    let key = if reason.is_empty() {
+                        "(no reason given)".to_string()
+                    } else {
+                        normalize_reason(reason)
+                    };
+                    *reject_counts.entry(key).or_insert(0) += 1;
+                }
+                if let Some(o) = orders.get_mut(m.cl_ord_id.as_str()) {
+                    if o.outcome == "OPEN" {
+                        if is_fill   { o.outcome = "FILL"; }
+                        if is_reject { o.outcome = "REJECT"; }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Bucket hold times.
+    let mut buckets: Vec<LpDrillHoldBucket> = HOLD_BUCKETS_US.iter()
+        .map(|(_, label)| LpDrillHoldBucket { label, count: 0 })
+        .collect();
+    for o in orders.values() {
+        if let Some(h) = o.hold_us {
+            for (i, (cap, _)) in HOLD_BUCKETS_US.iter().enumerate() {
+                if h < *cap { buckets[i].count += 1; break; }
+            }
+        }
+    }
+
+    // Worst-10 hold times (skip None hold).
+    let mut all: Vec<&Order> = orders.values()
+        .filter(|o| o.hold_us.is_some())
+        .collect();
+    all.sort_by(|a, b| b.hold_us.unwrap().cmp(&a.hold_us.unwrap()));
+    let worst_holds: Vec<LpDrillWorstHold> = all.into_iter().take(10).map(|o| {
+        LpDrillWorstHold {
+            cl_ord_id: o.cl.clone(),
+            symbol:    o.sym.clone(),
+            hold_us:   o.hold_us.unwrap(),
+            // Render NOS time from the stored microseconds — fine for sort,
+            // operator just needs a stable label per row.
+            time:      fmt_us_clock(o.nos_us),
+            outcome:   o.outcome,
+        }
+    }).collect();
+
+    // Top-N reject reasons.
+    let mut reasons: Vec<LpDrillRejectReason> = reject_counts.into_iter()
+        .map(|(reason, count)| LpDrillRejectReason { reason, count })
+        .collect();
+    reasons.sort_by(|a, b| b.count.cmp(&a.count));
+    reasons.truncate(8);
+
+    LpDrill {
+        lp:             lp.to_string(),
+        reject_reasons: reasons,
+        hold_buckets:   buckets,
+        worst_holds,
+    }
+}
+
+/// Collapse case + trim so "Quote expired" and "QUOTE EXPIRED " bucket
+/// together. Keeps it conservative — no token squashing.
+fn normalize_reason(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.len() <= 64 { trimmed.to_string() }
+    else { format!("{}…", &trimmed[..63]) }
+}
+
+fn fmt_us_clock(us: i64) -> String {
+    // Render microseconds since epoch-of-trading-day as HH:MM:SS.mmm.
+    // For replay logs the date is already in the surrounding context, so
+    // the clock portion is what the operator scans for.
+    let total_s = us / 1_000_000;
+    let frac_us = us % 1_000_000;
+    let h = (total_s / 3600) % 24;
+    let m = (total_s % 3600) / 60;
+    let s = total_s % 60;
+    let ms = frac_us / 1_000;
+    format!("{h:02}:{m:02}:{s:02}.{ms:03}")
+}
+
 fn percentiles(s: &[i64]) -> (i64, i64, i64) {
     if s.is_empty() { return (0, 0, 0); }
     let mut v = s.to_vec();
@@ -343,6 +535,57 @@ mod tests {
         let sc = build_lp_scorecard(&p(&raw));
         assert_eq!(sc.rows[0].lp, "LP_BAD");
         assert_eq!(sc.rows[1].lp, "LP_GOOD");
+    }
+
+    #[test]
+    fn drill_buckets_hold_times() {
+        // Three orders with 5ms, 30ms, 100ms holds — different buckets.
+        let mut raw = String::new();
+        raw.push_str(&quote_nos_er("Q1", ("LP_A", "ME"), "C1",
+            "20240101-09:00:00.000", "20240101-09:00:00.005", "20240101-09:00:00.006",
+            "F", "EURUSD"));
+        raw.push_str(&quote_nos_er("Q2", ("LP_A", "ME"), "C2",
+            "20240101-09:00:01.000", "20240101-09:00:01.030", "20240101-09:00:01.031",
+            "F", "EURUSD"));
+        raw.push_str(&quote_nos_er("Q3", ("LP_A", "ME"), "C3",
+            "20240101-09:00:02.000", "20240101-09:00:02.100", "20240101-09:00:02.101",
+            "8", "EURUSD"));
+        let d = build_lp_drill(&p(&raw), "LP_A");
+        // Sum across buckets should be 3.
+        let total: u64 = d.hold_buckets.iter().map(|b| b.count).sum();
+        assert_eq!(total, 3);
+        // Worst hold first.
+        assert_eq!(d.worst_holds[0].cl_ord_id, "C3");
+        assert_eq!(d.worst_holds[0].outcome,   "REJECT");
+    }
+
+    #[test]
+    fn drill_buckets_reject_reasons() {
+        // Two rejects with same reason text → one bucket of 2.
+        let raw = concat!(
+            // Quote + NOS + ER(reject) — reason "Price moved"
+            "8=FIX.4.4|9=1|35=S|49=LP_A|56=ME|34=1|52=20240101-09:00:00.000|117=Q1|55=EURUSD|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=ME|56=LP_A|34=2|52=20240101-09:00:00.001|11=C1|117=Q1|55=EURUSD|54=1|38=100|40=2|10=000|",
+            "8=FIX.4.4|9=1|35=8|49=LP_A|56=ME|34=3|52=20240101-09:00:00.002|11=C1|150=8|39=8|58=Price moved|10=000|",
+            "8=FIX.4.4|9=1|35=S|49=LP_A|56=ME|34=4|52=20240101-09:00:01.000|117=Q2|55=EURUSD|10=000|",
+            "8=FIX.4.4|9=1|35=D|49=ME|56=LP_A|34=5|52=20240101-09:00:01.001|11=C2|117=Q2|55=EURUSD|54=1|38=100|40=2|10=000|",
+            "8=FIX.4.4|9=1|35=8|49=LP_A|56=ME|34=6|52=20240101-09:00:01.002|11=C2|150=8|39=8|58=Price moved|10=000|",
+        );
+        let d = build_lp_drill(&p(raw), "LP_A");
+        assert_eq!(d.reject_reasons.len(), 1);
+        assert_eq!(d.reject_reasons[0].reason, "Price moved");
+        assert_eq!(d.reject_reasons[0].count, 2);
+    }
+
+    #[test]
+    fn drill_unknown_lp_is_empty() {
+        let raw = quote_nos_er("Q1", ("LP_A", "ME"), "C1",
+            "20240101-09:00:00.000", "20240101-09:00:00.001", "20240101-09:00:00.002",
+            "F", "EURUSD");
+        let d = build_lp_drill(&p(&raw), "DOES_NOT_EXIST");
+        assert_eq!(d.lp, "DOES_NOT_EXIST");
+        assert!(d.worst_holds.is_empty());
+        assert!(d.reject_reasons.is_empty());
     }
 
     #[test]

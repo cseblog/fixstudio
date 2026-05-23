@@ -137,6 +137,10 @@ pub struct LifecycleChain {
     pub quote_to_nos_us: Option<i64>,
     pub nos_to_ack_us: Option<i64>,
     pub nos_to_fill_us: Option<i64>,
+    /// Pure execution-phase latency: first ER (ack) to last ER (fill).
+    /// Excludes the ack round-trip so the operator can see venue trade
+    /// time independently of session-layer ack delays.
+    pub ack_to_fill_us: Option<i64>,
     pub total_us: i64,
     pub final_status: FinalStatus,
     pub has_rfq: bool,
@@ -222,6 +226,10 @@ fn make_chain(
         (Some(n), Some(e)) if e > n => Some(e - n),
         _ => None,
     };
+    let ack_to_fill_us = match (first_er_time, last_er_time) {
+        (Some(a), Some(e)) if e > a => Some(e - a),
+        _ => None,
+    };
 
     // Determine final status from last ExecReport
     let final_status = indices.iter().rev()
@@ -266,6 +274,7 @@ fn make_chain(
         quote_to_nos_us,
         nos_to_ack_us,
         nos_to_fill_us,
+        ack_to_fill_us,
         total_us: (last_time_us - first_time_us).max(0),
         final_status,
         has_rfq,
@@ -829,7 +838,7 @@ fn chains_to_csv(chains: &[LifecycleChain]) -> String {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum SortCol { Time, RfqQuote, QuoteNos, NosEr, NosErFill, Duration }
+enum SortCol { Time, RfqQuote, QuoteNos, NosEr, AckFill, NosErFill, Duration }
 
 #[component]
 pub fn lifecycle_panel(
@@ -1046,6 +1055,7 @@ pub fn lifecycle_panel(
             SortCol::RfqQuote  => ch.rfq_to_quote_us,
             SortCol::QuoteNos  => ch.quote_to_nos_us,
             SortCol::NosEr     => ch.nos_to_ack_us,
+            SortCol::AckFill   => ch.ack_to_fill_us,
             SortCol::NosErFill => ch.nos_to_fill_us,
             _                  => None,
         };
@@ -1060,6 +1070,7 @@ pub fn lifecycle_panel(
                     SortCol::RfqQuote  => cmp_opt(a.rfq_to_quote_us, b.rfq_to_quote_us),
                     SortCol::QuoteNos  => cmp_opt(a.quote_to_nos_us, b.quote_to_nos_us),
                     SortCol::NosEr     => cmp_opt(a.nos_to_ack_us,   b.nos_to_ack_us),
+                    SortCol::AckFill   => cmp_opt(a.ack_to_fill_us,  b.ack_to_fill_us),
                     SortCol::NosErFill => cmp_opt(a.nos_to_fill_us,  b.nos_to_fill_us),
                     SortCol::Duration  => a.total_us.cmp(&b.total_us),
                 };
@@ -1143,8 +1154,9 @@ pub fn lifecycle_panel(
         let phase = match col {
             SortCol::RfqQuote  => "RFQ→Quote",
             SortCol::QuoteNos  => "Quote→NOS",
-            SortCol::NosEr     => "NOS→ER",
-            SortCol::NosErFill => "ER→Fill",
+            SortCol::NosEr     => "NOS→Ack",
+            SortCol::AckFill   => "Ack→Fill",
+            SortCol::NosErFill => "NOS→Fill",
             _                  => "latency",
         };
         if hi >= i64::MAX / 2 {
@@ -1444,8 +1456,9 @@ pub fn lifecycle_panel(
                                     rsx! {
                                         {mk_hdr(SortCol::RfqQuote,  "RFQ→Quote")}
                                         {mk_hdr(SortCol::QuoteNos,  "Quote→NOS")}
-                                        {mk_hdr(SortCol::NosEr,     "NOS→ER")}
-                                        {mk_hdr(SortCol::NosErFill, "ER→ER Filled")}
+                                        {mk_hdr(SortCol::NosEr,     "NOS→Ack")}
+                                        {mk_hdr(SortCol::AckFill,   "Ack→Fill")}
+                                        {mk_hdr(SortCol::NosErFill, "NOS→Fill")}
                                         {mk_hdr(SortCol::Duration,  "Duration")}
                                     }
                                 }
@@ -1463,6 +1476,7 @@ pub fn lifecycle_panel(
                                 let rfq_q    = ch.rfq_to_quote_us.map(fmt_us).unwrap_or_else(|| "—".into());
                                 let qte_nos  = ch.quote_to_nos_us.map(fmt_us).unwrap_or_else(|| "—".into());
                                 let nos_ack  = ch.nos_to_ack_us.map(fmt_us).unwrap_or_else(|| "—".into());
+                                let ack_fill = ch.ack_to_fill_us.map(fmt_us).unwrap_or_else(|| "—".into());
                                 let nos_fill = ch.nos_to_fill_us.map(fmt_us).unwrap_or_else(|| "—".into());
                                 let dur      = if ch.total_us > 0 { fmt_us(ch.total_us) } else { "—".into() };
                                 let ack_cls  = match ch.nos_to_ack_us {
@@ -1494,6 +1508,7 @@ pub fn lifecycle_panel(
                                         span { class: "lc-time",       "{rfq_q}" }
                                         span { class: "lc-time",       "{qte_nos}" }
                                         span { class: "{ack_cls}",     "{nos_ack}" }
+                                        span { class: "lc-time",       "{ack_fill}" }
                                         span { class: "latency-cell-mean", "{nos_fill}" }
                                         span { class: "lc-time",       "{dur}" }
                                         span { class: "lc-count",      "{ch.msg_count}" }

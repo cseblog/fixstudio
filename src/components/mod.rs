@@ -2,6 +2,7 @@ pub mod command_palette;
 pub mod detail;
 pub mod hero;
 pub mod lifecycle;
+pub mod now_view;
 pub mod overview;
 pub mod tab_bar;
 pub mod tab_menu;
