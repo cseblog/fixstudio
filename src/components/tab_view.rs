@@ -109,6 +109,26 @@ pub fn tab_view(
     let sel        = *selected_idx.read();
     let detail_msg = sel.and_then(|i| messages.read().get(i).cloned());
 
+    // Anomaly state is hoisted to component scope so the summary chip can
+    // be inlined into the file toolbar (one row instead of two). Drawer
+    // open/closed survives only within a single tab mount, which matches
+    // the operator's mental model — a fresh load resets the drawer.
+    let anomalies = use_memo(move || crate::anomaly::scan(&messages.read()));
+    let mut anom_open = use_signal(|| false);
+    let (anom_crit, anom_warn) = {
+        use crate::anomaly::{Anomaly, Severity};
+        anomalies.read().iter().fold((0u32, 0u32), |(c, w), a| {
+            let sev = match a {
+                Anomaly::RejectBurst   { severity, .. } => severity,
+                Anomaly::SequenceGap   { severity, .. } => severity,
+                Anomaly::LatencySpike  { severity, .. } => severity,
+            };
+            if *sev == Severity::Critical { (c + 1, w) } else { (c, w + 1) }
+        })
+    };
+    let anom_has_any = anom_crit + anom_warn > 0;
+    let show_anom    = has_messages && !is_compare_pane && anom_has_any;
+
     rsx! {
         div { class: if is_compare_pane { "tab-pane tab-pane-compare" } else { "tab-pane" },
 
@@ -219,6 +239,30 @@ pub fn tab_view(
                                             }
                                         }
                                     }
+                                    if show_anom {
+                                        // Anomaly summary lives at the right
+                                        // of the toolbar — same row as Reload
+                                        // / Live tail so the operator isn't
+                                        // stacking three banner rows.
+                                        {
+                                            let is_open = *anom_open.read();
+                                            rsx! {
+                                                button {
+                                                    class: "anom-summary anom-summary-inline",
+                                                    onclick: move |_| { let v = *anom_open.peek(); anom_open.set(!v); },
+                                                    if anom_crit > 0 {
+                                                        span { class: "anom-pill anom-pill-crit", "⚠ {anom_crit} critical" }
+                                                    }
+                                                    if anom_warn > 0 {
+                                                        span { class: "anom-pill anom-pill-warn", "⚠ {anom_warn} warn" }
+                                                    }
+                                                    span { class: "anom-caret",
+                                                        if is_open { "▴" } else { "▾" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 if expanded && file_count > 0 {
                                     div { class: "fix-file-list",
@@ -247,52 +291,42 @@ pub fn tab_view(
                     }
                 }
 
-                // Anomaly banner — silent on healthy logs; loud on bursts.
-                // Sits above the view-tabs so it's the first thing the user
-                // sees on a new file load.
-                if has_messages && !is_compare_pane {
+                // Anomaly summary fallback: only when no file banner is on
+                // screen (paste mode). The file-loaded path injects the
+                // summary chip directly into the toolbar.
+                if show_anom && file_name.read().is_none() {
+                    {
+                        let is_open = *anom_open.read();
+                        rsx! {
+                            div { class: "anomaly-banner",
+                                button {
+                                    class: "anom-summary",
+                                    onclick: move |_| { let v = *anom_open.peek(); anom_open.set(!v); },
+                                    if anom_crit > 0 {
+                                        span { class: "anom-pill anom-pill-crit", "⚠ {anom_crit} critical" }
+                                    }
+                                    if anom_warn > 0 {
+                                        span { class: "anom-pill anom-pill-warn", "⚠ {anom_warn} warn" }
+                                    }
+                                    span { class: "anom-caret",
+                                        if is_open { "▴ Hide" } else { "▾ Show" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Anomaly drawer — separate from the summary chip so the
+                // chip can live in the toolbar and the drawer can expand
+                // below as its own block.
+                if show_anom && *anom_open.read() {
                     {
                         use crate::anomaly::{Anomaly, Severity};
-                        let anomalies = use_memo(move || {
-                            crate::anomaly::scan(&messages.read())
-                        });
-                        // Drawer open/closed is intentionally local: a fresh
-                        // load should default to closed (summary only), and
-                        // we don't need cross-tab persistence for this.
-                        let mut open = use_signal(|| false);
                         let list = anomalies.read().clone();
-                        if !list.is_empty() {
-                            // Tally severity totals for the summary chip.
-                            let (crit, warn) = list.iter().fold((0u32, 0u32), |(c, w), a| {
-                                let sev = match a {
-                                    Anomaly::RejectBurst   { severity, .. } => severity,
-                                    Anomaly::SequenceGap   { severity, .. } => severity,
-                                    Anomaly::LatencySpike  { severity, .. } => severity,
-                                };
-                                if *sev == Severity::Critical { (c + 1, w) } else { (c, w + 1) }
-                            });
-                            let is_open = *open.read();
-                            rsx! {
-                                div { class: "anomaly-banner",
-                                    button {
-                                        class: "anom-summary",
-                                        onclick: move |_| { let v = *open.peek(); open.set(!v); },
-                                        if crit > 0 {
-                                            span { class: "anom-pill anom-pill-crit",
-                                                "⚠ {crit} critical"
-                                            }
-                                        }
-                                        if warn > 0 {
-                                            span { class: "anom-pill anom-pill-warn",
-                                                "⚠ {warn} warn"
-                                            }
-                                        }
-                                        span { class: "anom-caret",
-                                            if is_open { "▴ Hide" } else { "▾ Show" }
-                                        }
-                                    }
-                                    if is_open {
-                                        div { class: "anom-drawer",
+                        let mut open = anom_open;
+                        rsx! {
+                            div { class: "anom-drawer anom-drawer-standalone",
                                             {
                                                 // Bucket anomalies by kind so the drawer can group them.
                                                 let bursts:   Vec<_> = list.iter().filter(|a| matches!(a, Anomaly::RejectBurst{..})).collect();
@@ -400,14 +434,9 @@ pub fn tab_view(
                                                 }
                                             }
                                         }
-                                    }
-                                }
                             }
-                        } else {
-                            rsx! {}
                         }
                     }
-                }
 
                 if (has_messages || in_validator) && !hide_view_tabs {
                     div { class: "panel-tabs",

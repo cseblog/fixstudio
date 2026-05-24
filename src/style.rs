@@ -526,6 +526,25 @@ html, body {
 }
 .anom-summary:hover { background: #f3ecd9; }
 
+/* Inline variant: lives inside the file toolbar, pushed to the right so
+   Reload / Live tail / Follow stay anchored left. No full-width bg. */
+.anom-summary-inline {
+    width: auto;
+    padding: 3px 8px;
+    margin-left: auto;
+    background: transparent;
+    border-radius: 10px;
+    gap: 6px;
+}
+.anom-summary-inline:hover { background: rgba(28,26,23,0.04); }
+
+/* Standalone drawer (when summary lives in toolbar). Same look as the
+   inline drawer but stretches full width below the toolbar row. */
+.anom-drawer-standalone {
+    margin: 0 0 8px;
+    border-radius: 4px;
+}
+
 .anom-pill {
     display: inline-flex;
     align-items: center;
