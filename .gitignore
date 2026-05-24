@@ -1,7 +1,7 @@
 # ── Build artifacts ───────────────────────────────────────────────
 target/
 rust_out/
-
+.DS_Store
 # ── Shipping binaries — distribute via GitHub Releases, not in tree
 
 *.pkg
