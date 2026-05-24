@@ -96,7 +96,134 @@ fn write_msg(out: &mut BufWriter<File>, fields: &[(u16, &str)]) -> std::io::Resu
     out.write_all(buf.as_bytes())
 }
 
+/// Live-tail simulator: opens the same OUT_FILE in append mode and
+/// writes one realistic Quote→NOS→ER chain every ~200ms forever, with
+/// occasional bursts (random reject) so the anomaly banner lights up.
+/// Run alongside the app: load the file once, toggle Live tail + Follow,
+/// watch messages stream in.
+fn run_live_mode() -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    fs::create_dir_all(OUT_DIR)?;
+    let path = Path::new(OUT_DIR).join(OUT_FILE);
+    // Truncate so a fresh run starts with a clean baseline.
+    let f = File::create(&path)?;
+    let mut out = BufWriter::with_capacity(8 * 1024, f);
+
+    let mut rng = Rng::new(0xDEADBEEF);
+    let mut seq_per_lp: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+    for lp in LPS { seq_per_lp.insert(lp.name, 1); }
+
+    // Logons up front so the heartbeat status bar populates immediately.
+    for lp in LPS {
+        let seq = seq_per_lp.get_mut(lp.name).unwrap();
+        write_msg(&mut out, &[
+            (8, "FIX.4.4"), (9, "1"), (35, "A"),
+            (49, TAKER), (56, lp.name),
+            (34, &seq.to_string()),
+            (52, &fmt_wall_clock()),
+            (98, "0"), (108, "30"),
+            (10, "000"),
+        ])?;
+        *seq += 1;
+    }
+    out.flush()?;
+
+    println!("✓ Live mode — appending to {} every 200ms", path.display());
+    println!("  In the app: File → Load {} → Live tail on → Follow on", path.display());
+    println!("  Ctrl-C to stop.");
+
+    let mut clord_seq: u32 = 1;
+    let mut quote_seq: u32 = 1;
+    let mut tick: u64 = 0;
+    let start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    loop {
+        let lp  = rng.pick(LPS);
+        let sym = rng.pick(SYMBOLS);
+        let q_id  = format!("QT{:08}", quote_seq); quote_seq += 1;
+        let cl_id = format!("CO{:08}", clord_seq); clord_seq += 1;
+
+        let ts = fmt_wall_clock();
+
+        let qseq = seq_per_lp.get_mut(lp.name).unwrap();
+        write_msg(&mut out, &[
+            (8, "FIX.4.4"), (9, "1"), (35, "S"),
+            (49, lp.name), (56, TAKER),
+            (34, &qseq.to_string()), (52, &ts),
+            (117, &q_id), (55, sym),
+            (10, "000"),
+        ])?;
+        *qseq += 1;
+        let nseq = seq_per_lp.get_mut(lp.name).unwrap();
+        write_msg(&mut out, &[
+            (8, "FIX.4.4"), (9, "1"), (35, "D"),
+            (49, TAKER), (56, lp.name),
+            (34, &nseq.to_string()), (52, &ts),
+            (11, &cl_id), (117, &q_id),
+            (55, sym), (54, "1"), (38, "1000000"), (40, "D"),
+            (10, "000"),
+        ])?;
+        *nseq += 1;
+        let r = rng.pct();
+        let (exec_type, ord_status) = if r < lp.reject_rate { ("8", "8") }
+                                      else if r < lp.reject_rate + lp.fill_rate { ("F", "2") }
+                                      else { ("4", "4") };
+        let eseq = seq_per_lp.get_mut(lp.name).unwrap();
+        write_msg(&mut out, &[
+            (8, "FIX.4.4"), (9, "1"), (35, "8"),
+            (49, lp.name), (56, TAKER),
+            (34, &eseq.to_string()), (52, &ts),
+            (11, &cl_id), (150, exec_type), (39, ord_status),
+            (55, sym),
+            (10, "000"),
+        ])?;
+        *eseq += 1;
+
+        // Every ~150 ticks inject a 10-reject burst so the anomaly banner
+        // fires while you watch.
+        if tick > 0 && tick % 150 == 0 {
+            for i in 0..10u32 {
+                write_msg(&mut out, &[
+                    (8, "FIX.4.4"), (9, "1"), (35, "3"),
+                    (49, "BURST_LP"), (56, TAKER),
+                    (34, &(i + 1).to_string()),
+                    (52, &fmt_wall_clock()),
+                    (45, &(2000 + i).to_string()),
+                    (58, "Throttle"),
+                    (10, "000"),
+                ])?;
+            }
+        }
+
+        out.flush()?;
+        let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - start;
+        if tick % 25 == 0 {
+            println!("  tick {tick} · t+{elapsed}s · {} msgs written", clord_seq * 3);
+        }
+        tick += 1;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// Wall-clock timestamp in FIX SendingTime form.
+fn fmt_wall_clock() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let total_s = now.as_secs();
+    let ms      = now.subsec_millis();
+    // Render UTC. Approximate calendar via libc-free integer math.
+    // Good enough for a simulator; FIX parsers don't care about date drift.
+    let secs_in_day = total_s % 86_400;
+    let h = secs_in_day / 3600;
+    let m = (secs_in_day % 3600) / 60;
+    let s = secs_in_day % 60;
+    format!("20260524-{h:02}:{m:02}:{s:02}.{ms:03}")
+}
+
 fn main() -> std::io::Result<()> {
+    if std::env::args().any(|a| a == "--live") {
+        return run_live_mode();
+    }
     fs::create_dir_all(OUT_DIR)?;
     let path = Path::new(OUT_DIR).join(OUT_FILE);
     let f = File::create(&path)?;
