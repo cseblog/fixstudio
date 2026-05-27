@@ -748,7 +748,7 @@ fn build_timeline_lines(nodes: &[FlowNode]) -> Vec<TLLine> {
 
     // ── Line 0: RFQ → first Quote → NewOrder → other → first ER ──────────
     let mut line0: Vec<TLSeg> = Vec::new();
-    let mut push = |segs: &mut Vec<TLSeg>, n: &FlowNode| {
+    let push = |segs: &mut Vec<TLSeg>, n: &FlowNode| {
         let first = segs.is_empty();
         segs.push(TLSeg {
             delta_us: n.delta_us, label: n.label.clone(),

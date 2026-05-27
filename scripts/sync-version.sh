@@ -28,8 +28,8 @@ echo -n "$VERSION" > latest-version
 # ── index.html (download URLs + JSON-LD softwareVersion) ───────────────────
 # Use perl for portable in-place edit + ERE without macOS-vs-GNU sed quirks.
 perl -i -pe "s|releases/download/v[0-9]+\.[0-9]+\.[0-9]+/|releases/download/v$VERSION/|g" \
-    index.html
+    web/index.html
 perl -i -pe "s|\"softwareVersion\": \"[^\"]*\"|\"softwareVersion\": \"$VERSION\"|g" \
-    index.html
+    web/index.html
 
 echo "✓ Synced: latest-version + index.html"

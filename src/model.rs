@@ -29,6 +29,7 @@ impl FixMessage {
     /// Append `value` bytes to the arena and push a new [`FixField`].
     ///
     /// Use this wherever `fields.push(FixField { tag, value: … })` was written.
+    #[allow(dead_code)]
     pub fn push_field(&mut self, tag: u16, value: &str) {
         let value_start = self.arena.len() as u32;
         self.arena.extend_from_slice(value.as_bytes());
@@ -38,6 +39,7 @@ impl FixMessage {
 
     /// Replace the value of the first field with `tag` by appending `value` to
     /// the arena. Old arena bytes are not reclaimed (arena is append-only).
+    #[allow(dead_code)]
     pub fn set_field_value(&mut self, tag: u16, value: &str) {
         if let Some(idx) = self.fields.iter().position(|f| f.tag == tag) {
             let value_start = self.arena.len() as u32;

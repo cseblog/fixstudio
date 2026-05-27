@@ -205,6 +205,7 @@ pub fn message_key(m: &FixMessage) -> Option<String> {
 /// - `compare != Some(active)` (never compare a tab with itself)
 /// - `active` is always one of the remaining ids
 /// - `compare`, when `Some`, is always one of the remaining ids
+#[allow(dead_code)]
 pub fn close_tab_ids(
     ids:     &[u64],
     active:  u64,
@@ -235,6 +236,7 @@ pub fn close_tab_ids(
 /// (even the current compare partner) clears compare and promotes that tab to
 /// active. Use this for every active-switch entry point — tab click, ⌘1-9,
 /// ⌘Tab cycle — so the behaviour stays centralised.
+#[allow(dead_code)]
 pub fn switch_active(
     active:     u64,
     compare:    Option<u64>,
