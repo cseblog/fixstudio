@@ -29,6 +29,7 @@ pub fn load_from(path: &Path) -> Vec<RecentEntry> {
 /// Push a new entry at the front of the recents list stored at `path`,
 /// deduping any existing entry with the same `path` field and capping the
 /// list at `MAX_ENTRIES`. Returns the updated list.
+#[allow(dead_code)]
 pub fn push_to(path: &Path, file_path: &str, file_name: &str) -> Vec<RecentEntry> {
     let mut list = load_from(path);
     list.retain(|e| e.path != file_path);

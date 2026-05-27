@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus::html::input_data::MouseButton as DxMouseButton;
 
+use crate::anomaly::{Anomaly, Severity};
 use crate::tab::Tab;
 
 #[derive(Clone, Copy)]
@@ -24,6 +25,27 @@ pub fn tab_bar(
     let active   = *active_id.read();
     let compare  = *compare_id.read();
     let tab_list = tabs.read().clone();
+
+    // Run the anomaly scanner once per render across every tab so the
+    // strip can paint a Critical/Warn badge on tabs the operator isn't
+    // currently looking at. Single use_memo here — calling use_memo
+    // inside the per-tab `for` would break hook ordering.
+    let badge_counts = use_memo(move || {
+        tabs.read().iter().map(|t| {
+            let msgs = t.messages.read();
+            let mut crit = 0u32; let mut warn = 0u32;
+            for a in crate::anomaly::scan(&msgs) {
+                let sev = match &a {
+                    Anomaly::RejectBurst  { severity, .. } => severity,
+                    Anomaly::SequenceGap  { severity, .. } => severity,
+                    Anomaly::LatencySpike { severity, .. } => severity,
+                };
+                if *sev == Severity::Critical { crit += 1; } else { warn += 1; }
+            }
+            (t.id, crit, warn)
+        }).collect::<Vec<_>>()
+    });
+    let badges_snapshot = badge_counts.read().clone();
 
     rsx! {
         div { class: "tab-strip",
@@ -94,6 +116,33 @@ pub fn tab_bar(
                                 }
                             }
                             span { class: "tab-chip-label", title: "{label}", "{label}" }
+                            {
+                                // Inactive-tab anomaly badge. Active tab already
+                                // shows the summary banner inside, so badge would
+                                // be visual duplication.
+                                let (crit, warn) = badges_snapshot.iter()
+                                    .find(|(tid, _, _)| *tid == id)
+                                    .map(|(_, c, w)| (*c, *w))
+                                    .unwrap_or((0, 0));
+                                if !is_active && (crit > 0 || warn > 0) {
+                                    let (cls, total, kind) = if crit > 0 {
+                                        ("tab-chip-badge tab-chip-badge-crit", crit + warn, "critical")
+                                    } else {
+                                        ("tab-chip-badge tab-chip-badge-warn", warn, "warning")
+                                    };
+                                    let noun = if total == 1 { "anomaly" } else { "anomalies" };
+                                    let tip  = format!("{total} {kind} {noun} on this tab");
+                                    rsx! {
+                                        span {
+                                            class: "{cls}",
+                                            title: "{tip}",
+                                            "{total}"
+                                        }
+                                    }
+                                } else {
+                                    rsx! {}
+                                }
+                            }
                             if tabs.read().len() > 1 {
                                 button {
                                     class: "tab-chip-close",

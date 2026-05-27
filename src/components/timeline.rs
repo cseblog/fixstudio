@@ -310,6 +310,14 @@ pub fn timeline_panel(
     /// clicks the ↗ action on an ID line. Host wires it to switch view
     /// mode to Lifecycle and pre-fill the chain filter.
     on_jump_to_chain: EventHandler<String>,
+    /// Indices of messages that failed validation. Empty set means
+    /// either no errors OR the host capped validation for large logs.
+    #[props(default)]
+    invalid_indices: Option<ReadSignal<HashSet<usize>>>,
+    /// Fires with a message index when the user clicks the validator
+    /// gutter on an invalid row. Host wires it to switch to Validator.
+    #[props(default)]
+    on_jump_to_validator: EventHandler<usize>,
 ) -> Element {
 
     // Installs a scroll listener on #timeline-scroll once on mount.
@@ -588,6 +596,10 @@ pub fn timeline_panel(
                                             else                       { cls.push_str(" row-diverge"); }
                                         }
                                     }
+                                    let row_invalid = invalid_indices.as_ref()
+                                        .map(|s| s.read().contains(&idx))
+                                        .unwrap_or(false);
+                                    if row_invalid { cls.push_str(" row-invalid"); }
                                     rsx! {
                                         div {
                                             class: "{cls}",
@@ -706,6 +718,18 @@ pub fn timeline_panel(
                                                 }
                                             }
                                             span { class: "cell-detail", "{build_detail_text(m)}" }
+                                            if row_invalid {
+                                                button {
+                                                    class: "row-invalid-mark",
+                                                    title: "Validation errors — click to open in Validator",
+                                                    onclick: move |e: MouseEvent| {
+                                                        e.stop_propagation();
+                                                        selected_idx.set(Some(idx));
+                                                        on_jump_to_validator.call(idx);
+                                                    },
+                                                    "⚠"
+                                                }
+                                            }
                                         }
                                     }
                                 }

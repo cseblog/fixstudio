@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "AiFIXParser"
-version = "3.0.4"
+version = "3.3.0"
 dependencies = [
  "ahash",
  "compact_str",

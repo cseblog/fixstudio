@@ -29,6 +29,7 @@ pub fn tab_view(
     on_load_file:    EventHandler<()>,
     on_load_folder:  EventHandler<()>,
     on_load_sample:  EventHandler<String>,
+    on_reload:       EventHandler<()>,
     on_open_recent:  EventHandler<String>,
     on_parse:        EventHandler<()>,
 ) -> Element {
@@ -71,6 +72,9 @@ pub fn tab_view(
         lifecycle_computing,
         lifecycle_cancel,
         lifecycle_filter_id,
+        file_path,
+        mut file_auto_watch,
+        mut file_follow_tail,
         ..
     } = tab;
 
@@ -92,9 +96,11 @@ pub fn tab_view(
         }).into()
     });
 
+    let in_now       = *view_mode.read() == ViewMode::Now;
     let in_lifecycle = *view_mode.read() == ViewMode::Lifecycle;
     let in_overview  = *view_mode.read() == ViewMode::Overview;
     let in_validator = *view_mode.read() == ViewMode::Validator;
+    let in_timeline  = *view_mode.read() == ViewMode::Timeline;
     let has_messages = !messages.read().is_empty();
     let show_hero    = messages.read().is_empty()
         && file_name.read().is_none()
@@ -102,6 +108,26 @@ pub fn tab_view(
 
     let sel        = *selected_idx.read();
     let detail_msg = sel.and_then(|i| messages.read().get(i).cloned());
+
+    // Anomaly state is hoisted to component scope so the summary chip can
+    // be inlined into the file toolbar (one row instead of two). Drawer
+    // open/closed survives only within a single tab mount, which matches
+    // the operator's mental model — a fresh load resets the drawer.
+    let anomalies = use_memo(move || crate::anomaly::scan(&messages.read()));
+    let mut anom_open = use_signal(|| false);
+    let (anom_crit, anom_warn) = {
+        use crate::anomaly::{Anomaly, Severity};
+        anomalies.read().iter().fold((0u32, 0u32), |(c, w), a| {
+            let sev = match a {
+                Anomaly::RejectBurst   { severity, .. } => severity,
+                Anomaly::SequenceGap   { severity, .. } => severity,
+                Anomaly::LatencySpike  { severity, .. } => severity,
+            };
+            if *sev == Severity::Critical { (c + 1, w) } else { (c, w + 1) }
+        })
+    };
+    let anom_has_any = anom_crit + anom_warn > 0;
+    let show_anom    = has_messages && !is_compare_pane && anom_has_any;
 
     rsx! {
         div { class: if is_compare_pane { "tab-pane tab-pane-compare" } else { "tab-pane" },
@@ -161,25 +187,84 @@ pub fn tab_view(
                         let files      = loaded_files.read();
                         let file_count = files.len();
                         let expanded   = *show_file_list.read();
-                        // Only show banner if we have multiple files (folder load) —
-                        // single-file name is already in the tab chip.
+                        let has_path   = file_path.read().is_some();
+                        let auto_on    = *file_auto_watch.read();
+                        let follow_on  = *file_follow_tail.read();
                         rsx! {
-                            if file_count > 0 {
+                            // Single-file or folder load: a thin banner with
+                            // Reload + Auto-watch controls so the user can
+                            // pull in on-disk changes without re-picking
+                            // through the file dialog.
+                            if has_path || file_count > 0 {
                                 div { class: "fix-file-banner",
-                                    button {
-                                        class: "fix-file-toggle",
-                                        onclick: move |_| {
-                                            let cur = *show_file_list.read();
-                                            show_file_list.set(!cur);
-                                        },
-                                        if expanded {
-                                            "▾ {file_count} files"
-                                        } else {
-                                            "▸ {file_count} files"
+                                    if has_path {
+                                        button {
+                                            class: "fix-file-toggle",
+                                            title: "Re-read this file from disk and re-parse",
+                                            onclick: move |_| on_reload.call(()),
+                                            "↻ Reload"
+                                        }
+                                        button {
+                                            class: if auto_on { "fix-file-toggle fix-file-toggle-on" } else { "fix-file-toggle" },
+                                            title: "Watch this file and append new bytes when it changes (polls every 1.5s)",
+                                            onclick: move |_| {
+                                                let v = !*file_auto_watch.peek();
+                                                file_auto_watch.set(v);
+                                            },
+                                            if auto_on { "● Live tail on" } else { "○ Live tail" }
+                                        }
+                                        if auto_on {
+                                            button {
+                                                class: if follow_on { "fix-file-toggle fix-file-toggle-on" } else { "fix-file-toggle" },
+                                                title: "Auto-scroll Timeline to the bottom on every new message",
+                                                onclick: move |_| {
+                                                    let v = !*file_follow_tail.peek();
+                                                    file_follow_tail.set(v);
+                                                },
+                                                if follow_on { "↓ Follow" } else { "↓ Follow off" }
+                                            }
+                                        }
+                                    }
+                                    if file_count > 0 {
+                                        button {
+                                            class: "fix-file-toggle",
+                                            onclick: move |_| {
+                                                let cur = *show_file_list.read();
+                                                show_file_list.set(!cur);
+                                            },
+                                            if expanded {
+                                                "▾ {file_count} files"
+                                            } else {
+                                                "▸ {file_count} files"
+                                            }
+                                        }
+                                    }
+                                    if show_anom {
+                                        // Anomaly summary lives at the right
+                                        // of the toolbar — same row as Reload
+                                        // / Live tail so the operator isn't
+                                        // stacking three banner rows.
+                                        {
+                                            let is_open = *anom_open.read();
+                                            rsx! {
+                                                button {
+                                                    class: "anom-summary anom-summary-inline",
+                                                    onclick: move |_| { let v = *anom_open.peek(); anom_open.set(!v); },
+                                                    if anom_crit > 0 {
+                                                        span { class: "anom-pill anom-pill-crit", "⚠ {anom_crit} critical" }
+                                                    }
+                                                    if anom_warn > 0 {
+                                                        span { class: "anom-pill anom-pill-warn", "⚠ {anom_warn} warn" }
+                                                    }
+                                                    span { class: "anom-caret",
+                                                        if is_open { "▴" } else { "▾" }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                                if expanded {
+                                if expanded && file_count > 0 {
                                     div { class: "fix-file-list",
                                         for f in files.iter() {
                                             div { class: "fix-file-list-item", "{f}" }
@@ -206,12 +291,162 @@ pub fn tab_view(
                     }
                 }
 
+                // Anomaly summary fallback: only when no file banner is on
+                // screen (paste mode). The file-loaded path injects the
+                // summary chip directly into the toolbar.
+                if show_anom && file_name.read().is_none() {
+                    {
+                        let is_open = *anom_open.read();
+                        rsx! {
+                            div { class: "anomaly-banner",
+                                button {
+                                    class: "anom-summary",
+                                    onclick: move |_| { let v = *anom_open.peek(); anom_open.set(!v); },
+                                    if anom_crit > 0 {
+                                        span { class: "anom-pill anom-pill-crit", "⚠ {anom_crit} critical" }
+                                    }
+                                    if anom_warn > 0 {
+                                        span { class: "anom-pill anom-pill-warn", "⚠ {anom_warn} warn" }
+                                    }
+                                    span { class: "anom-caret",
+                                        if is_open { "▴ Hide" } else { "▾ Show" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Anomaly drawer — separate from the summary chip so the
+                // chip can live in the toolbar and the drawer can expand
+                // below as its own block.
+                if show_anom && *anom_open.read() {
+                    {
+                        use crate::anomaly::{Anomaly, Severity};
+                        let list = anomalies.read().clone();
+                        let mut open = anom_open;
+                        rsx! {
+                            div { class: "anom-drawer anom-drawer-standalone",
+                                            {
+                                                // Bucket anomalies by kind so the drawer can group them.
+                                                let bursts:   Vec<_> = list.iter().filter(|a| matches!(a, Anomaly::RejectBurst{..})).collect();
+                                                let gaps:     Vec<_> = list.iter().filter(|a| matches!(a, Anomaly::SequenceGap{..})).collect();
+                                                let latency:  Vec<_> = list.iter().filter(|a| matches!(a, Anomaly::LatencySpike{..})).collect();
+                                                rsx! {
+                                                    if !bursts.is_empty() {
+                                                        section { class: "anom-group",
+                                                            h4 { class: "anom-group-title",
+                                                                span { class: "anom-group-icon", "⚠" }
+                                                                "Reject bursts ({bursts.len()})"
+                                                            }
+                                                            for a in bursts.iter() {
+                                                                {
+                                                                    let (_, label, sev) = render_anomaly(a);
+                                                                    let row_cls = if sev == "crit" { "anom-row anom-row-crit" } else { "anom-row anom-row-warn" };
+                                                                    let mut vm = view_mode;
+                                                                    rsx! {
+                                                                        button {
+                                                                            class: "{row_cls}",
+                                                                            onclick: move |_| {
+                                                                                // Rejects are easiest to inspect in the validator:
+                                                                                // it already has the per-message reason text.
+                                                                                vm.set(ViewMode::Validator);
+                                                                                open.set(false);
+                                                                            },
+                                                                            span { class: "anom-row-label", "{label}" }
+                                                                            span { class: "anom-row-cta", "Open Validator →" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if !gaps.is_empty() {
+                                                        section { class: "anom-group",
+                                                            h4 { class: "anom-group-title",
+                                                                span { class: "anom-group-icon", "↯" }
+                                                                "Sequence gaps ({gaps.len()})"
+                                                            }
+                                                            for a in gaps.iter() {
+                                                                {
+                                                                    let (sender, target, occurrences, total_skipped, sev) = match a {
+                                                                        Anomaly::SequenceGap { sender, target, occurrences, total_skipped, severity, .. } =>
+                                                                            (sender.clone(), target.clone(), *occurrences, *total_skipped,
+                                                                             if *severity == Severity::Critical { "crit" } else { "warn" }),
+                                                                        _ => unreachable!(),
+                                                                    };
+                                                                    let row_cls = if sev == "crit" { "anom-row anom-row-crit" } else { "anom-row anom-row-warn" };
+                                                                    let mut fs = f_sender;
+                                                                    let mut ft = f_target;
+                                                                    let mut vm = view_mode;
+                                                                    let mut tfo = timeline_filters_open;
+                                                                    let sender_for_click = sender.clone();
+                                                                    let target_for_click = target.clone();
+                                                                    rsx! {
+                                                                        button {
+                                                                            class: "{row_cls}",
+                                                                            onclick: move |_| {
+                                                                                fs.set(sender_for_click.clone());
+                                                                                ft.set(target_for_click.clone());
+                                                                                tfo.set(true);
+                                                                                vm.set(ViewMode::Timeline);
+                                                                                open.set(false);
+                                                                            },
+                                                                            span { class: "anom-row-label",
+                                                                                strong { "{sender}→{target}" }
+                                                                                span { class: "anom-row-meta",
+                                                                                    " · {occurrences} event{plural(occurrences as u64)} · {total_skipped} skipped"
+                                                                                }
+                                                                            }
+                                                                            span { class: "anom-row-cta", "Filter Timeline →" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if !latency.is_empty() {
+                                                        section { class: "anom-group",
+                                                            h4 { class: "anom-group-title",
+                                                                span { class: "anom-group-icon", "🐌" }
+                                                                "Latency spikes ({latency.len()})"
+                                                            }
+                                                            for a in latency.iter() {
+                                                                {
+                                                                    let (_, label, sev) = render_anomaly(a);
+                                                                    let row_cls = if sev == "crit" { "anom-row anom-row-crit" } else { "anom-row anom-row-warn" };
+                                                                    let mut vm = view_mode;
+                                                                    rsx! {
+                                                                        button {
+                                                                            class: "{row_cls}",
+                                                                            onclick: move |_| {
+                                                                                vm.set(ViewMode::Lifecycle);
+                                                                                open.set(false);
+                                                                            },
+                                                                            span { class: "anom-row-label", "{label}" }
+                                                                            span { class: "anom-row-cta", "Open Latency →" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                            }
+                        }
+                    }
+
                 if (has_messages || in_validator) && !hide_view_tabs {
                     div { class: "panel-tabs",
                         button {
-                            class: if !in_lifecycle && !in_overview && !in_validator {
-                                "panel-tab panel-tab-active"
-                            } else { "panel-tab" },
+                            class: if in_now { "panel-tab panel-tab-active" } else { "panel-tab" },
+                            onclick: move |_| view_mode.set(ViewMode::Now),
+                            "Now"
+                        }
+                        button {
+                            class: if in_timeline { "panel-tab panel-tab-active" } else { "panel-tab" },
                             onclick: move |_| view_mode.set(ViewMode::Timeline),
                             "Timeline"
                         }
@@ -233,7 +468,9 @@ pub fn tab_view(
                     }
                 }
 
-                if in_validator {
+                if in_now {
+                    crate::components::now_view::now_panel { messages: messages }
+                } else if in_validator {
                     validator_panel {
                         messages: messages,
                         tab_kind: validator_tab_kind,
@@ -266,6 +503,22 @@ pub fn tab_view(
                         let mut cls = String::from("panels");
                         if !show_dt { cls.push_str(" panels-no-detail"); }
                         if !show_tl { cls.push_str(" panels-no-timeline"); }
+
+                        // Validator gutter: compute invalid-row index set so the
+                        // Timeline can paint a ⚠ marker. Synchronous so it's safe
+                        // to skip for huge logs (would block render); the panel
+                        // remains usable without it.
+                        const GUTTER_CAP: usize = 50_000;
+                        let invalid_set: ReadSignal<HashSet<usize>> = use_memo(move || {
+                            let msgs = messages.read();
+                            if msgs.len() > GUTTER_CAP { return HashSet::new(); }
+                            let mut set: HashSet<usize> = HashSet::new();
+                            for (i, m) in msgs.iter().enumerate() {
+                                let rep = crate::validator::validate_fields(m);
+                                if rep.error_count() > 0 { set.insert(i); }
+                            }
+                            set
+                        }).into();
                         rsx! {
                             if !show_tl && !show_dt {
                                 div { class: "empty-state empty-state-ghost",
@@ -289,12 +542,19 @@ pub fn tab_view(
                                             display_limit: display_limit,
                                             filters_open: timeline_filters_open,
                                             compare_keys: compare_keys,
+                                            invalid_indices: invalid_set,
                                             on_jump_to_chain: move |id: String| {
                                                 // Pre-fill the latency view's chain filter, then
                                                 // switch this tab's view_mode so the user lands
                                                 // directly on the matching chain.
                                                 lifecycle_filter_id.clone().set(id);
                                                 view_mode.set(ViewMode::Lifecycle);
+                                            },
+                                            on_jump_to_validator: move |_idx: usize| {
+                                                // For now just switch tabs to validator's
+                                                // single-message debugger. The validator
+                                                // panel already reads `selected_idx`.
+                                                view_mode.set(ViewMode::Validator);
                                             },
                                         }
                                     }
@@ -315,5 +575,41 @@ pub fn tab_view(
                 }
             }
         }
+    }
+}
+
+fn plural(n: u64) -> &'static str { if n == 1 { "" } else { "s" } }
+
+/// Render one anomaly as (icon, plain-text label, severity-class).
+/// Kept out of rsx! so the banner template stays scannable.
+fn render_anomaly(a: &crate::anomaly::Anomaly) -> (&'static str, String, &'static str) {
+    use crate::anomaly::{Anomaly, Severity};
+    let sev_str = |s: &Severity| if *s == Severity::Critical { "crit" } else { "warn" };
+    match a {
+        Anomaly::RejectBurst { count, window_secs, severity } => (
+            "⚠",
+            format!("Reject burst — {count} rejects in {window_secs}s"),
+            sev_str(severity),
+        ),
+        Anomaly::SequenceGap { sender, target, occurrences, total_skipped, severity, .. } => {
+            // Singular when there's exactly one gap event, plural otherwise —
+            // "1 gaps" reads wrong on small fixtures.
+            let label = if *occurrences == 1 {
+                format!("Seq gap — {sender}→{target}: {total_skipped} skipped")
+            } else {
+                format!("Seq gap — {sender}→{target}: {occurrences} events, {total_skipped} skipped")
+            };
+            ("↯", label, sev_str(severity))
+        }
+        Anomaly::LatencySpike { recent_p50_us, baseline_p50_us, multiple, severity } => (
+            "🐌",
+            format!(
+                "Latency spike — recent p50 {}ms vs baseline {}ms ({:.1}×)",
+                recent_p50_us   / 1_000,
+                baseline_p50_us / 1_000,
+                multiple,
+            ),
+            sev_str(severity),
+        ),
     }
 }

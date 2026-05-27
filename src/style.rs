@@ -172,6 +172,18 @@ html, body {
 .file-menu-item:hover { background: #ede4cf; }
 .file-menu-item-sm { font-size: 12px; padding: 5px 14px; color: #3a342c; }
 .file-menu-item-disabled { color: #8a8071; cursor: default; pointer-events: none; }
+.file-menu-item-ws { display: flex; align-items: center; justify-content: space-between; }
+.file-menu-ws-del {
+    background: transparent;
+    border: none;
+    color: #8a8071;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 4px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+.file-menu-ws-del:hover { background: rgba(178,34,34,0.12); color: #b22222; }
 .file-menu-item-indent { padding-left: 28px; font-size: 12px; color: #2f6b2f; }
 .file-menu-item-sub { color: #6b6356; }
 .file-menu-hint { color: #8a8071; font-size: 11px; }
@@ -257,6 +269,32 @@ html, body {
     line-height: 1;
 }
 .tab-chip-close:hover { background: #c9bfa9; color: #1c1a17; }
+
+/* Inactive-tab anomaly badge. Drawn between the label and the close
+   button so it's clearly part of the chip, not floating. */
+.tab-chip-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
+    margin-left: 4px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+.tab-chip-badge-crit {
+    background: #b22222;
+    color: #fff;
+    box-shadow: 0 0 4px rgba(178,34,34,0.5);
+}
+.tab-chip-badge-warn {
+    background: #b78427;
+    color: #fff;
+}
 
 .tab-add {
     background: transparent;
@@ -433,6 +471,162 @@ html, body {
     white-space: nowrap;
 }
 .fix-file-toggle:hover { border-color: #8a8071; color: #1c1a17; }
+.fix-file-toggle-on {
+    background: rgba(47,107,47,0.10);
+    border-color: #2f6b2f;
+    color: #2f6b2f;
+    position: relative;
+}
+.fix-file-toggle-on:hover { color: #1e4a1e; border-color: #1e4a1e; }
+/* Pulsing dot replaces the ○/● glyph state — visual proof to the user
+   that the watcher is alive and polling the file every 1.5s. */
+.fix-file-toggle-on::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #2f6b2f;
+    margin-right: 6px;
+    vertical-align: middle;
+    animation: live-pulse 1.5s ease-in-out infinite;
+}
+@keyframes live-pulse {
+    0%, 100% { opacity: 1.0;  transform: scale(1); }
+    50%      { opacity: 0.35; transform: scale(1.3); }
+}
+
+/* ── Anomaly banner ────────────────────────────────────────────────────
+   Sits above the view-tabs after a parse. Chips list each fired alert
+   with severity-coloured borders. Silent on healthy logs. */
+.anomaly-banner {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    margin: 4px 0 8px;
+}
+
+/* Summary bar — always visible when ANY anomaly fired. Single row, one
+   pill per severity bucket, caret to expand into the drawer. Click
+   anywhere on the bar toggles. */
+.anom-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    background: #faf6ec;
+    border: 1px solid #c9bfa9;
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+}
+.anom-summary:hover { background: #f3ecd9; }
+
+/* Inline variant: lives inside the file toolbar, pushed to the right so
+   Reload / Live tail / Follow stay anchored left. No full-width bg. */
+.anom-summary-inline {
+    width: auto;
+    padding: 3px 8px;
+    margin-left: auto;
+    background: transparent;
+    border-radius: 10px;
+    gap: 6px;
+}
+.anom-summary-inline:hover { background: rgba(28,26,23,0.04); }
+
+/* Standalone drawer (when summary lives in toolbar). Same look as the
+   inline drawer but stretches full width below the toolbar row. */
+.anom-drawer-standalone {
+    margin: 0 0 8px;
+    border-radius: 4px;
+}
+
+.anom-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.anom-pill-crit {
+    background: rgba(178,34,34,0.14);
+    color: #8a1818;
+    border: 1px solid rgba(178,34,34,0.55);
+}
+.anom-pill-warn {
+    background: rgba(183,132,39,0.14);
+    color: #7d5712;
+    border: 1px solid rgba(183,132,39,0.55);
+}
+.anom-caret {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 600;
+    color: #4a443a;
+}
+
+/* Drawer — expanded list of grouped anomalies. Vertical scroll caps
+   blow-up on chatty logs; horizontal scroll is forbidden. */
+.anom-drawer {
+    border: 1px solid #c9bfa9;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    background: #fdfaf1;
+    padding: 6px 4px;
+    max-height: 320px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+.anom-group { padding: 4px 6px; }
+.anom-group + .anom-group { border-top: 1px dashed #d8cdb4; margin-top: 4px; padding-top: 8px; }
+.anom-group-title {
+    margin: 0 0 4px 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #4a443a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.anom-group-icon { font-size: 12px; }
+
+.anom-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 8px;
+    margin: 2px 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-left: 3px solid #c9bfa9;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+}
+.anom-row:hover { background: #f3ecd9; }
+.anom-row-label { flex: 1 1 auto; font-size: 12px; }
+.anom-row-meta  { color: #6b6557; font-weight: 400; }
+.anom-row-cta {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    color: #15467a;
+    opacity: 0.6;
+}
+.anom-row:hover .anom-row-cta { opacity: 1; }
+.anom-row-crit { border-left-color: #b22222; }
+.anom-row-warn { border-left-color: #b78427; }
 .fix-file-list {
     width: 100%;
     background: #faf6ec;
@@ -1091,6 +1285,234 @@ html, body {
     min-height: 0;
 }
 
+/* ── Validator gutter on Timeline rows ────────────────────────────────
+   Rows that fail validation get a red right-edge marker (the ⚠ button)
+   and a faint red wash so the eye picks them out in long streams. */
+.tbl-row.row-invalid {
+    background: rgba(178,34,34,0.06);
+}
+.tbl-row.row-invalid:hover {
+    background: rgba(178,34,34,0.12);
+}
+.row-invalid-mark {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid #b22222;
+    background: rgba(178,34,34,0.10);
+    color: #b22222;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+}
+.row-invalid-mark:hover {
+    background: #b22222;
+    color: #fff;
+}
+.tbl-row { position: relative; }   /* anchor for ::after / mark */
+
+/* ── Now dashboard ─────────────────────────────────────────────────────
+   Top-of-app current-state view: KPIs, heartbeat grid, traffic share.
+   Single screen; no scroll if possible. */
+.now-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 12px 4px 4px;
+    overflow-y: auto;
+}
+.now-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+.now-kpi {
+    background: #faf6ec;
+    border: 1px solid #c9bfa9;
+    border-left: 4px solid #c9bfa9;
+    border-radius: 4px;
+    padding: 10px 12px;
+}
+.now-kpi-good    { border-left-color: #2f6b2f; }
+.now-kpi-warn    { border-left-color: #b78427; }
+.now-kpi-bad     { border-left-color: #b22222; }
+.now-kpi-neutral { border-left-color: #8a8071; }
+.now-kpi-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6b6557;
+    margin-bottom: 4px;
+}
+.now-kpi-value {
+    font-family: 'Iowan Old Style', 'Charter', Georgia, serif;
+    font-size: 26px;
+    font-weight: 700;
+    color: #1c1a17;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+.now-kpi-sub {
+    font-size: 11px;
+    color: #6b6557;
+    margin-top: 4px;
+}
+
+.now-section { display: flex; flex-direction: column; gap: 8px; }
+.now-section-title {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6b6557;
+}
+.now-empty {
+    padding: 12px;
+    color: #8a8071;
+    background: #faf6ec;
+    border: 1px dashed #c9bfa9;
+    border-radius: 4px;
+    text-align: center;
+    font-size: 12px;
+}
+
+.now-hb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+}
+.now-hb-card {
+    border: 1px solid #c9bfa9;
+    border-left: 4px solid #8a8071;
+    border-radius: 4px;
+    padding: 8px 10px;
+    background: #faf6ec;
+}
+.now-hb-fresh { border-left-color: #2f6b2f; }
+.now-hb-stale { border-left-color: #b78427; background: rgba(183,132,39,0.06); }
+.now-hb-dead  { border-left-color: #b22222; background: rgba(178,34,34,0.06); }
+.now-hb-head { display: flex; align-items: center; gap: 6px; }
+.now-hb-name { font-weight: 600; font-size: 12px; }
+.now-hb-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+.now-hb-dot-fresh { background: #2f6b2f; box-shadow: 0 0 5px rgba(47,107,47,0.6); }
+.now-hb-dot-stale { background: #b78427; }
+.now-hb-dot-dead  { background: #b22222; }
+.now-hb-status {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #6b6557;
+    margin-top: 4px;
+}
+.now-hb-dead .now-hb-status { color: #8a1818; }
+.now-hb-stale .now-hb-status { color: #7d5712; }
+.now-hb-meta {
+    font-size: 11px;
+    color: #4a443a;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+}
+
+.now-lp-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.now-lp-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 60px 60px;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 6px;
+    border-radius: 3px;
+}
+.now-lp-row:hover { background: #f3ecd9; }
+.now-lp-name  { font-weight: 600; font-size: 12px; }
+.now-lp-count { text-align: right; font-variant-numeric: tabular-nums; font-size: 11px; color: #6b6557; }
+.now-lp-pct   { text-align: right; font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 600; }
+.now-lp-bar-wrap {
+    height: 6px;
+    background: #ece4cd;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.now-lp-bar {
+    height: 100%;
+    background: linear-gradient(to right, #2f6b2f, #4a8f4a);
+}
+
+.now-footer {
+    font-size: 11px;
+    color: #6b6557;
+    border-top: 1px dashed #c9bfa9;
+    padding-top: 8px;
+    margin-top: 4px;
+}
+
+/* ── Bottom status bar — persistent heartbeat health ──────────────────
+   Sits as the last child of .root. Always visible once any tab has
+   messages; worst sessions sort left. Compact 24px height. */
+.status-bar {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 4px 8px;
+    border-top: 1px solid #c9bfa9;
+    background: #f3ecd9;
+    font-size: 11px;
+    color: #4a443a;
+}
+.status-bar-label {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b6557;
+    margin-right: 4px;
+}
+.status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: #faf6ec;
+    border: 1px solid #c9bfa9;
+    line-height: 1.3;
+    font-variant-numeric: tabular-nums;
+}
+.status-chip-name { font-weight: 600; }
+.status-chip-age  { color: #6b6557; font-size: 10px; }
+.status-chip-fresh { border-color: rgba(47,107,47,0.40);  background: rgba(47,107,47,0.06); }
+.status-chip-stale { border-color: rgba(183,132,39,0.55); background: rgba(183,132,39,0.10); color: #7d5712; }
+.status-chip-dead  { border-color: rgba(178,34,34,0.60);  background: rgba(178,34,34,0.10); color: #8a1818; }
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+.status-dot-fresh { background: #2f6b2f; box-shadow: 0 0 4px rgba(47,107,47,0.6); }
+.status-dot-stale { background: #b78427; }
+.status-dot-dead  { background: #b22222; }
+
 .app-main {
     flex: 1;
     min-width: 0;
@@ -1499,7 +1921,7 @@ html, body {
 /* ── Lifecycle Reconstructor table layout ────────────────── */
 .tbl-chain-row {
     display: grid;
-    grid-template-columns: 9rem 6rem 3.5rem 4rem 6rem 6rem 6rem 6rem 6rem 6rem 3.5rem;
+    grid-template-columns: 9rem 6rem 3.5rem 4rem 6rem 6rem 6rem 6rem 6rem 6rem 6rem 3.5rem;
     gap: 0;
     align-items: center;
     padding: 0 8px;
@@ -2833,5 +3255,246 @@ html, body {
 }
 .fix-file-banner-pasted .fix-file-icon { color: #15467a; opacity: 1; }
 .fix-file-meta { color: #8a8071; font-size: 11px; margin-left: 4px; }
+
+/* ── LP Scorecard (last-look analyzer) ────────────────────────────────── */
+.lp-scorecard {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 12px 16px;
+    overflow-y: auto;
+}
+.lp-section { display: flex; flex-direction: column; gap: 8px; }
+.lp-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #6b6356;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.lp-table {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #c9bfa9;
+    border-radius: 4px;
+    background: #faf6ec;
+    overflow: hidden;
+}
+.lp-row {
+    display: grid;
+    grid-template-columns: 1.5fr 80px 90px 90px 90px 90px 90px 40px;
+    align-items: center;
+    padding: 6px 12px;
+    border-top: 1px solid #ede4cf;
+    font-size: 12px;
+    gap: 8px;
+}
+.lp-row:first-child { border-top: none; }
+.lp-row-header {
+    background: #ede4cf;
+    color: #6b6356;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.lp-row-flagged {
+    background: rgba(178,34,34,0.06);
+    border-left: 4px solid #b22222;
+    padding-left: 8px;
+}
+.lp-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 600;
+    color: #1c1a17;
+}
+.lp-num {
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #3a342c;
+    text-align: right;
+}
+.lp-num-bad { color: #b22222; font-weight: 700; }
+.lp-flag    { text-align: center; }
+.lp-flag-on { color: #b22222; font-size: 14px; font-weight: 700; }
+
+/* Clickable LP row + drill-down drawer. */
+.lp-row-clickable { cursor: pointer; }
+.lp-row-clickable:hover { background: #f3ecd9; }
+.lp-row-selected {
+    background: #f3ecd9 !important;
+    border-left: 4px solid #15467a;
+    padding-left: 8px;
+}
+
+.lp-drill {
+    margin: 8px 0 4px;
+    border: 1px solid #c9bfa9;
+    border-radius: 4px;
+    background: #fdfaf1;
+    overflow: hidden;
+}
+.lp-drill-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: #f3ecd9;
+    border-bottom: 1px solid #c9bfa9;
+}
+.lp-drill-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: 'Iowan Old Style', 'Charter', Georgia, serif;
+    color: #1c1a17;
+}
+.lp-drill-close {
+    background: transparent;
+    border: 1px solid #c9bfa9;
+    border-radius: 3px;
+    width: 22px;
+    height: 22px;
+    line-height: 1;
+    font-size: 14px;
+    cursor: pointer;
+    color: #6b6557;
+}
+.lp-drill-close:hover { background: #c9bfa9; color: #1c1a17; }
+.lp-drill-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.4fr;
+    gap: 14px;
+    padding: 10px 12px;
+}
+.lp-drill-col { display: flex; flex-direction: column; gap: 4px; }
+.lp-drill-subtitle {
+    margin: 0 0 4px 0;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6b6557;
+}
+.lp-drill-empty {
+    color: #8a8071;
+    font-size: 11px;
+    font-style: italic;
+    padding: 4px 0;
+}
+.lp-drill-bar-row {
+    display: grid;
+    grid-template-columns: 100px 1fr 36px;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+.lp-drill-bar-label {
+    color: #4a443a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.lp-drill-bar-wrap {
+    height: 8px;
+    background: #ece4cd;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.lp-drill-bar { height: 100%; }
+.lp-drill-bar-bad     { background: linear-gradient(to right, #b22222, #d04848); }
+.lp-drill-bar-neutral { background: linear-gradient(to right, #15467a, #3a6ca5); }
+.lp-drill-bar-count {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: #1c1a17;
+}
+
+/* Worst-hold sample table. */
+.lp-drill-worst {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    border: 1px solid #ece4cd;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.lp-drill-worst-head, .lp-drill-worst-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 56px 70px 60px;
+    gap: 8px;
+    padding: 3px 6px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+.lp-drill-worst-head {
+    background: #f3ecd9;
+    color: #6b6557;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.lp-drill-worst-row:nth-child(even) { background: rgba(28,26,23,0.02); }
+.lp-drill-clord { font-family: ui-monospace, Menlo, monospace; color: #15467a; }
+.lp-drill-hold  { text-align: right; font-weight: 600; color: #b22222; }
+.lp-drill-out {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 10px;
+}
+.lp-drill-out-fill   { background: rgba(47,107,47,0.18);  color: #2f6b2f; }
+.lp-drill-out-reject { background: rgba(178,34,34,0.18);  color: #b22222; }
+
+.lp-grid {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #c9bfa9;
+    border-radius: 4px;
+    background: #faf6ec;
+    overflow-x: auto;
+}
+.lp-grid-row {
+    display: flex;
+    border-top: 1px solid #ede4cf;
+    align-items: stretch;
+}
+.lp-grid-row:first-child { border-top: none; }
+.lp-grid-header { background: #ede4cf; font-weight: 700; color: #6b6356; }
+.lp-grid-corner, .lp-grid-rowlabel {
+    width: 140px;
+    flex-shrink: 0;
+    padding: 6px 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: #1c1a17;
+    font-weight: 600;
+    border-right: 1px solid #ede4cf;
+}
+.lp-grid-cell, .lp-grid-cell-h {
+    flex: 1;
+    min-width: 70px;
+    padding: 6px 8px;
+    text-align: center;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.lp-grid-cell-h {
+    color: #6b6356;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.lp-grid-cell {
+    color: #1c1a17;
+    border-left: 1px solid rgba(201,191,169,0.5);
+}
 
 "#;

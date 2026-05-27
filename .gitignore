@@ -1,7 +1,7 @@
 # ── Build artifacts ───────────────────────────────────────────────
 target/
 rust_out/
-
+.DS_Store
 # ── Shipping binaries — distribute via GitHub Releases, not in tree
 
 *.pkg
@@ -15,6 +15,7 @@ fixtures/
 *.fix
 sample_*.fix
 *.fix.zip
+.DS_Store
 
 # ── Editor / OS noise
 .DS_Store

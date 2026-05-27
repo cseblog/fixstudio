@@ -65,6 +65,51 @@ pub async fn load_file_at(path: &str) -> Option<FileLoadResult> {
     Some(FileLoadResult { name, path: path.to_string(), messages, parse_us, is_soh })
 }
 
+/// Result of an incremental tail-load. Empty `messages` means the file
+/// hasn't grown (or new bytes didn't form a complete message yet).
+pub struct TailLoadResult {
+    pub messages:   Vec<FixMessage>,
+    /// Updated byte offset to stash for the next tail read. Always points
+    /// at the start of the first incompletely-buffered line, so subsequent
+    /// reads pick up trailing partial messages.
+    pub new_offset: u64,
+}
+
+/// Read just the bytes that appended to `path` since `since_offset` and
+/// parse the resulting tail. Returns None on I/O error / path missing.
+///
+/// Splits on '\n' to avoid handing the parser a half-finished message at
+/// the end. The trailing partial line — if any — is included in the new
+/// offset, so the next call sees it as new content once it completes.
+pub async fn load_file_tail(path: &str, since_offset: u64) -> Option<TailLoadResult> {
+    use std::io::{Read, Seek, SeekFrom};
+    let p = std::path::PathBuf::from(path);
+    let meta = std::fs::metadata(&p).ok()?;
+    let size = meta.len();
+    if size <= since_offset {
+        // File was truncated or unchanged. Treat both as "no new data" —
+        // truncation is a log-rotation signal handled by the caller via a
+        // full reload reset (offset back to 0).
+        return Some(TailLoadResult { messages: Vec::new(), new_offset: size });
+    }
+    let mut file = std::fs::File::open(&p).ok()?;
+    file.seek(SeekFrom::Start(since_offset)).ok()?;
+    let new_bytes_len = (size - since_offset) as usize;
+    let mut buf = Vec::with_capacity(new_bytes_len);
+    file.take(new_bytes_len as u64).read_to_end(&mut buf).ok()?;
+
+    // Trim trailing partial line so we never hand a half-message to the parser.
+    let split_at = buf.iter().rposition(|&b| b == b'\n').map(|i| i + 1).unwrap_or(0);
+    if split_at == 0 {
+        // No newline at all in the new bytes — wait for a full line next tick.
+        return Some(TailLoadResult { messages: Vec::new(), new_offset: since_offset });
+    }
+    let (complete, _partial) = buf.split_at(split_at);
+    let messages = parse_all_simd_bytes(complete);
+    let consumed = since_offset + (split_at as u64);
+    Some(TailLoadResult { messages, new_offset: consumed })
+}
+
 pub async fn pick_and_load_folder() -> Option<FolderLoadResult> {
     let folder = rfd::AsyncFileDialog::new().pick_folder().await?;
     let root = folder.path().to_owned();

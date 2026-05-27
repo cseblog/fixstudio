@@ -19,6 +19,25 @@ pub struct Tab {
     pub skip_common:     Signal<bool>,
     pub parse_stats:     Signal<Option<(usize, u64)>>,
     pub file_name:       Signal<Option<String>>,
+    /// Absolute path of the currently-loaded file (None for paste / sample
+    /// loads). Used by the Reload button + the optional auto-watch poller
+    /// to re-read the same file when it changes on disk.
+    pub file_path:       Signal<Option<String>>,
+    /// Last-seen mtime (unix-millis) of `file_path`. Used by the auto-watch
+    /// poller to detect changes without re-parsing on every tick.
+    pub file_mtime_ms:   Signal<u64>,
+    /// Per-tab toggle: when true, a 1-second poller reloads `file_path`
+    /// whenever its mtime increases. Defaults off — explicit Reload button
+    /// is the default flow.
+    pub file_auto_watch: Signal<bool>,
+    /// Byte offset into `file_path` consumed so far. When auto-watch fires
+    /// and the file has grown, the loader reads only `[tail_offset..]` and
+    /// APPENDS to `messages` instead of re-parsing the whole file.
+    pub file_tail_offset: Signal<u64>,
+    /// When true, the Timeline auto-scrolls to the bottom after each
+    /// successful tail load. Independent of `file_auto_watch` because the
+    /// operator may want background ingest without losing scroll position.
+    pub file_follow_tail: Signal<bool>,
     pub loaded_files:    Signal<Vec<String>>,
     pub show_file_list:  Signal<bool>,
     pub view_mode:       Signal<ViewMode>,
@@ -118,6 +137,11 @@ impl Tab {
             skip_common:     Signal::new_in_scope(false,              s),
             parse_stats:     Signal::new_in_scope(None,               s),
             file_name:       Signal::new_in_scope(None,               s),
+            file_path:       Signal::new_in_scope(None,               s),
+            file_mtime_ms:   Signal::new_in_scope(0u64,               s),
+            file_auto_watch: Signal::new_in_scope(false,              s),
+            file_tail_offset:Signal::new_in_scope(0u64,               s),
+            file_follow_tail:Signal::new_in_scope(false,              s),
             loaded_files:    Signal::new_in_scope(Vec::new(),         s),
             show_file_list:  Signal::new_in_scope(false,              s),
             view_mode:       Signal::new_in_scope(ViewMode::Timeline, s),
@@ -181,6 +205,7 @@ pub fn message_key(m: &FixMessage) -> Option<String> {
 /// - `compare != Some(active)` (never compare a tab with itself)
 /// - `active` is always one of the remaining ids
 /// - `compare`, when `Some`, is always one of the remaining ids
+#[allow(dead_code)]
 pub fn close_tab_ids(
     ids:     &[u64],
     active:  u64,
@@ -211,6 +236,7 @@ pub fn close_tab_ids(
 /// (even the current compare partner) clears compare and promotes that tab to
 /// active. Use this for every active-switch entry point — tab click, ⌘1-9,
 /// ⌘Tab cycle — so the behaviour stays centralised.
+#[allow(dead_code)]
 pub fn switch_active(
     active:     u64,
     compare:    Option<u64>,

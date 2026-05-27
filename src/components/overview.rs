@@ -14,6 +14,7 @@ use crate::session_summary::{build_session_summary, SessionSummary};
 enum OverviewTab {
     Summary,
     FillQuality,
+    LpScorecard,
 }
 
 // ── Fill Quality view toggle ───────────────────────────────────────────────────
@@ -42,6 +43,7 @@ enum SortCol {
 struct OverviewData {
     summary:   SessionSummary,
     scorecard: FillQualityScorecard,
+    lp_card:   crate::last_look::LpScorecard,
 }
 
 #[component]
@@ -52,6 +54,12 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
     let mut drill_counterparty: Signal<Option<String>> = use_signal(|| None);
     let fq_view: Signal<FqView>                        = use_signal(|| FqView::Charts);
     let mut computed: Signal<Option<OverviewData>>     = use_signal(|| None);
+    // LP Scorecard drill-down — None = table only, Some(lp) = drawer open.
+    let selected_lp: Signal<Option<String>>            = use_signal(|| None);
+    let lp_drill = use_memo(move || {
+        selected_lp.read().clone()
+            .map(|lp| crate::last_look::build_lp_drill(&messages.read(), &lp))
+    });
 
     // Per-instance DOM-id suffix so two overview_panel mounts (compare mode)
     // don't share the same `getElementById('summary-fill-pie')` etc — without
@@ -81,6 +89,7 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
                 let data = OverviewData {
                     summary:   build_session_summary(&msgs),
                     scorecard: build_scorecard(&msgs),
+                    lp_card:   crate::last_look::build_lp_scorecard(&msgs),
                 };
                 let _ = tx.send(data);
             });
@@ -173,21 +182,34 @@ pub fn overview_panel(messages: Signal<Vec<FixMessage>>) -> Element {
                     },
                     "Fill Quality"
                 }
+                button {
+                    class: if tab_val == OverviewTab::LpScorecard
+                        { "overview-tab overview-tab-active" } else { "overview-tab" },
+                    onclick: move |_| active_tab.set(OverviewTab::LpScorecard),
+                    "LP Scorecard"
+                }
             }
 
             // ── Tab content ──────────────────────────────────────────────────
             div { class: "overview-content",
                 if let Some(data) = data_opt {
-                    {match tab_val {
-                        OverviewTab::Summary     => render_summary(
-                            &data.summary, &data.scorecard,
-                            &id_summary_fill, &id_summary_reject,
-                        ),
-                        OverviewTab::FillQuality => render_fill_quality(
-                            &data.scorecard, sort_col, sort_asc, drill_counterparty, &drill_val, fq_view,
-                            &id_fq_bar, &id_fq_tree,
-                        ),
-                    }}
+                    {
+                        let msgs_for_grid = messages;
+                        match tab_val {
+                            OverviewTab::Summary     => render_summary(
+                                &data.summary, &data.scorecard,
+                                &id_summary_fill, &id_summary_reject,
+                            ),
+                            OverviewTab::FillQuality => render_fill_quality(
+                                &data.scorecard, sort_col, sort_asc, drill_counterparty, &drill_val, fq_view,
+                                &id_fq_bar, &id_fq_tree,
+                            ),
+                            OverviewTab::LpScorecard => render_lp_scorecard(
+                                &data.lp_card, msgs_for_grid, selected_lp,
+                                lp_drill.read().clone(),
+                            ),
+                        }
+                    }
                 } else {
                     div { class: "overview-loading",
                         "Computing session report…"
@@ -868,4 +890,259 @@ fn treemap_option(sc: &FillQualityScorecard) -> serde_json::Value {
             "data": data
         }]
     })
+}
+
+// ── LP Scorecard tab (last-look analyzer + symbol × LP heat grid) ───────────
+
+fn render_lp_scorecard(
+    card: &crate::last_look::LpScorecard,
+    messages: Signal<Vec<FixMessage>>,
+    mut selected_lp: Signal<Option<String>>,
+    drill: Option<crate::last_look::LpDrill>,
+) -> Element {
+    if card.rows.is_empty() {
+        return rsx! {
+            div { class: "empty-state",
+                span { class: "empty-state-icon",  "📊" }
+                span { class: "empty-state-title", "No counterparty traffic" }
+                span { class: "empty-state-hint",
+                    "Load a FIX log with Quote (35=S) → NewOrderSingle → ER messages \
+                     to score liquidity providers by hold time and reject rate."
+                }
+            }
+        };
+    }
+    // Symbol × LP fill-rate heat grid — top 8 symbols by order volume.
+    let grid = crate::last_look::build_symbol_grid(&messages.read(), 8);
+    rsx! {
+        div { class: "lp-scorecard",
+
+            // ── Per-LP stats table ───────────────────────────────────────
+            div { class: "lp-section",
+                div { class: "lp-section-label", "Liquidity providers" }
+                div { class: "lp-table",
+                    div { class: "lp-row lp-row-header",
+                        span { "Counterparty" }
+                        span { "Orders" }
+                        span { "Fill rate" }
+                        span { "Reject rate" }
+                        span { "Hold p50" }
+                        span { "Hold p95" }
+                        span { "Hold p99" }
+                        span { "Flag" }
+                    }
+                    for r in card.rows.iter() {
+                        {
+                            let row_lp = r.lp.clone();
+                            let is_selected = selected_lp.read().as_ref()
+                                .map(|s| s == &row_lp).unwrap_or(false);
+                            let mut cls = String::from("lp-row lp-row-clickable");
+                            if r.flagged { cls.push_str(" lp-row-flagged"); }
+                            if is_selected { cls.push_str(" lp-row-selected"); }
+                            rsx! {
+                                div {
+                                    class: "{cls}",
+                                    title: "Click to drill down · click again to close",
+                                    onclick: move |_| {
+                                        // Toggle: clicking the same LP again closes.
+                                        let cur = selected_lp.peek().clone();
+                                        if cur.as_deref() == Some(row_lp.as_str()) {
+                                            selected_lp.set(None);
+                                        } else {
+                                            selected_lp.set(Some(row_lp.clone()));
+                                        }
+                                    },
+                                    span { class: "lp-name",
+                                        if is_selected { "▾ " } else { "▸ " }
+                                        "{r.lp}"
+                                    }
+                                    span { class: "lp-num", "{r.orders}" }
+                                    span { class: "lp-num", "{format_pct(r.fill_rate)}" }
+                                    span {
+                                        class: if r.reject_rate >= 0.05 { "lp-num lp-num-bad" } else { "lp-num" },
+                                        "{format_pct(r.reject_rate)}"
+                                    }
+                                    span { class: "lp-num", "{format_us(r.hold_p50_us)}" }
+                                    span {
+                                        class: if r.hold_p95_us >= 50_000 { "lp-num lp-num-bad" } else { "lp-num" },
+                                        "{format_us(r.hold_p95_us)}"
+                                    }
+                                    span { class: "lp-num", "{format_us(r.hold_p99_us)}" }
+                                    span {
+                                        class: if r.flagged { "lp-flag lp-flag-on" } else { "lp-flag" },
+                                        if r.flagged { "⚑" } else { "" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Drill-down drawer — visible when the operator clicked a row.
+                if let Some(d) = drill.as_ref() {
+                    {
+                        let max_bucket: u64 = d.hold_buckets.iter().map(|b| b.count).max().unwrap_or(1).max(1);
+                        let max_reason: u64 = d.reject_reasons.iter().map(|r| r.count).max().unwrap_or(1).max(1);
+                        rsx! {
+                            div { class: "lp-drill",
+                                div { class: "lp-drill-head",
+                                    h4 { class: "lp-drill-title", "Drill-down · {d.lp}" }
+                                    button {
+                                        class: "lp-drill-close",
+                                        title: "Close drawer",
+                                        onclick: move |_| selected_lp.set(None),
+                                        "×"
+                                    }
+                                }
+                                div { class: "lp-drill-body",
+                                    // Reject reasons (left column)
+                                    div { class: "lp-drill-col",
+                                        h5 { class: "lp-drill-subtitle", "Reject reasons (tag 58)" }
+                                        if d.reject_reasons.is_empty() {
+                                            div { class: "lp-drill-empty", "No rejects." }
+                                        } else {
+                                            for r in d.reject_reasons.iter() {
+                                                {
+                                                    let pct = r.count as f64 / max_reason as f64 * 100.0;
+                                                    rsx! {
+                                                        div { class: "lp-drill-bar-row",
+                                                            span { class: "lp-drill-bar-label", "{r.reason}" }
+                                                            div { class: "lp-drill-bar-wrap",
+                                                                div {
+                                                                    class: "lp-drill-bar lp-drill-bar-bad",
+                                                                    style: "width: {pct}%;",
+                                                                }
+                                                            }
+                                                            span { class: "lp-drill-bar-count", "{r.count}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Hold-time histogram (middle column)
+                                    div { class: "lp-drill-col",
+                                        h5 { class: "lp-drill-subtitle", "Hold-time distribution" }
+                                        if d.hold_buckets.iter().all(|b| b.count == 0) {
+                                            div { class: "lp-drill-empty", "No quote→order links." }
+                                        } else {
+                                            for b in d.hold_buckets.iter() {
+                                                {
+                                                    let pct = if b.count == 0 { 0.0 }
+                                                              else { b.count as f64 / max_bucket as f64 * 100.0 };
+                                                    rsx! {
+                                                        div { class: "lp-drill-bar-row",
+                                                            span { class: "lp-drill-bar-label", "{b.label}" }
+                                                            div { class: "lp-drill-bar-wrap",
+                                                                div {
+                                                                    class: "lp-drill-bar lp-drill-bar-neutral",
+                                                                    style: "width: {pct}%;",
+                                                                }
+                                                            }
+                                                            span { class: "lp-drill-bar-count", "{b.count}" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Worst-hold sample (right column)
+                                    div { class: "lp-drill-col",
+                                        h5 { class: "lp-drill-subtitle", "Worst-10 holds" }
+                                        if d.worst_holds.is_empty() {
+                                            div { class: "lp-drill-empty", "No matched orders." }
+                                        } else {
+                                            div { class: "lp-drill-worst",
+                                                div { class: "lp-drill-worst-head",
+                                                    span { "Time" }
+                                                    span { "ClOrdID" }
+                                                    span { "Sym" }
+                                                    span { "Hold" }
+                                                    span { "Out" }
+                                                }
+                                                for w in d.worst_holds.iter() {
+                                                    {
+                                                        let outcome_cls = match w.outcome {
+                                                            "FILL"   => "lp-drill-out lp-drill-out-fill",
+                                                            "REJECT" => "lp-drill-out lp-drill-out-reject",
+                                                            _        => "lp-drill-out",
+                                                        };
+                                                        rsx! {
+                                                            div { class: "lp-drill-worst-row",
+                                                                span { "{w.time}" }
+                                                                span { class: "lp-drill-clord", "{w.cl_ord_id}" }
+                                                                span { "{w.symbol}" }
+                                                                span { class: "lp-drill-hold", "{format_us(w.hold_us)}" }
+                                                                span { class: "{outcome_cls}", "{w.outcome}" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Symbol × LP fill-rate heat grid ──────────────────────────
+            if !grid.rows.is_empty() && !grid.symbols.is_empty() {
+                div { class: "lp-section",
+                    div { class: "lp-section-label",
+                        "Fill rate by counterparty × symbol  (green = good, red = bad)"
+                    }
+                    div { class: "lp-grid",
+                        // header row: symbols
+                        div { class: "lp-grid-row lp-grid-header",
+                            span { class: "lp-grid-corner", "" }
+                            for s in grid.symbols.iter() {
+                                span { class: "lp-grid-cell-h", "{s}" }
+                            }
+                        }
+                        for row in grid.rows.iter() {
+                            div { class: "lp-grid-row",
+                                span { class: "lp-grid-rowlabel", "{row.lp}" }
+                                for rate in row.rates.iter() {
+                                    {
+                                        let (txt, bg) = match rate {
+                                            None    => ("·".to_string(), "transparent".to_string()),
+                                            Some(r) => (format!("{:.0}%", r * 100.0),
+                                                        heat_color(*r).to_string()),
+                                        };
+                                        rsx! {
+                                            span { class: "lp-grid-cell",
+                                                style: "background: {bg};",
+                                                "{txt}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn format_pct(p: f64) -> String { format!("{:.1}%", p * 100.0) }
+fn format_us(us: i64) -> String {
+    if us == 0 { return "—".to_string(); }
+    if us < 1_000 { format!("{us}µs") }
+    else if us < 1_000_000 { format!("{:.1}ms", us as f64 / 1_000.0) }
+    else { format!("{:.2}s", us as f64 / 1_000_000.0) }
+}
+/// Fill rate → background colour for the heat grid. 100% → ledger green,
+/// 0% → ink red, gradient through mustard in the middle.
+fn heat_color(rate: f64) -> &'static str {
+    if rate >= 0.95      { "rgba(47,107,47,0.30)" }   // strong green
+    else if rate >= 0.85 { "rgba(47,107,47,0.18)" }
+    else if rate >= 0.70 { "rgba(183,132,39,0.18)" }  // mustard
+    else if rate >= 0.50 { "rgba(183,132,39,0.30)" }
+    else if rate >= 0.20 { "rgba(178,34,34,0.20)" }   // red
+    else                 { "rgba(178,34,34,0.35)" }
 }
