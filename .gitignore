@@ -15,6 +15,7 @@ fixtures/
 *.fix
 sample_*.fix
 *.fix.zip
+.DS_Store
 
 # ── Editor / OS noise
 .DS_Store
