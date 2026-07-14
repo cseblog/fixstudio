@@ -18,12 +18,11 @@ const INITIAL_DISPLAY: usize = 1000;
 // resolves to a set of chain roots; every message in those chains is included
 // in the filter, even if its own ids don't textually match the query.
 
-/// Lowercased lookup table from any id substring → chain root, plus per-msg
-/// root assignment. `msg_root[i] == u32::MAX` when message i has no chain id.
+/// Per-message chain root: `msg_root[i]` is the union-find root shared by every
+/// message in message `i`'s trade chain, or `u32::MAX` when it has no chain id.
 #[derive(PartialEq)]
 pub struct ChainIndex {
-    pub msg_root:    Vec<u32>,
-    pub id_to_root:  ahash::AHashMap<String, u32>,
+    pub msg_root: Vec<u32>,
 }
 
 /// Path-compressing union-find. Asserts that x is a valid index.
@@ -39,6 +38,15 @@ fn uf_find(parent: &mut [u32], x: u32) -> u32 {
         c = nxt;
     }
     r
+}
+
+/// An id value is usable for chain linking only if it looks like a real,
+/// unique identifier. Wildcard / mass-action placeholders (e.g. QuoteID
+/// "* - ALL" on a QuoteCancel that cancels every quote) must be excluded —
+/// otherwise union-find fuses every unrelated RFQ that carries the placeholder
+/// into one giant chain, and filtering by any single id drags in the whole log.
+fn is_linkable_id(v: &str) -> bool {
+    !v.is_empty() && !v.contains('*')
 }
 
 /// Build the chain index over the given message set. Pure function; tested
@@ -58,13 +66,13 @@ pub fn build_chain_index(msgs: &[FixMessage]) -> ChainIndex {
     let mut ids_buf: Vec<String> = Vec::with_capacity(6);
     for (i, m) in msgs.iter().enumerate() {
         ids_buf.clear();
-        if !m.cl_ord_id.is_empty()    { ids_buf.push(m.cl_ord_id.as_str().to_ascii_lowercase()); }
-        if !m.quote_id.is_empty()     { ids_buf.push(m.quote_id.as_str().to_ascii_lowercase()); }
-        if !m.quote_req_id.is_empty() { ids_buf.push(m.quote_req_id.as_str().to_ascii_lowercase()); }
+        if is_linkable_id(m.cl_ord_id.as_str())    { ids_buf.push(m.cl_ord_id.as_str().to_ascii_lowercase()); }
+        if is_linkable_id(m.quote_id.as_str())     { ids_buf.push(m.quote_id.as_str().to_ascii_lowercase()); }
+        if is_linkable_id(m.quote_req_id.as_str()) { ids_buf.push(m.quote_req_id.as_str().to_ascii_lowercase()); }
         for f in &m.fields {
             if EXTRA_LINK_TAGS.contains(&f.tag) {
                 let v = f.value_in(&m.arena);
-                if !v.is_empty() { ids_buf.push(v.to_ascii_lowercase()); }
+                if is_linkable_id(v) { ids_buf.push(v.to_ascii_lowercase()); }
             }
         }
         if ids_buf.is_empty() { continue; }
@@ -101,10 +109,7 @@ pub fn build_chain_index(msgs: &[FixMessage]) -> ChainIndex {
     for v in msg_root.iter_mut() {
         if *v != u32::MAX { *v = uf_find(&mut parent, *v); }
     }
-    let id_to_root: ahash::AHashMap<String, u32> = id_to_chain.into_iter()
-        .map(|(k, c)| (k, uf_find(&mut parent, c)))
-        .collect();
-    ChainIndex { msg_root, id_to_root }
+    ChainIndex { msg_root }
 }
 
 // ── Timeline filter (pure, tested) ───────────────────────────────────────────
@@ -155,19 +160,33 @@ pub fn apply_timeline_filter(
     let fc = f.f_clord.trim().to_ascii_lowercase();
     let fd = f.f_detail.trim().to_ascii_lowercase();
 
-    // Chain-aware ID expansion: any chain root whose id_to_root key contains
-    // the substring becomes a match candidate. Roots that cover more than
-    // 70 % of the message set are treated as accidental merges (placeholder
-    // ClOrdIDs etc.) and dropped — without this guard a single junk chain
-    // can swallow the entire log and effectively disable the filter.
-    let (root_sizes, matching_roots) = resolve_chain_roots(chain, &fc, msgs.len());
+    // Chain-aware ID filter, EXACT-seeded. Seed roots = the chain roots of every
+    // message whose OWN id field exactly equals the typed value. A row then
+    // passes if it exact-matches directly OR shares a seed root. Exact (not
+    // substring) matching means "20cf0278" never drags in "20cf02781", and
+    // wildcard placeholders are already stripped from chain links, so a single
+    // id keys exactly its own trade — request, quote, order, and ER — nothing else.
+    let seed_roots: ahash::AHashSet<u32> = if fc.is_empty() {
+        ahash::AHashSet::default()
+    } else {
+        msgs.iter().enumerate()
+            .filter(|(_, m)| id_exact_match(m, &fc))
+            .filter_map(|(i, _)| {
+                let r = chain.msg_root[i];
+                (r != u32::MAX).then_some(r)
+            })
+            .collect()
+    };
 
     let mut indices: Vec<usize> = msgs.iter()
         .enumerate()
         .filter(|(_, m)| !(f.skip_heartbeats && (m.msg_type_raw == "0" || m.msg_type_raw == "A")))
         .filter(|(i, m)| {
-            if !fc.is_empty() && !msg_passes_id_filter(m, *i, chain, &matching_roots, &fc) {
-                return false;
+            if !fc.is_empty() {
+                let root = chain.msg_root[*i];
+                let pass = id_exact_match(m, &fc)
+                    || (root != u32::MAX && seed_roots.contains(&root));
+                if !pass { return false; }
             }
             time_match(&m.time, &ft_raw)
                 && col_match(&m.sender, &fs)
@@ -178,73 +197,22 @@ pub fn apply_timeline_filter(
         .map(|(i, _)| i)
         .collect();
     indices.sort_unstable_by(|&a, &b| msgs[b].time.cmp(&msgs[a].time));
-    let _ = root_sizes;   // touched only inside resolve_chain_roots; silence warning
     indices
 }
 
-/// Build (per-root size map, matching-root set) for the given lowercased
-/// substring. Returns empty maps when the substring is empty so the caller
-/// can short-circuit.
-fn resolve_chain_roots(
-    chain:      &ChainIndex,
-    fc:         &str,
-    total_msgs: usize,
-) -> (ahash::AHashMap<u32, usize>, ahash::AHashSet<u32>) {
-    if fc.is_empty() {
-        return (ahash::AHashMap::default(), ahash::AHashSet::default());
-    }
-    let mut root_sizes: ahash::AHashMap<u32, usize> = ahash::AHashMap::default();
-    for &r in chain.msg_root.iter() {
-        if r != u32::MAX { *root_sizes.entry(r).or_insert(0) += 1; }
-    }
-    // Junk-chain guard: a chain that swallows nearly the whole log is almost
-    // certainly a counterparty re-using a placeholder ClOrdID. Skip it during
-    // expansion. Only applies once the log is large enough for the ratio to
-    // be meaningful — a tiny test or single-order paste should never trigger
-    // the guard (e.g. 4 chain members out of 4 total is legitimate, not junk).
-    const GUARD_MIN_TOTAL: usize = 50;
-    let oversize_cap = if total_msgs >= GUARD_MIN_TOTAL {
-        (total_msgs as f64 * 0.70) as usize
-    } else {
-        usize::MAX
-    };
-    let matching: ahash::AHashSet<u32> = chain.id_to_root.iter()
-        .filter_map(|(id, &r)| {
-            if !id.contains(fc) { return None; }
-            if root_sizes.get(&r).copied().unwrap_or(0) > oversize_cap {
-                return None;
-            }
-            Some(r)
-        })
-        .collect();
-    (root_sizes, matching)
-}
-
-/// Does message `m` (at index `i`) pass the ID-column filter `fc` (lowercased)?
-/// True if any of:
-///   • ClOrdID / OrigClOrdID (tag 41) / QuoteID / QuoteReqID substring-matches
-///     directly (legacy behaviour, always works even when chain join failed)
-///   • the message's chain root is in `matching_roots`
-fn msg_passes_id_filter(
-    m:               &FixMessage,
-    i:               usize,
-    chain:           &ChainIndex,
-    matching_roots:  &ahash::AHashSet<u32>,
-    fc:              &str,
-) -> bool {
-    if col_match(&m.cl_ord_id, fc)
-        || col_match(&m.quote_id, fc)
-        || col_match(&m.quote_req_id, fc)
+/// True when the typed value `fc` (already trimmed + ASCII-lowercased) EXACTLY
+/// equals one of message `m`'s identifier fields: ClOrdID, QuoteID, QuoteReqID,
+/// or OrigClOrdID (tag 41). Case-insensitive; no substring matching, so a
+/// specific id never matches a longer id that merely starts with it.
+fn id_exact_match(m: &FixMessage, fc: &str) -> bool {
+    if m.cl_ord_id.eq_ignore_ascii_case(fc)
+        || m.quote_id.eq_ignore_ascii_case(fc)
+        || m.quote_req_id.eq_ignore_ascii_case(fc)
     {
         return true;
     }
-    for f in &m.fields {
-        if f.tag == 41 && col_match(f.value_in(&m.arena), fc) {
-            return true;
-        }
-    }
-    let r = chain.msg_root[i];
-    r != u32::MAX && matching_roots.contains(&r)
+    m.fields.iter()
+        .any(|f| f.tag == 41 && f.value_in(&m.arena).eq_ignore_ascii_case(fc))
 }
 
 fn build_detail_text(m: &FixMessage) -> String {
@@ -798,38 +766,17 @@ mod chain_tests {
     }
 
     #[test]
-    fn rfq_substring_lookup_matches_chain() {
-        let msgs = synth_chain();
+    fn wildcard_ids_do_not_link_chains() {
+        // A shared wildcard QuoteID "* - ALL" must NOT fuse two otherwise
+        // unrelated RFQs into one chain root.
+        let raw = concat!(
+            "8=FIX.4.4|9=1|35=R|49=A|56=B|34=1|52=20240101-09:00:00.000|131=RFQ-A|117=* - ALL|55=AAPL|10=000|",
+            "8=FIX.4.4|9=1|35=R|49=A|56=B|34=2|52=20240101-09:00:00.001|131=RFQ-B|117=* - ALL|55=MSFT|10=000|",
+        );
+        let msgs = parse_all(raw);
         let idx  = build_chain_index(&msgs);
-        // Searching by RFQ id substring "qr-1" (lowercased) finds the chain.
-        let needle = "qr-1";
-        let roots: Vec<u32> = idx.id_to_root.iter()
-            .filter(|(id, _)| id.contains(needle))
-            .map(|(_, &r)| r)
-            .collect();
-        assert!(!roots.is_empty(), "RFQ substring must resolve");
-        // Every message should match.
-        let matched: Vec<usize> = idx.msg_root.iter().enumerate()
-            .filter(|(_, &r)| r != u32::MAX && roots.contains(&r))
-            .map(|(i, _)| i)
-            .collect();
-        assert_eq!(matched.len(), 4, "all 4 messages should match the RFQ chain");
-    }
-
-    #[test]
-    fn quote_id_substring_also_resolves_full_chain() {
-        // The user types only the QuoteID — chain still covers QuoteRequest AND ER.
-        let msgs = synth_chain();
-        let idx  = build_chain_index(&msgs);
-        let needle = "qt-9";
-        let roots: ahash::AHashSet<u32> = idx.id_to_root.iter()
-            .filter(|(id, _)| id.contains(needle))
-            .map(|(_, &r)| r)
-            .collect();
-        let matched = idx.msg_root.iter()
-            .filter(|&&r| r != u32::MAX && roots.contains(&r))
-            .count();
-        assert_eq!(matched, 4);
+        assert_ne!(idx.msg_root[0], idx.msg_root[1],
+            "wildcard QuoteID must not link two unrelated RFQs");
     }
 
     #[test]
@@ -893,6 +840,67 @@ mod filter_tests {
 
     fn empty_filter() -> TimelineFilter {
         TimelineFilter { f_time_op: "=".into(), ..Default::default() }
+    }
+
+    /// Mirrors real RFS-gateway data (ing-rfq-gateway): every message of one
+    /// RFQ shares the same QuoteReqID (131). QuoteRequests carry a WILDCARD
+    /// QuoteID "* - ALL" (117) which must NOT be treated as a chain link, or
+    /// union-find fuses every unrelated RFQ into one giant chain. Three
+    /// independent RFQs: 20cf028a / 20cf028b / 20cf028c.
+    fn synth_rfs_wildcard() -> Vec<FixMessage> {
+        let raw = concat!(
+            "8=FIX.4.4|35=R|49=MM|56=LD4|34=1|52=20240101-09:00:00.000|131=20cf028a|117=* - ALL|55=EUR/USD|10=000|",
+            "8=FIX.4.4|35=S|49=LD4|56=MM|34=2|52=20240101-09:00:00.010|131=20cf028a|117=20cf028a1|55=EUR/USD|10=000|",
+            "8=FIX.4.4|35=Z|49=MM|56=LD4|34=3|52=20240101-09:00:00.020|131=20cf028a|117=20cf028a1|55=EUR/USD|10=000|",
+            "8=FIX.4.4|35=R|49=MM|56=LD4|34=4|52=20240101-09:00:01.000|131=20cf028b|117=* - ALL|55=USD/HUF|10=000|",
+            "8=FIX.4.4|35=S|49=LD4|56=MM|34=5|52=20240101-09:00:01.010|131=20cf028b|117=20cf028b1|55=USD/HUF|10=000|",
+            "8=FIX.4.4|35=Z|49=MM|56=LD4|34=6|52=20240101-09:00:01.020|131=20cf028b|117=20cf028b1|55=USD/HUF|10=000|",
+            "8=FIX.4.4|35=R|49=MM|56=LD4|34=7|52=20240101-09:00:02.000|131=20cf028c|117=* - ALL|55=USD/TRY|10=000|",
+            "8=FIX.4.4|35=S|49=LD4|56=MM|34=8|52=20240101-09:00:02.010|131=20cf028c|117=20cf028c1|55=USD/TRY|10=000|",
+            "8=FIX.4.4|35=Z|49=MM|56=LD4|34=9|52=20240101-09:00:02.020|131=20cf028c|117=20cf028c1|55=USD/TRY|10=000|",
+        );
+        parse_all(raw)
+    }
+
+    #[test]
+    fn id_filter_wildcard_quoteid_does_not_merge_rfqs() {
+        let msgs = synth_rfs_wildcard();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "20cf028a".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 3,
+            "keying one RFQ must return only its 3 messages, not RFQs linked \
+             solely by the wildcard QuoteID '* - ALL'");
+        for &i in &r {
+            assert_eq!(msgs[i].quote_req_id, "20cf028a", "leaked an unrelated RFQ row");
+        }
+    }
+
+    /// Hierarchical ids where one is a prefix of another (20cf0278 vs 20cf02781,
+    /// straight from the screenshot). Exact match must not bleed the longer id.
+    fn synth_prefix_ids() -> Vec<FixMessage> {
+        let raw = concat!(
+            "8=FIX.4.4|35=R|49=MM|56=LD4|34=1|52=20240101-09:00:00.000|131=20cf0278|55=X|10=000|",
+            "8=FIX.4.4|35=S|49=LD4|56=MM|34=2|52=20240101-09:00:00.010|131=20cf0278|117=20cf0278q|55=X|10=000|",
+            "8=FIX.4.4|35=R|49=MM|56=LD4|34=3|52=20240101-09:00:01.000|131=20cf02781|55=Y|10=000|",
+            "8=FIX.4.4|35=S|49=LD4|56=MM|34=4|52=20240101-09:00:01.010|131=20cf02781|117=20cf02781q|55=Y|10=000|",
+        );
+        parse_all(raw)
+    }
+
+    #[test]
+    fn id_filter_exact_no_prefix_bleed() {
+        let msgs = synth_prefix_ids();
+        let idx  = build_chain_index(&msgs);
+        let mut f = empty_filter();
+        f.f_clord = "20cf0278".into();
+        let r = apply_timeline_filter(&msgs, &idx, &f);
+        assert_eq!(r.len(), 2,
+            "exact QR match must surface only 20cf0278, not the longer 20cf02781");
+        for &i in &r {
+            assert_eq!(msgs[i].quote_req_id, "20cf0278", "prefix bleed into 20cf02781");
+        }
     }
 
     // ── ID filter: direct substring ─────────────────────────────────────
@@ -965,13 +973,19 @@ mod filter_tests {
     }
 
     #[test]
-    fn id_filter_substring_partial() {
+    fn id_filter_is_exact_not_substring() {
         let msgs = synth_three_orders();
         let idx  = build_chain_index(&msgs);
+        // A bare prefix must NOT match — exact ids only.
         let mut f = empty_filter();
         f.f_clord = "ORD".into();
+        assert!(apply_timeline_filter(&msgs, &idx, &f).is_empty(),
+            "'ORD' is not a full id and must match nothing");
+        // The full id matches exactly one row.
+        f.f_clord = "ORD-1".into();
         let r = apply_timeline_filter(&msgs, &idx, &f);
-        assert_eq!(r.len(), 3, "substring 'ORD' matches all three orders");
+        assert_eq!(r.len(), 1);
+        assert_eq!(msgs[r[0]].cl_ord_id, "ORD-1");
     }
 
     #[test]
@@ -992,15 +1006,14 @@ mod filter_tests {
         assert_eq!(r.len(), 3);
     }
 
-    // ── ID filter: chain over-merge guard ───────────────────────────────
+    // ── ID filter: junk / placeholder ids don't bleed ───────────────────
 
     #[test]
-    fn id_filter_skips_oversize_junk_chain() {
-        // 100 messages — 99 of them share placeholder ClOrdID "0" (which
-        // union-finds into one giant junk chain) plus 1 distinct "REAL-1".
-        // Threshold: junk chain has 99 msgs / 100 total = 99 %, well over
-        // the 70 % guard, so chain expansion must NOT include it. Filtering
-        // by "REAL" should surface exactly the one real row.
+    fn id_filter_junk_chain_does_not_bleed() {
+        // 100 messages — 99 share the placeholder ClOrdID "0" (one giant junk
+        // chain) plus 1 distinct "REAL-1". Exact-match keying "REAL-1" must
+        // surface exactly that row: it neither substring-collides with "0" nor
+        // shares the junk chain's root.
         let mut raw = String::new();
         for i in 0..99 {
             raw.push_str(&format!(
@@ -1011,22 +1024,21 @@ mod filter_tests {
         let msgs = parse_all(&raw);
         let idx  = build_chain_index(&msgs);
         let mut f = empty_filter();
-        f.f_clord = "REAL".into();
+        f.f_clord = "REAL-1".into();
         let r = apply_timeline_filter(&msgs, &idx, &f);
         assert_eq!(r.len(), 1, "only the REAL-1 row should match");
     }
 
     #[test]
-    fn id_filter_small_dataset_does_not_trip_guard() {
-        // With < 50 messages the over-merge guard is disabled — legitimate
-        // small chains (e.g. one paste with 4 chain members) must NOT be
-        // dropped just because they cover 100% of the dataset.
+    fn id_filter_seeds_full_chain_from_exact_id() {
+        // Exact keying of the RFQ id seeds the chain root; expansion then pulls
+        // the linked Quote, NOS and ER even though they don't carry the RFQ id.
         let msgs = synth_chain();
         let idx  = build_chain_index(&msgs);
         let mut f = empty_filter();
         f.f_clord = "QR-1".into();
         let r = apply_timeline_filter(&msgs, &idx, &f);
-        assert_eq!(r.len(), 4, "tiny dataset shouldn't be guarded as junk");
+        assert_eq!(r.len(), 4, "exact RFQ seed should expand to the whole chain");
     }
 
     // ── Other column filters ────────────────────────────────────────────

@@ -495,6 +495,14 @@ pub fn tab_view(
                         chains_computing: lifecycle_computing,
                         cancel: lifecycle_cancel,
                         filter_id: lifecycle_filter_id,
+                        on_jump_to_timeline: move |id: String| {
+                            // Reverse of the Timeline→Latency jump: pre-fill the
+                            // Timeline's ID filter with this chain id (exact-match
+                            // seeds the whole chain) and switch back to Timeline.
+                            f_clord.clone().set(id);
+                            timeline_filters_open.clone().set(true);
+                            view_mode.set(ViewMode::Timeline);
+                        },
                     }
                 } else {
                     {

@@ -855,6 +855,10 @@ pub fn lifecycle_panel(
     /// Per-tab chain-id filter. Lifted to Tab so jump-from-timeline can pre-
     /// populate it before switching the view mode here.
     filter_id: Signal<String>,
+    /// "Show this chain in the Timeline": fires with the chain's id when the
+    /// user clicks the ↗ action on a chain row. Host wires it to pre-fill the
+    /// Timeline's ID filter and switch view_mode back to Timeline.
+    on_jump_to_timeline: EventHandler<String>,
 ) -> Element {
     // Unique per-instance DOM id suffix so two lifecycle_panel mounts (e.g.
     // active + compare panes in compare mode) don't collide on the same
@@ -1487,6 +1491,7 @@ pub fn lifecycle_panel(
                                     None                   => "lc-time",
                                 };
                                 let chain_id = ch.chain_id.clone();
+                                let jump_id  = ch.chain_id.clone();
                                 let id_short = if ch.chain_id.len() > 14 { &ch.chain_id[..14] } else { ch.chain_id.as_str() };
                                 let tl_lines = if is_sel { build_timeline_lines(&timeline_snap) } else { Vec::new() };
                                 rsx! {
@@ -1500,7 +1505,18 @@ pub fn lifecycle_panel(
                                                 sc.set(Some(chain_id.clone()));
                                             }
                                         },
-                                        span { class: "lc-clordid",    title: "{ch.chain_id}", "{id_short}" }
+                                        span { class: "lc-clordid",    title: "{ch.chain_id}",
+                                            "{id_short}"
+                                            button {
+                                                class: "id-jump",
+                                                title: "Show this chain in the Timeline",
+                                                onclick: move |e: MouseEvent| {
+                                                    e.stop_propagation();
+                                                    on_jump_to_timeline.call(jump_id.clone());
+                                                },
+                                                "↗"
+                                            }
+                                        }
                                         span { class: "lc-symbol",     "{ch.symbol}" }
                                         span { class: "lc-side",       "{ch.side}" }
                                         span { class: "{type_cls}",    "{type_lbl}" }
